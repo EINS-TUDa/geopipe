@@ -1,0 +1,1 @@
+Fill out the missing logic to fetch and transform the data. In the end, no error should be asserted when execturing the main.
