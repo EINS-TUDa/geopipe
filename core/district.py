@@ -1,14 +1,16 @@
 from core.data_registry import fetch_data
 from core.technologies import Technologies
+import geopandas as gpd
+import numpy as np
 
 
 class District:
-    def __init__(self,id_, technology_shares):
+    def __init__(self,id_:int, technology_shares:dict[Technologies, float]):
         self.id = id_
         self.technology_shares = technology_shares
 
     @classmethod
-    def from_bounding_box(cls, id_:int, bounding_box):
+    def from_bounding_box(cls, id_:int, bounding_box: gpd.GeoDataFrame) -> "District":
         """
         Create a District object from a polygon.
         :param id_: Identifier for the district
@@ -17,23 +19,7 @@ class District:
         """
         # Fetch data for the district
         data = fetch_data("Census2022", "HeatingType100mGrid", bounding_box)
-        ...
-        """
-        add: to retrieve technology shares from the data
-        technology_shares should be a diction in the form of
-        {
-            Technologies.Gas: 0.3,
-            Technologies.Oil: 0.2,
-            Technologies.Wood: 0.1,
-            Technologies.Biomass: 0.1,
-            Technologies.Renewable: 0.2,
-            Technologies.Electric: 0.05,
-            Technologies.Coal: 0.01,
-            Technologies.District_Heating: 0.01,
-            Technologies.NoEnergyCarrier: 0.01
-        }
-        """
-        technology_shares = data
+        technology_shares = create_random_technology_shares()  # replace with actual data processing
         return cls(id_, technology_shares)
 
     def print_technology_shares(self):
@@ -43,6 +29,22 @@ class District:
         print(f"District ID: {self.id}")
         for tech, share in self.technology_shares.items():
             print(f"{tech.value}: {share:.2%}")
+
+
+def create_random_technology_shares() -> dict:
+    """
+    Create a random technology shares dictionary for testing purposes.
+    :return: Dictionary with technology shares
+    """
+    # Generate random values for each technology
+    shares = {tech: np.random.uniform(0, 1) for tech in Technologies}
+
+    # Normalize the shares to sum to 1
+    total = sum(shares.values())
+    for tech in shares:
+        shares[tech] /= total
+
+    return shares
 
 
 
