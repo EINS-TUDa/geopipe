@@ -43,13 +43,6 @@ class HeatingType100mGrid:
 
         return df_data_in_bb
 
-
-# @register_dataset("Census2022", "HeatingFuel100mGrid")
-# class HeatingFuel100mGrid:
-#     def __call__(self, query):
-#         data = ...  # Fetch data based on query
-#         return data
-
 # === Generic Fetch Function ===
 def fetch_data(source_name, dataset_name, query):
     handler = DATASET_REGISTRY.get((source_name, dataset_name))
