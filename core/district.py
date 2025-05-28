@@ -10,14 +10,14 @@ class District:
         self.technology_shares = technology_shares
 
     @classmethod
-    def from_bounding_box(cls, id_:int, bounding_box) -> "District":
+    def from_bounding_box(cls, id_:int, polygone) -> "District":
         """
         Create a District object from a polygon.
         :param id_: Identifier for the district
-        :param bounding_box: Shape of the district
+        :param polygone: Shape of the district
         :return: class instance
         """
-        technology_shares = get_technology_shares(bounding_box=bounding_box)
+        technology_shares = get_technology_shares(polygone=polygone)
         return cls(id_, technology_shares)
 
     def print_technology_shares(self):
@@ -28,14 +28,18 @@ class District:
         for tech, share in self.technology_shares.items():
             print(f"{tech.value}: {share:.2%}")
 
-def get_technology_shares(bounding_box: gpd.GeoDataFrame) -> dict[Technology, float]:
+def get_technology_shares(polygone: gpd.GeoDataFrame) -> dict[Technology, float]:
     # Fetch data for the district
-    data = RegistryService.fetch_data("Census2022", "HeatingType100mGrid", bounding_box)
-    return create_random_technology_shares()  # todo: replace with actual data processing
-
-
-
-
+    gpd_data = RegistryService.fetch_data("Census2022", "HeatingType100mGrid", polygone)
+    technology_amounts = {}
+    for tech in Technology:
+        technology_amounts[tech] = gpd_data[tech].sum()
+    # Calculate shares
+    total_amount = sum(technology_amounts.values())
+    if total_amount == 0:
+        return {tech: 0 for tech in Technology}  # Avoid division by zero
+    technology_shares = {tech: amount / total_amount for tech, amount in technology_amounts.items()}
+    return technology_shares
 
 
 

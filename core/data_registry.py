@@ -3,6 +3,7 @@ from core.technology import Technology
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import geopandas as gpd
 
 class RegistryService:
     _registry = {}
@@ -27,9 +28,12 @@ class RegistryService:
 # === Dataset Handlers ===
 @RegistryService.register_dataset("Census2022", "HeatingType100mGrid")
 class HeatingType100mGrid:
-    """Could contain class variables to store access credentials or similar, if needed."""
-    def __call__(self, query):
+    crs = "EPSG:3035"
+
+    def __call__(self, query) -> gpd.GeoDataFrame:
         """
+        query: is a polygone in the form of a GeoDataFrame with a single polygon.
+
         Fetch data for the HeatingType100mGrid dataset.
         Visualization of the dataset: https://atlas.zensus2022.de/
         Grid size: 100m x 100m
@@ -40,13 +44,33 @@ class HeatingType100mGrid:
             because of a privacy protection algorithm.
 
         :param query: dict - Contains the query parameters for fetching data.
-        :return: Data for the specified query.
+        :return: gpd.GeoDataFrame - A GeoDataFrame containing the data for the specified polygone.
         """
-        df_data = pd.read_csv(Path("data") / "Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung" / "Zensus2022_Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung_100m-Gitter.csv")
-        df_data_in_bb = create_random_data(10) # todo: Fetch data based on query, which is only a bounding box in this case
-        return df_data_in_bb
-
-
+        df_data = pd.read_csv(Path("data") / "Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung" / "Zensus2022_Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung_100m-Gitter.csv", sep=";")
+        name_mapping = {
+            "Gas": Technology.Gas,
+            "Heizoel": Technology.Oil,
+            "Holz_Holzpellets": Technology.Wood,
+            "Biomasse_Biogas": Technology.Biomass,
+            "Solar_Geothermie_Waermepumpen": Technology.Renewable,
+            "Strom": Technology.Electric,
+            "Kohle": Technology.Coal,
+            "Fernwaerme": Technology.District_Heating,
+            "kein_Energietraeger": Technology.NoEnergyCarrier,
+        }
+        # dp: Rename
+        df_data.rename(columns=name_mapping, inplace=True)
+        # dp: Convert all columns in name_mapping to numeric, errors='coerce' will convert non-numeric values to 0
+        for tech in Technology:
+            df_data[tech] = pd.to_numeric(df_data[tech], errors='coerce').fillna(0)
+        # create a GeoDataFrame from the DataFrame
+        gdf_data = gpd.GeoDataFrame(df_data, geometry=gpd.points_from_xy(df_data.x_mp_100m, df_data.y_mp_100m), crs=self.crs)
+        # filter the data based on the polygone
+        if not isinstance(query, gpd.GeoDataFrame) or query.crs != self.crs:
+            raise ValueError("Query must be a GeoDataFrame with the correct CRS (EPSG:3035).")
+        # dp: Join operation
+        gdf_data_in_bb = gpd.sjoin(gdf_data, query, how="inner", predicate="within")
+        return gdf_data_in_bb
 
 
 def create_random_data(n_rows) -> pd.DataFrame:

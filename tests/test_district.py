@@ -22,11 +22,10 @@ def test_district_from_bounding_box():
         Technology.Electric: count_el / total_count,
         Technology.Coal: 0,
         Technology.District_Heating: 0,
-        Technology.Other: 0,
         Technology.NoEnergyCarrier: 0,
     }
 
     district = District.from_bounding_box(1, bounding_box)
 
     assert district.technology_shares == expected_shares, "Technology shares do not match expected values."
-    print("District created successfully with expected technology shares.")
+    print("Test successful: District created with expected technology shares.")

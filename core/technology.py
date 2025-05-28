@@ -9,5 +9,4 @@ class Technology(Enum):
     Electric = "Electric"
     Coal = "Coal"
     District_Heating = "District Heating"
-    Other = "Other"
     NoEnergyCarrier = "No Energy Carrier"
