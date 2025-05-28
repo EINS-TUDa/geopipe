@@ -1,6 +1,6 @@
 from enum import Enum
 
-class Technologies(Enum):
+class Technology(Enum):
     Gas = "Gas"
     Oil = "Oil"
     Wood = "Wood"

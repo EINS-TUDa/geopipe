@@ -1,5 +1,5 @@
 # === Global Dataset Registry ===
-from core.technologies import Technologies
+from core.technology import Technology
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -60,15 +60,15 @@ def create_random_data(n_rows) -> pd.DataFrame:
     data = {
         "x_mp": np.random.uniform(4000000, 5000000, n_rows),  # Random x-coordinates
         "y_mp": np.random.uniform(3000000, 4000000, n_rows),  # Random y-coordinates
-        Technologies.Gas.value: np.random.randint(0, 6, n_rows),
-        Technologies.Oil.value: np.random.randint(0, 6, n_rows),
-        Technologies.Wood.value: np.random.randint(0, 6, n_rows),
-        Technologies.Biomass.value: np.random.randint(0, 6, n_rows),
-        Technologies.Renewable.value: np.random.randint(0, 6, n_rows),
-        Technologies.Electric.value: np.random.randint(0, 6, n_rows),
-        Technologies.Coal.value: np.random.randint(0, 6, n_rows),
-        Technologies.District_Heating.value: np.random.randint(0, 6, n_rows),
-        Technologies.NoEnergyCarrier.value: np.random.randint(0, 6, n_rows),
+        Technology.Gas.value: np.random.randint(0, 6, n_rows),
+        Technology.Oil.value: np.random.randint(0, 6, n_rows),
+        Technology.Wood.value: np.random.randint(0, 6, n_rows),
+        Technology.Biomass.value: np.random.randint(0, 6, n_rows),
+        Technology.Renewable.value: np.random.randint(0, 6, n_rows),
+        Technology.Electric.value: np.random.randint(0, 6, n_rows),
+        Technology.Coal.value: np.random.randint(0, 6, n_rows),
+        Technology.District_Heating.value: np.random.randint(0, 6, n_rows),
+        Technology.NoEnergyCarrier.value: np.random.randint(0, 6, n_rows),
     }
 
     df = pd.DataFrame(data)
