@@ -29,8 +29,9 @@ class District:
             print(f"{tech.value}: {share:.2%}")
 
 def get_technology_shares(polygone: gpd.GeoDataFrame) -> dict[Technology, float]:
+    query = {"polygone": polygone}
     # Fetch data for the district
-    gpd_data = RegistryService.fetch_data("Census2022", "HeatingType100mGrid", polygone)
+    gpd_data = RegistryService.fetch_data("Census2022", "HeatingType100mGrid", query)
     technology_amounts = {}
     for tech in Technology:
         technology_amounts[tech] = gpd_data[tech].sum()

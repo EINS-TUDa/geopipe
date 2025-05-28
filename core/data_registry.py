@@ -1,4 +1,5 @@
 # === Global Dataset Registry ===
+from abc import ABC, abstractmethod
 from core.technology import Technology
 import pandas as pd
 import numpy as np
@@ -25,9 +26,16 @@ class RegistryService:
             raise ValueError(f"No handler for {source_name}:{dataset_name}")
         return handler(query)
 
-# === Dataset Handlers ===
+# === Datasets ===
+class BaseDataset(ABC):
+    crs: str  # Optional: enforce that all datasets define a CRS
+
+    @abstractmethod
+    def __call__(self, query: dict[str,any]) -> gpd.GeoDataFrame:
+        pass
+
 @RegistryService.register_dataset("Census2022", "HeatingType100mGrid")
-class HeatingType100mGrid:
+class Census2022HeatingType100mGrid:
     crs = "EPSG:3035"
 
     def __call__(self, query) -> gpd.GeoDataFrame:
@@ -43,9 +51,10 @@ class HeatingType100mGrid:
         Ignore column Insgesamt_Energietraeger. The sums don't add up to Insgesamt_Energietraeger
             because of a privacy protection algorithm.
 
-        :param query: dict - Contains the query parameters for fetching data.
+        :param polygone: dict - Contains the query parameters for fetching data.
         :return: gpd.GeoDataFrame - A GeoDataFrame containing the data for the specified polygone.
         """
+        polygone = query.get("polygone")
         df_data = pd.read_csv(Path("data") / "Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung" / "Zensus2022_Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung_100m-Gitter.csv", sep=";")
         name_mapping = {
             "Gas": Technology.Gas,
@@ -66,11 +75,12 @@ class HeatingType100mGrid:
         # create a GeoDataFrame from the DataFrame
         gdf_data = gpd.GeoDataFrame(df_data, geometry=gpd.points_from_xy(df_data.x_mp_100m, df_data.y_mp_100m), crs=self.crs)
         # filter the data based on the polygone
-        if not isinstance(query, gpd.GeoDataFrame) or query.crs != self.crs:
+        if not isinstance(polygone, gpd.GeoDataFrame) or polygone.crs != self.crs:
             raise ValueError("Query must be a GeoDataFrame with the correct CRS (EPSG:3035).")
         # dp: Join operation
-        gdf_data_in_bb = gpd.sjoin(gdf_data, query, how="inner", predicate="within")
-        return gdf_data_in_bb
+        gdf_data_in_polygone = gpd.sjoin(gdf_data, polygone, how="inner", predicate="within")
+        return gdf_data_in_polygone
+
 
 
 def create_random_data(n_rows) -> pd.DataFrame:
