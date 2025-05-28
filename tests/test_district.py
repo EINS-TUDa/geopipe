@@ -28,5 +28,5 @@ def test_district_from_bounding_box():
 
     district = District.from_bounding_box(1, bounding_box)
 
-    assert district.technology_shares == expected_shares
+    assert district.technology_shares == expected_shares, "Technology shares do not match expected values."
     print("District created successfully with expected technology shares.")

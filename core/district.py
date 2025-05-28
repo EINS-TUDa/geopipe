@@ -1,4 +1,4 @@
-from core.data_registry import fetch_data
+from core.data_registry import RegistryService
 from core.technologies import Technologies
 import geopandas as gpd
 import numpy as np
@@ -18,8 +18,8 @@ class District:
         :return: class instance
         """
         # Fetch data for the district
-        data = fetch_data("Census2022", "HeatingType100mGrid", bounding_box)
-        technology_shares = create_random_technology_shares()  # replace with actual data processing
+        data = RegistryService.fetch_data("Census2022", "HeatingType100mGrid", bounding_box)
+        technology_shares = create_random_technology_shares()  # todo: replace with actual data processing
         return cls(id_, technology_shares)
 
     def print_technology_shares(self):

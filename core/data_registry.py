@@ -4,24 +4,30 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-DATASET_REGISTRY = {}
-"""
-Global registry for dataset handlers.
+class RegistryService:
+    _registry = {}
 
-Key: (source_name, dataset_name)
-Value: Dataset handler class which can be called with a query to fetch data.
-"""
+    @classmethod
+    def register_dataset(cls, source_name, dataset_name):
+        def decorator(handler_class):
+            key = (source_name, dataset_name)
+            if key in cls._registry:
+                raise ValueError(f"Handler already registered for {source_name}:{dataset_name}")
+            cls._registry[key] = handler_class()
+            return handler_class
+        return decorator
 
-# === Decorator to Auto-Register Dataset Handlers ===
-def register_dataset(source_name, dataset_name):
-    def decorator(handler):
-        DATASET_REGISTRY[(source_name, dataset_name)] = handler()
-        return handler
-    return decorator
+    @classmethod
+    def fetch_data(cls, source_name, dataset_name, query):
+        handler = cls._registry.get((source_name, dataset_name))
+        if not handler:
+            raise ValueError(f"No handler for {source_name}:{dataset_name}")
+        return handler(query)
 
 # === Dataset Handlers ===
-@register_dataset("Census2022", "HeatingType100mGrid")
+@RegistryService.register_dataset("Census2022", "HeatingType100mGrid")
 class HeatingType100mGrid:
+    """Could contain class variables to store access credentials or similar, if needed."""
     def __call__(self, query):
         """
         Fetch data for the HeatingType100mGrid dataset.
@@ -37,18 +43,9 @@ class HeatingType100mGrid:
         :return: Data for the specified query.
         """
         df_data = pd.read_csv(Path("data") / "Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung" / "Zensus2022_Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung_100m-Gitter.csv")
-        df_data_in_bb = ... # Fetch data based on query, which is only a bounding box in this case
-
-        df_data_in_bb = create_random_data(10) # replace
-
+        df_data_in_bb = create_random_data(10) # todo: Fetch data based on query, which is only a bounding box in this case
         return df_data_in_bb
 
-# === Generic Fetch Function ===
-def fetch_data(source_name, dataset_name, query):
-    handler = DATASET_REGISTRY.get((source_name, dataset_name))
-    if not handler:
-        raise ValueError(f"No handler for {source_name}:{dataset_name}")
-    return handler(query)
 
 
 
