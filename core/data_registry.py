@@ -55,7 +55,7 @@ class Census2022HeatingType100mGrid:
         :return: gpd.GeoDataFrame - A GeoDataFrame containing the data for the specified polygone.
         """
         polygone = query.get("polygone")
-        df_data = pd.read_csv(Path("data") / "Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung" / "Zensus2022_Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung_100m-Gitter.csv", sep=";")
+        df_data = pd.read_csv(Path("data") / "Census2022HeatingType100mGrid" / "Census2022HeatingType100mGrid.csv", sep=";")
         name_mapping = {
             "Gas": Technology.Gas,
             "Heizoel": Technology.Oil,
@@ -81,6 +81,9 @@ class Census2022HeatingType100mGrid:
         gdf_data_in_polygone = gpd.sjoin(gdf_data, polygone, how="inner", predicate="within")
         return gdf_data_in_polygone
 
+@RegistryService.register_dataset("WaermeatlasHessen", "ResidentialYearlyHeatDemand")
+class WaermeatlasHessenResidentialYearlyHeatDemand:
+    crs = ...
 
 
 def create_random_data(n_rows) -> pd.DataFrame:
