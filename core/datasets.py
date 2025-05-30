@@ -5,6 +5,9 @@ from core.data_registry import RegistryService, BaseDataset
 import geopandas as gpd
 import pandas as pd
 from core.technology import Technology
+import requests
+
+from shapely.geometry import shape
 
 
 @RegistryService.register_dataset("Census2022", "HeatingType100mGrid")
@@ -76,3 +79,18 @@ class WaermeatlasHessen(BaseDataset):
         # dp: Join operation
         gdf = gpd.sjoin(gdf, polygone, how="inner", predicate="intersects")
         return gdf
+
+@RegistryService.register_dataset("GeoportalHessen", "CityBoundaries")
+class GeoportalHessenCityBoundaries(BaseDataset):
+    crs = "EPSG:4326"  # Geoportal Hessen uses WGS84
+    def __call__(self, query: dict[str, Any]) -> gpd.GeoDataFrame:
+        # dp: Find an understand API
+        url = f"https://www.geoportal.hessen.de/spatial-objects/885/collections/borders:gemeindenHE_wfs/items?limit=50&GMDE_BZ={query['city_name']}&f=json"
+        response = requests.get(url)
+        data = response.json()
+        # dp: to geometry
+        geometry=shape(data['features'][0]['geometry'])
+        # dp: transform geometry to base crs
+        gdf_city_boundary = gpd.GeoDataFrame(geometry=[geometry], crs=self.crs)
+        gdf_city_boundary = gdf_city_boundary.to_crs(query["base_crs"])
+        return gdf_city_boundary

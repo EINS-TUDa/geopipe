@@ -23,7 +23,10 @@ class District:
         residential_yearly_heat_demand = get_residential_yearly_heat_demand(polygone=polygone, base_crs=base_crs)
         return cls(id_, technology_shares, residential_yearly_heat_demand)
 
-
+    @classmethod
+    def from_city_name_hessen(cls, id_: int, city_name: str, base_crs: str = "EPSG:25832") -> "District":
+        gdf_city_boundary = RegistryService.fetch_data("GeoportalHessen", "CityBoundaries", {"city_name": city_name, "base_crs": base_crs})
+        return District.from_polygone(id_=id_, polygone=gdf_city_boundary, base_crs=base_crs)
 
     def print(self):
         print(f"District ID: {self.id}")
