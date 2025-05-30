@@ -4,8 +4,7 @@ from pathlib import Path
 from core.technology import Technology
 
 def test_district_from_bounding_box():
-    bounding_box = gpd.read_file(Path("data") / "bounding_box_epsg3035.geojson")
-    bounding_box.set_crs("EPSG:3035", inplace=True, allow_override=True)
+    bounding_box = gpd.read_file(Path("data") / "test_bounding_box_epsg3035.geojson")
 
     count_gas = 4+3+4+4
     count_oil = 3+9+6+7
@@ -25,7 +24,15 @@ def test_district_from_bounding_box():
         Technology.NoEnergyCarrier: 0,
     }
 
-    district = District.from_bounding_box(1, bounding_box)
+    district = District.from_polygone(1, bounding_box)
 
     assert district.technology_shares == expected_shares, "Technology shares do not match expected values."
     print("Test successful: District created with expected technology shares.")
+
+
+def test_residential_yearly_heat_demand():
+    bounding_box = gpd.read_file(Path("data") / "baublock_bensheim_epsg25832.geojson")
+    district = District.from_polygone(1, bounding_box)
+    correct_heat_demand = 226487.95
+    assert district.residential_yearly_heat_demand == correct_heat_demand, f"Expected {correct_heat_demand}, got {district.residential_yearly_heat_demand}"
+    print("Test successful: Residential yearly heat demand matches expected value.")
