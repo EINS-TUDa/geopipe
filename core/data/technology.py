@@ -1,6 +1,6 @@
 from enum import Enum
 
-class Technology(Enum):
+class CensusTechnology(Enum): # todo: Rename to CensusTechnologies
     Gas = "Gas"
     Oil = "Oil"
     Wood = "Wood"
