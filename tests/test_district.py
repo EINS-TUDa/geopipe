@@ -1,5 +1,5 @@
 from core.data.datasets import WaermeatlasHessen, Census2022HeatingType100mGrid
-from core.data.technology import CensusTechnology
+from core.data.datasets import CensusTechnology
 import geopandas as gpd
 from pathlib import Path
 

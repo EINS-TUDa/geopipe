@@ -1,16 +1,29 @@
 from abc import ABC
 from pathlib import Path
 from typing import Any
+from enum import Enum
 
-from core.data.data_registry import DataRegistry, Dataset, global_data_registry
+from core.data.data import DataRegistry, Dataset, default_data_registry
 import geopandas as gpd
 import pandas as pd
-from core.data.technology import CensusTechnology
 import requests
 
 from shapely.geometry import shape
 
-@global_data_registry
+
+
+class CensusTechnology(Enum): # todo: Rename to CensusTechnologies
+    Gas = "Gas"
+    Oil = "Oil"
+    Wood = "Wood"
+    Biomass = "Biomass"
+    Renewable = "Renewable" # Solar, Geothermal, Heatpump
+    Electric = "Electric"
+    Coal = "Coal"
+    District_Heating = "District Heating"
+    NoEnergyCarrier = "No Energy Carrier"
+
+@default_data_registry
 class Census2022HeatingType100mGrid(Dataset):
     def __init__(self, path: str = "data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid.csv"):
         super().__init__(
@@ -59,7 +72,7 @@ class Census2022HeatingType100mGrid(Dataset):
             return technology_shares
 
 
-@global_data_registry
+@default_data_registry
 class WaermeatlasHessen(Dataset):
     def __init__(self, path: str = "data/WaermeatlasHessen.gpkg", crs: str = "EPSG:25832"):
         super().__init__(
@@ -79,7 +92,7 @@ class WaermeatlasHessen(Dataset):
             return total_heat_demand
 
 
-@global_data_registry
+@default_data_registry
 class GeoportalHessenCityBoundaries(Dataset):
     def __init__(self, path: str = "data/GeoportalHessenCityBoundaries.gpkg", crs: str = "EPSG:4326"):
         super().__init__(

@@ -3,9 +3,9 @@ import geopandas as gpd
 from core.data.technology import Technology
 from core.energy_system.region import Region, RegionBuilder
 from core.energy_system.rule_book import RuleBook
-from core.energy_system.technologies import Demand
+from core.energy_system.technology import Demand
 from core.energy_system.unit import Unit
-from core.data.data_registry import DataRegistry
+from core.data.data import DataRegistry
 
 
 class EnergySystem:

@@ -1,11 +1,11 @@
 from enum import Enum
 
-from core.data.data_registry import DataRegistry
+from core.data.data import DataRegistry
 from core.data.technology import CensusTechnology
 from core.energy_system.rule_book import RuleBook
 import geopandas as gpd
 
-from core.energy_system.technologies import IndividualTechnology, CentralTechnology, HeatGrid, GridConnection, Demand
+from core.energy_system.technology import IndividualTechnology, CentralTechnology, HeatGrid, GridConnection, Demand
 
 
 class Region:
@@ -43,6 +43,10 @@ class RegionBuilder:
 
     def build_demands(self) -> list[Demand]:
         # Placeholder for demand building logic
+        return []
+
+    def build_individual_technologies(self) -> list[IndividualTechnology]:
+        # Placeholder for individual technology building logic
         return []
 
     def build(self) -> Region:

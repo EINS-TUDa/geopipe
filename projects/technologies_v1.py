@@ -1,11 +1,11 @@
-from core.energy_system.technologies import TechnologyService, IndividualTechnology, CentralTechnology, HeatGrid, GridConnection
+from core.energy_system.technology import TechnologyRegistry, IndividualTechnology, CentralTechnology, HeatGrid, GridConnection
 
-@TechnologyService.register_individual_technology("HP")
+@TechnologyRegistry.register_individual_technology("HP")
 class HeatPump(IndividualTechnology):
     ...
 
 
 
-@TechnologyService.register_individual_technology("GB")
+@TechnologyRegistry.register_individual_technology("GB")
 class GasBoiler(IndividualTechnology):
     ...

@@ -69,14 +69,14 @@ class DataRegistry:
     def get_datasets(self, type_: str) -> list[Dataset]:
         return self._type_to_instances.get(type_, [])
 
-    def load_from_global(self, allowed_types: list[str] = None):
-        for cls in GLOBAL_DATA_REGISTRY.get_all():
+    def load_from_default(self, allowed_types: list[str] = None):
+        for cls in DEFAULT_DATA_REGISTRY.get_all():
             instance = cls()
             if allowed_types is None or any(t in allowed_types for t in instance.types):
                 self.register(instance)
 
 
-class GlobalDataRegistry:
+class DefaultDataRegistry:
     # stores classes while DataRegistry stores instances
     def __init__(self):
         self._registry: list[type[Dataset]] = []
@@ -87,8 +87,8 @@ class GlobalDataRegistry:
     def get_all(self) -> list[type[Dataset]]:
         return self._registry
 
-GLOBAL_DATA_REGISTRY = GlobalDataRegistry()
+DEFAULT_DATA_REGISTRY = DefaultDataRegistry()
 
-def global_data_registry(cls):
-    GLOBAL_DATA_REGISTRY.register(cls)
+def default_data_registry(cls):
+    DEFAULT_DATA_REGISTRY.register(cls)
     return cls
