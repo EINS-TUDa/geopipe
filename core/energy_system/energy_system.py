@@ -1,11 +1,10 @@
 import geopandas as gpd
 
-from core.data.technology import Technology
 from core.energy_system.region import Region, RegionBuilder
 from core.energy_system.rule_book import RuleBook
 from core.energy_system.technology import Demand
 from core.energy_system.unit import Unit
-from core.data.data import DataRegistry
+from core.data.data_registry import DataRegistry
 
 
 class EnergySystem:
@@ -20,17 +19,14 @@ class EnergySystemBuilder:
         self.energy_system_name = energy_system_name
         self.base_crs = base_crs
         self.polygons = None
+        self.region_builder = None
         self.rule_book = None
         self.data_registry = None
         self.technology_registry = None
-        self.active_demands = ["Electricity", "ResidentialHeat"]
-        self.active_individual_technologies = ["HP", "GB"]
-        self.active_central_technologies = ["CHP", "GB"]
-        self.active_heat_grids = ["HG"]
-        self.active_grid_connections = ["GasGrid", "ElectricityGrid"]
 
 
-    def set_polygones(self, polygons: gpd.GeoDataFrame):
+
+    def set_polygons(self, polygons: gpd.GeoDataFrame):
         self.polygons = polygons.to_crs(self.base_crs)
         return self
 
@@ -55,18 +51,14 @@ class EnergySystemBuilder:
     def build(self) -> EnergySystem:
         self.check_types()
         regions = []
-        id_ = 0
+        rb = RegionBuilder(
+            base_crs=self.base_crs,
+            rule_book=self.rule_book,
+            data_registry=self.data_registry,
+            technology_registry=self.technology_registry
+        )
         for polygon in self.polygons:
-            rb = RegionBuilder(
-                id_ = id_,
-                polygon=polygon,
-                base_crs=self.base_crs,
-                rule_book=self.rule_book,
-                data_registry=self.data_registry,
-                technology_registry=self.technology_registry
-            )
-            regions.append(rb.build())
-            id_ += 1
+            regions.append(rb.build(polygon=polygon))
 
         units = Unit()  # todo: Assuming Unit is a class that can be instantiated without parameters
         connections = []  # todo: Placeholder for connections, can be populated later

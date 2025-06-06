@@ -1,5 +1,9 @@
 from abc import ABC
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from core.energy_system.region import Region
+
 
 class RuleBook:
     def __init__(self):
@@ -12,6 +16,10 @@ class RuleBook:
     def get_rules(self):
         """Returns all rules in the rulebook."""
         return self.rules
+
+    def apply(self, region) -> "Region":
+        print("Rulenppl.apply - not implemented")
+        return region
 
 class Rule(ABC):
     """

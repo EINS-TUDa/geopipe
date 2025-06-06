@@ -4,49 +4,80 @@ from typing import Type
 from core.energy_system.technology import Technology
 
 
+class TechnologyNotFoundError(Exception):
+    def __init__(self, cls: Type[Technology], name: str):
+        super().__init__(f"Technology with name '{name}' not found.")
+        self.cls = cls
+        self.name = name
+
+
 class TechnologyRegistry:
     def __init__(self):
         # Group technologies by their class (e.g., IndividualTechnology, Demand, etc.)
-        self._technologies: dict[Type[Technology], list[Technology]] = defaultdict(list)
+        self._technologies: dict[str, Technology] = {}
 
-    def register(self, tech: Technology, base_class: type[Technology]):
-        if not isinstance(tech, base_class):
-            raise TypeError(f"{tech} is not an instance of {base_class}")
-        if tech not in self._technologies[base_class]:
-            self._technologies[base_class].append(tech)
+    def register(self, tech: Technology):
+        if not isinstance(tech, Technology):
+            raise TypeError(f"{tech} is not an instance of Technology")
+        if tech.name not in self._technologies:
+            self._technologies[tech.name] = tech
         else:
-            raise ValueError(f"Technology {tech.name} already registered under {base_class.__name__}")
+            raise ValueError(f"Technology with name {tech.name} already registered")
 
-    def get_by_class(self, cls: Type[Technology]) -> list[Technology]:
-        return self._technologies.get(cls, [])
+    def get_by_name(self, name: str) -> Technology:
+        if name not in self._technologies:
+            raise TechnologyNotFoundError(Technology, name)
+        return self._technologies[name]
 
-    def get_by_class_and_name(self, cls: Type[Technology], name: str) -> Technology | None:
-        for tech in self._technologies.get(cls, []):
-            if tech.name == name:
-                return tech
-        return None
+    def get_names(self) -> list[str]:
+        """
+        Returns a list of all technology names registered in the registry.
+        """
+        return list(self._technologies.keys())
 
-    def all(self) -> list[Technology]:
-        return [tech for techs in self._technologies.values() for tech in techs]
+    def get_by_output_commodity(self, commodity: str, return_type: str = "instance") -> list[Technology] | list[str]:
+        """
+        return_type: can be "name" or "instance"
+        Returns a list of technologies that produce the specified commodity.
+        """
+        if return_type not in ["name", "instance"]:
+            raise ValueError("return_type must be either 'name' or 'instance'")
+        if return_type == "name":
+            return [tech.name for tech in self._technologies.values() if tech.commodity_out == commodity]
+        if return_type == "instance":
+            return [tech for tech in self._technologies.values() if tech.commodity_out == commodity]
 
-    def load_from_default(self, allowed_classes: list[Type[Technology]] = None):
+    def get_all(self, return_type: str = "instance") -> list[Technology] | list[str]:
+        """:return_type: can be "name" or "instance"""
+        if return_type not in ["name", "instance"]:
+            raise ValueError("return_type must be either 'name' or 'instance'")
+        if return_type == "name":
+            return list(self._technologies.keys())
+        if return_type == "instance":
+            return list(self._technologies.values())
+
+    def load_from_default(self):
         """
         Load technologies from the global registry, filtering by allowed classes if specified.
         """
-        for tech_class, techs in DEFAULT_TECHNOLOGY_REGISTRY._technologies.items():
-            if allowed_classes is None or tech_class in allowed_classes:
-                for tech in techs:
-                    self.register(tech, tech_class)
+        for tech in DEFAULT_TECHNOLOGY_REGISTRY.get_all():
+            self.register(tech)
+
+    def remove(self, name: str):
+        """
+        Remove a technology by its name.
+        """
+        if name in self._technologies:
+            del self._technologies[name]
+        else:
+            raise TechnologyNotFoundError(Technology, name)
 
 
 DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()
 
-def default_technology_registry(base_class: type[Technology]):
-    def decorator(cls_or_instance):
-        instance = cls_or_instance() if isinstance(cls_or_instance, type) else cls_or_instance
-        DEFAULT_TECHNOLOGY_REGISTRY.register(instance, base_class)
-        return cls_or_instance
-    return decorator
+def default_technology_registry(cls):
+    DEFAULT_TECHNOLOGY_REGISTRY.register(cls())
+    return cls
 
 
 
