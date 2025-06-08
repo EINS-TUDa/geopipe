@@ -17,12 +17,12 @@ class Region:
     def __init__(self,
                  id_: int,
                  polygon: gpd.GeoDataFrame,
-                 region_demands: list["RegionDemand"] = None,
-                 technologies: list[RegionTechnology] = None, ):
+                 region_demands: list["RegionDemand"] ,
+                 technologies: list[RegionTechnology]):
         self.id = id_
         self.polygon = polygon
         self.region_demands = region_demands
-        self.technologies = technologies
+        self.region_technologies = technologies
 
 
 class RegionBuilder:
@@ -41,20 +41,29 @@ class RegionBuilder:
                    assigned_technology_shares="residential_heating_technology_shares"),
             Demand(type_="residential_electricity", commodity_in="electricity", cooperation_of_technologies=True)
         ]
-        self.mapping_to_census_technologies = {
-            CensusTechnology.Gas: "ind_gas_boiler",
-            CensusTechnology.Oil: "ind_oil_boiler",
-            CensusTechnology.Wood: "wood",
-            CensusTechnology.Biomass: "",
-            CensusTechnology.Renewable: "ind_heat_pump",
-            CensusTechnology.Electric: "",
-            CensusTechnology.Coal: "",
-            CensusTechnology.District_Heating: "",
-            CensusTechnology.NoEnergyCarrier: ""
+
+        self.data_keys = {
+            "residential_heat_technology_shares":
+                {"name_mapping":
+                    {
+                        CensusTechnology.Gas: "ind_gas_boiler",
+                        CensusTechnology.Oil: "ind_oil_boiler",
+                        CensusTechnology.Wood: "wood",
+                        CensusTechnology.Biomass: "",
+                        CensusTechnology.Renewable: "ind_heat_pump",
+                        CensusTechnology.Electric: "",
+                        CensusTechnology.Coal: "",
+                        CensusTechnology.District_Heating: "",
+                        CensusTechnology.NoEnergyCarrier: ""
+                    }
+                }
         }
-        self.technology_data_keys = {}
-        """technology data keys: a nested dictionary of the form:
+        """
+        data keys: a nested dictionary of the form:
         {technology_name: {"initial_energy_output_key": str, "output_profile_key": str}}
+        
+        or for technology shares, where key and value are added to the query for data_type type_
+        {type_: {key: value}}
         """
 
     def build_demands(self, polygon) -> list[RegionDemand]:
@@ -88,20 +97,19 @@ class RegionBuilder:
 
     def determine_individual_technology_shares(self, polygon: gpd.GeoDataFrame, r_demand: RegionDemand,
                                                technologies_supplying_this_demand: list[str]) -> dict["str", float]:
-        technology_shares = self.data_registry.query({
-            "type": r_demand.demand.type_+"_technology_shares",
+        type_= r_demand.demand.type_+"_technology_shares"
+        query = {
+            "type": type_,
             "region": polygon,
             "base_crs": self.base_crs
-        })
-
-        if not technology_shares:
-            raise ValueError(f"No technology shares found for demand {r_demand.demand.type_}")
-
-        # in technology_shares, replace the keys with the names given in the mapping_to_census_technologies
-        technology_shares = {
-            self.mapping_to_census_technologies.get(key, key): value
-            for key, value in technology_shares.items()
         }
+
+        # if there is an entry in self.data keys for this type, extend the query with all key value pais stored under this type
+        if type_ in self.data_keys:
+            for key, value in self.data_keys[type_].items():
+                query[key] = value
+
+        technology_shares = self.data_registry.query(query)
 
         # delete technologies in technology_shares that are not in technologies_supplying_this_demand
         technology_shares = {
@@ -112,8 +120,10 @@ class RegionBuilder:
         # normalize the shares so that they sum to 1
         total_share = sum(technology_shares.values())
         if total_share == 0:
-            raise ValueError(f"Total share for demand {r_demand.demand.type_} is zero, cannot normalize shares.")
-        technology_shares = {tech: share / total_share for tech, share in technology_shares.items()}
+            # set all shares to 0
+            technology_shares = {tech: 0.0 for tech in technology_shares}
+        else:
+            technology_shares = {tech: share / total_share for tech, share in technology_shares.items()}
 
         return technology_shares
 
@@ -145,7 +155,7 @@ class RegionBuilder:
             tech = self.technology_registry.get_by_name(tech_name)
 
             # Look up optional keys
-            keys = self.technology_data_keys.get(tech_name, {})
+            keys = self.data_keys.get(tech_name, {})
 
             # Initial energy output:
             output_key = keys.get("initial_energy_output_key")
@@ -186,5 +196,8 @@ class RegionBuilder:
             polygon=polygon,
             technologies=technologies,
         )
-        region = self.rule_book.apply(region)
+
+        if self.rule_book:
+            region = self.rule_book.apply(region)
+
         return region

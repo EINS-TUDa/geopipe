@@ -74,6 +74,12 @@ class Census2022HeatingType100mGrid(SpatialDataset):
             if total_amount == 0:
                 return {tech: 0 for tech in CensusTechnology}  # Avoid division by zero
             technology_shares = {tech: amount / total_amount for tech, amount in technology_amounts.items()}
+            # rename keys if given
+            if query["name_mapping"]:
+                technology_shares = {
+                    query["name_mapping"][tech]: share
+                    for tech, share in technology_shares.items()
+                }
             return technology_shares
 
 
