@@ -6,15 +6,14 @@ import pandas as pd
 @dataclass
 class Demand:
     # Abstract description of a demand in the energy system, i.e. valid for all regions
-    type_: str
+    demand_type: str
     commodity_in: str
     cooperation_of_technologies: bool = True
-    profile_name: str = None
-    assigned_technology_shares: str|None = None  # contains the name of the key for shares if technology shares are assigned
 
-    def __post_init__(self):
-        if self.profile_name is None:
-            self.profile_name = f"{self.type_}_profile"
+    demand_query_params: dict[str, any] = None
+    profile_query_params: dict[str, any] = None
+
+    technology_shares_query_params: dict[str, any] = None
 
 @dataclass
 class RegionDemand:
@@ -30,6 +29,7 @@ class RegionDemand:
 
     def check_types(self):
         ...
+
     def normalize_profile(self):
 
         if self.profile is not None and not self.profile.empty:
@@ -37,4 +37,4 @@ class RegionDemand:
                 raise ValueError("All values in the profile must be numeric.")
             self.profile = self.profile / self.profile.sum()
         else:
-            f"Time series profile for Demand {self.demand.type_} is empty or None. "
+            f"Time series profile for Demand {self.demand.demand_type} is empty or None. "

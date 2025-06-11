@@ -1,10 +1,14 @@
 import geopandas as gpd
+import pandas as pd
 
 from core.energy_system.region import Region, RegionBuilder
+from core.energy_system.region_connection import RegionConnection
 from core.energy_system.rule_book import RuleBook
-from core.energy_system.technology import Demand
-from core.energy_system.unit import Unit
+from core.energy_system.demand import Demand
+from core.energy_system.unit import Unit, UnitEnum
 from core.data.data_registry import DataRegistry
+from core.energy_system.technology_registry import TechnologyRegistry
+from core.energy_system.technology import Technology, RegionTechnology
 
 
 class EnergySystem:
@@ -23,14 +27,28 @@ class EnergySystemBuilder:
         self.rule_book = None
         self.data_registry = None
         self.technology_registry = None
+        self.connections = None
+        self.unit = UnitEnum.GW.unit
 
-
+    def set_unit(self, input_unit: UnitEnum):
+        self.unit = input_unit.unit
 
     def set_polygons(self, polygons: gpd.GeoDataFrame):
+        if "id" not in polygons.columns:
+            polygons = polygons.copy()
+            polygons["id"] = range(len(polygons))
+        else:
+            # Ensure IDs are unique and fill in missing ones if needed
+            if polygons["id"].isnull().any():
+                polygons = polygons.copy()
+                missing_ids = polygons["id"].isnull()
+                max_existing_id = polygons["id"].dropna().max()
+                next_id = 0 if pd.isna(max_existing_id) else int(max_existing_id) + 1
+                polygons.loc[missing_ids, "id"] = range(next_id, next_id + missing_ids.sum())
         self.polygons = polygons.to_crs(self.base_crs)
         return self
 
-    def set_rule_book(self, rule_book: RuleBook):
+    def set_rule_book(self, rule_book: RuleBook | None):
         self.rule_book = rule_book
         return self
 
@@ -42,31 +60,43 @@ class EnergySystemBuilder:
         self.technology_registry = technology_registry
         return self
 
+    def set_connections(self, connections: list[RegionConnection]):
+        self.connections = connections
+
+
     def set_manual_demands(self, region_id, demand: Demand):
         ...
 
     def set_manual_individual_technology(self, region, technology: Technology):
         ...
 
+    def build_connections(self) -> list[RegionConnection]:
+        # Placeholder for building connections, can be implemented later
+        return []
+
     def build(self) -> EnergySystem:
         self.check_types()
         regions = []
         rb = RegionBuilder(
             base_crs=self.base_crs,
-            rule_book=self.rule_book,
             data_registry=self.data_registry,
             technology_registry=self.technology_registry
         )
-        for polygon in self.polygons:
+
+        for row in self.polygons.itertuples(index=False):
+            polygon = gpd.GeoDataFrame([{"geometry": row.geometry, "id": getattr(row, "id") }],
+                                       crs=self.polygons.crs)
             regions.append(rb.build(polygon=polygon))
 
-        units = Unit()  # todo: Assuming Unit is a class that can be instantiated without parameters
-        connections = []  # todo: Placeholder for connections, can be populated later
+        if self.connections is None:
+            connections = self.build_connections()
+        else:
+            connections = self.connections
 
         return EnergySystem(
             name=self.energy_system_name,
             regions=regions,
-            units=units,
+            units=self.unit,
             connections=connections
         )
 
@@ -77,12 +107,14 @@ class EnergySystemBuilder:
             raise ValueError("Base CRS must be set and a string")
         if not isinstance(self.polygons, gpd.GeoDataFrame):
             raise ValueError("Geometry must be set and a GeoDataFrame")
-        if not isinstance(self.rule_book, RuleBook):
-            raise ValueError("RuleBook must be set and of type RuleBook")
+        if not isinstance(self.rule_book, RuleBook|None):
+            raise ValueError("RuleBook must be set and of type RuleBook or None")
         if not isinstance(self.data_registry, DataRegistry):
             raise ValueError("DataRegistry must be set and of type DataRegistry")
         if not isinstance(self.technology_registry, TechnologyRegistry):
             raise ValueError("TechnologyRegistry must be set and of type TechnologyRegistry")
+        if not self.connections:
+            print("Warning: No connections set, building default connections.")
 
 class JsonEnergySystemBuilder(EnergySystemBuilder):
     def set_geometry_from_json(self, json_file_path: str):

@@ -2,6 +2,7 @@ from abc import ABC
 from pathlib import Path
 from typing import Any
 from enum import Enum
+import shapely.geometry
 
 import numpy as np
 
@@ -16,7 +17,7 @@ from shapely.geometry import shape
 from core.energy_system.technology_registry import default_technology_registry
 
 
-class CensusTechnology(Enum): # todo: Rename to CensusTechnologies
+class CensusTechnology(Enum):
     Gas = "Gas"
     Oil = "Oil"
     Wood = "Wood"
@@ -29,15 +30,16 @@ class CensusTechnology(Enum): # todo: Rename to CensusTechnologies
 
 @default_data_registry
 class Census2022HeatingType100mGrid(SpatialDataset):
-    def __init__(self, path: str = "data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid.csv"):
+    def __init__(self, path: str = "data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson"):
+        """Already transformed points to polygons to avoid long transformation times."""
         super().__init__(
             types=["residential_heat_technology_shares"],
             path=path,
             crs="EPSG:3035")
 
     def load_data(self) -> gpd.GeoDataFrame:
-        df = pd.read_csv(self.path, sep=";")
-        df.rename(columns={
+        gdf = gpd.read_file(self.path)
+        gdf.rename(columns={
             "Gas": CensusTechnology.Gas,
             "Heizoel": CensusTechnology.Oil,
             "Holz_Holzpellets": CensusTechnology.Wood,
@@ -50,13 +52,9 @@ class Census2022HeatingType100mGrid(SpatialDataset):
         }, inplace=True)
 
         for tech in CensusTechnology:
-            df[tech] = pd.to_numeric(df.get(tech, 0), errors='coerce').fillna(0)
+            gdf[tech] = pd.to_numeric(gdf.get(tech, 0), errors='coerce').fillna(0)
 
-        return gpd.GeoDataFrame(
-            df,
-            geometry=gpd.points_from_xy(df.x_mp_100m, df.y_mp_100m),
-            crs=self.crs
-        )
+        return gdf
 
     def query(self, query: dict) -> dict[CensusTechnology, float]:
         type_ = query["type"]
@@ -72,15 +70,18 @@ class Census2022HeatingType100mGrid(SpatialDataset):
             # Calculate shares
             total_amount = sum(technology_amounts.values())
             if total_amount == 0:
-                return {tech: 0 for tech in CensusTechnology}  # Avoid division by zero
-            technology_shares = {tech: amount / total_amount for tech, amount in technology_amounts.items()}
+                technology_shares = {tech: 0 for tech in CensusTechnology}  # Avoid division by zero
+            else:
+                technology_shares = {tech: amount / total_amount for tech, amount in technology_amounts.items()}
+
             # rename keys if given
-            if query["name_mapping"]:
+            if query.get("name_mapping"):
                 technology_shares = {
-                    query["name_mapping"][tech]: share
-                    for tech, share in technology_shares.items()
+                    query["name_mapping"].get(tech, tech): share for tech, share in technology_shares.items()
                 }
             return technology_shares
+        else:
+            raise ValueError(f"Unsupported type '{type_}' for Census2022HeatingType100mGrid dataset.")
 
 
 @default_data_registry
