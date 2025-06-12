@@ -20,6 +20,12 @@ class Region:
         self.region_demands = region_demands
         self.region_technologies = region_technologies
 
+    def get_demand(self, name: str) -> RegionDemand | None:
+        for demand in self.region_demands:
+            if demand.demand.demand_type == name:
+                return demand
+        return None
+
 
 class RegionBuilder:
     def __init__(self,

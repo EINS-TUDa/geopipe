@@ -19,6 +19,84 @@ class EnergySystem:
         self.units = units
         self.connections = connections
 
+    def plot(self, demand_name=None):
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Patch
+        from shapely.geometry import Point
+        import matplotlib.cm as cm
+
+        # Create a figure and axis
+        fig, ax = plt.subplots(figsize=(10, 10))
+
+        # Generate a consistent color map for technologies
+        all_technologies = {r_tech.technology.name for region in self.regions for r_tech in region.region_technologies}
+        color_map = {tech: color for tech, color in zip(all_technologies, cm.Set2.colors)}
+
+        # Plot each region's polygon
+        for region in self.regions:
+            region.polygon.boundary.plot(ax=ax, edgecolor="black", zorder = 1)
+            region.polygon.plot(ax=ax, alpha=0.3, color="grey")
+
+            # If demand_name is provided, calculate the pie chart data
+            if demand_name:
+                demand = region.get_demand(demand_name)
+                if demand:
+                    tech_outputs = {
+                        r_tech.technology.name: r_tech.initial_energy_output
+                        for r_tech in region.region_technologies
+                        if r_tech.technology.commodity_out == demand.demand.commodity_in
+                    }
+
+                    # Normalize the outputs for the pie chart
+                    total_output = sum(tech_outputs.values())
+                    if total_output > 0:
+                        tech_outputs = {k: v / total_output for k, v in tech_outputs.items()}
+
+                    # Get the centroid of the polygon for pie chart placement
+                    centroid = region.polygon.geometry.iloc[0].centroid
+                    if isinstance(centroid, Point):
+                        x, y = centroid.x, centroid.y
+
+                        # Add the pie chart
+                        sizes = list(tech_outputs.values())
+                        colors = [color_map[tech] for tech in tech_outputs.keys()]
+                        pie_radius = 20+total_output / 100000  # Adjust the radius based on total demand
+                        wedge, _ = ax.pie(
+                            sizes,
+                            colors=colors,
+                            radius=pie_radius,
+                            center=(x, y),
+                            frame=True,
+                            textprops={"fontsize": 6},
+                            wedgeprops={"width": pie_radius / 1.5, 'linewidth': 2, 'edgecolor': 'white'}
+                        )
+
+                        [w.set_zorder(2) for w in wedge]
+
+                        # Add the total demand as text below the pie chart
+                        ax.text(
+                            x, y - pie_radius - 10,  # Position the text below the pie chart
+                            f"Total: {total_output/1000:.0f} MWh ",
+                            ha="center",
+                            fontsize=10,
+                            zorder=3
+                        )
+
+
+        # Add a legend for the technologies
+        legend_elements = [Patch(facecolor=color, label=tech) for tech, color in color_map.items()]
+        ax.legend(handles=legend_elements, loc="upper right", title="Technologies")
+
+        # Set axis labels and title
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        ax.set_title(f"Energy System: {self.name} - Demand: {demand_name}" if demand_name else f"Energy System: {self.name}")
+
+        # Show the plot
+        plt.show()
+
+
+
 
 class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
