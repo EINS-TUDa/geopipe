@@ -4,7 +4,8 @@ from core.energy_system.demand import Demand, RegionDemand
 from core.energy_system.rule_book import RuleBook
 import geopandas as gpd
 
-from core.energy_system.technology import Technology, RegionTechnology
+from core.energy_system.technology import Technology, RegionTechnology, TechnologyDependencyManager, \
+    TechnologyRequirement
 from core.energy_system.technology_registry import TechnologyRegistry
 
 
@@ -37,15 +38,15 @@ class RegionBuilder:
                    profile_query_params={"type": "residential_heat_profile"},
                    technology_shares_query_params={"type": "residential_heat_technology_shares",
                                                    "name_mapping": {
-                           CensusTechnology.Gas: "ind_gas_boiler",
-                           CensusTechnology.Oil: "ind_oil_boiler",
-                           CensusTechnology.Wood: "wood",
-                           CensusTechnology.Biomass: None,
-                           CensusTechnology.Renewable: "ind_heat_pump",
-                           CensusTechnology.Electric: None,
-                           CensusTechnology.Coal: None,
-                           CensusTechnology.District_Heating: None,
-                           CensusTechnology.NoEnergyCarrier: None }
+                                                       CensusTechnology.Gas: "ind_gas_boiler",
+                                                       CensusTechnology.Oil: "ind_oil_boiler",
+                                                       CensusTechnology.Wood: "wood",
+                                                       CensusTechnology.Biomass: None,
+                                                       CensusTechnology.Renewable: "ind_heat_pump",
+                                                       CensusTechnology.Electric: None,
+                                                       CensusTechnology.Coal: None,
+                                                       CensusTechnology.District_Heating: None,
+                                                       CensusTechnology.NoEnergyCarrier: None}
                                                    }
                    ),
             Demand(demand_type="residential_electricity",
@@ -55,6 +56,7 @@ class RegionBuilder:
                    profile_query_params={"type": "residential_electricity_profile"},
                    )
         ]
+        self.technology_dependency_manager = None
 
     def build_demands(self, polygon) -> list[RegionDemand]:
         collection = []
@@ -113,21 +115,20 @@ class RegionBuilder:
                     )
                     collection.append(region_technology)
 
-
         other_technologies = set(all_technologies) - set(technologies_with_shares)
-
         for tech_name in other_technologies:
             tech = self.technology_registry.get_by_name(tech_name)
-
             initial_output = 0.0
             profile = None
-
             region_technology = RegionTechnology(
                 technology=tech,
                 initial_energy_output=initial_output,
                 output_profile=profile
             )
             collection.append(region_technology)
+
+        print(
+            "Next step: Include TechnologyDependencyManager. Extend Technologies for installed capacities on order to do that.")
         return collection
 
     def build(self, polygon) -> Region:

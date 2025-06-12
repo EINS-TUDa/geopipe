@@ -30,6 +30,7 @@ if __name__ == "__main__":
     esb.set_technology_registry(technology_registry)
     esb.set_data_registry(data_registry)
     esb.set_rule_book(None)
+    esb.set_default_technology_dependencies()
 
     es = esb.build()
 
