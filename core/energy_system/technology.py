@@ -32,7 +32,6 @@ class CHP(Technology):
 @dataclass
 class RegionTechnology:
     technology: Technology
-    initial_residual_capacity: float = 0
     initial_energy_output: float  = 0
     initial_capacity: float = 0
     output_profile: pd.Series | None = None

@@ -19,33 +19,44 @@ class EnergySystem:
         self.units = units
         self.connections = connections
 
-    def plot(self, demand_name=None):
+    def plot(self, demand_name: str | None = None, kind: str = "energy"):
         import matplotlib.pyplot as plt
         from matplotlib.patches import Patch
         from shapely.geometry import Point
         import matplotlib.cm as cm
 
+        if kind not in ["energy", "power"]:
+            raise ValueError("kind must be either 'energy' or 'power'")
+
         # Create a figure and axis
         fig, ax = plt.subplots(figsize=(10, 10))
 
-        # Generate a consistent color map for technologies
         all_technologies = {r_tech.technology.name for region in self.regions for r_tech in region.region_technologies}
+        # sort alphabetically by key
+        all_technologies = sorted(all_technologies)
         color_map = {tech: color for tech, color in zip(all_technologies, cm.Set2.colors)}
 
         # Plot each region's polygon
         for region in self.regions:
-            region.polygon.boundary.plot(ax=ax, edgecolor="black", zorder = 1)
+            region.polygon.boundary.plot(ax=ax, edgecolor="black", zorder=1)
             region.polygon.plot(ax=ax, alpha=0.3, color="grey")
 
             # If demand_name is provided, calculate the pie chart data
             if demand_name:
                 demand = region.get_demand(demand_name)
                 if demand:
-                    tech_outputs = {
-                        r_tech.technology.name: r_tech.initial_energy_output
-                        for r_tech in region.region_technologies
-                        if r_tech.technology.commodity_out == demand.demand.commodity_in
-                    }
+                    if kind == "energy":
+                        tech_outputs = {
+                            r_tech.technology.name: r_tech.initial_energy_output
+                            for r_tech in region.region_technologies
+                            if r_tech.technology.commodity_out == demand.demand.commodity_in
+                        }
+                    elif kind == "power":
+                        tech_outputs = {
+                            r_tech.technology.name: r_tech.initial_capacity
+                            for r_tech in region.region_technologies
+                            if r_tech.technology.commodity_out == demand.demand.commodity_in
+                        }
 
                     # Normalize the outputs for the pie chart
                     total_output = sum(tech_outputs.values())
@@ -60,7 +71,7 @@ class EnergySystem:
                         # Add the pie chart
                         sizes = list(tech_outputs.values())
                         colors = [color_map[tech] for tech in tech_outputs.keys()]
-                        pie_radius = 20+total_output / 100000  # Adjust the radius based on total demand
+                        pie_radius = 20 + total_output / 100000  # Adjust the radius based on total demand
                         wedge, _ = ax.pie(
                             sizes,
                             colors=colors,
@@ -74,14 +85,22 @@ class EnergySystem:
                         [w.set_zorder(2) for w in wedge]
 
                         # Add the total demand as text below the pie chart
-                        ax.text(
-                            x, y - pie_radius - 10,  # Position the text below the pie chart
-                            f"Total: {total_output/1000:.0f} MWh ",
-                            ha="center",
-                            fontsize=10,
-                            zorder=3
-                        )
-
+                        if kind =="energy":
+                            ax.text(
+                                x, y - pie_radius - 10,  # Position the text below the pie chart
+                                f"Total: {total_output / 1000:.0f} MWh ",
+                                ha="center",
+                                fontsize=10,
+                                zorder=3
+                            )
+                        elif kind == "power":
+                            ax.text(
+                                x, y - pie_radius - 10,  # Position the text below the pie chart
+                                f"Total: {total_output:.2f} kW",
+                                ha="center",
+                                fontsize=10,
+                                zorder=3
+                            )
 
         # Add a legend for the technologies
         legend_elements = [Patch(facecolor=color, label=tech) for tech, color in color_map.items()]
@@ -90,12 +109,11 @@ class EnergySystem:
         # Set axis labels and title
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
-        ax.set_title(f"Energy System: {self.name} - Demand: {demand_name}" if demand_name else f"Energy System: {self.name}")
+        ax.set_title(
+            f"Energy System: {self.name} - Demand: {demand_name}" if demand_name else f"Energy System: {self.name}")
 
         # Show the plot
         plt.show()
-
-
 
 
 class EnergySystemBuilder:
@@ -228,16 +246,13 @@ class EnergySystemBuilder:
                 TechnologyRequirement(technology_name="heat_grid", capacity_factor=1.5)
             ],
             "heat_grid": [
-                TechnologyRequirement(technology_name="cen_heat_pump", share=0.5, capacity_factor=1.05),
-                TechnologyRequirement(technology_name="cen_gas_boiler", share=0.5, capacity_factor=1.2)
+                TechnologyRequirement(technology_name="cen_heat_pump", share=0.5, capacity_factor=1.05)
             ]
         }
         self.technology_dependency_manager = TechnologyDependencyManager(dependencies=dependencies)
 
-
-
     def build(self) -> EnergySystem:
-        self.check_types()
+        self.verify()
         regions = []
         rb = RegionBuilder(
             base_crs=self.base_crs,
@@ -262,23 +277,34 @@ class EnergySystemBuilder:
             units=self.unit,
             connections=connections)
 
-        #es = self.validate_district_heating_networks(es)
+        # es = self.validate_district_heating_networks(es)
 
         return es
 
-    def check_types(self):
+    def verify(self):
         if not isinstance(self.base_crs, str):
-            raise ValueError("Base CRS must be set and a string")
+            raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
         if not isinstance(self.polygons, gpd.GeoDataFrame):
-            raise ValueError("Geometry must be set and a GeoDataFrame")
+            raise ValueError(f"Geometry must be set and a GeoDataFrame and not {type(self.polygons)}")
         if not isinstance(self.rule_book, RuleBook | None):
-            raise ValueError("RuleBook must be set and of type RuleBook or None")
+            raise ValueError(f"RuleBook must be set and of type RuleBook or None and not {type(self.rule_book)}")
         if not isinstance(self.data_registry, DataRegistry):
-            raise ValueError("DataRegistry must be set and of type DataRegistry")
+            raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
         if not isinstance(self.technology_registry, TechnologyRegistry):
-            raise ValueError("TechnologyRegistry must be set and of type TechnologyRegistry")
+            raise ValueError(
+                f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}")
         if not self.connections:
             print("Warning: No connections set, building default connections.")
+        # Technology Dependency Manager
+        if self.technology_dependency_manager:
+            for key, value in self.technology_dependency_manager.dependencies.items():
+                if not self.technology_registry.has_technology(key):
+                    raise ValueError(
+                        f"Technology {key} in the TechnologyDependencyManager is not registered in the TechnologyRegistry.")
+                for requirement in value:
+                    if not self.technology_registry.has_technology(requirement.technology_name):
+                        raise ValueError(
+                            f"Technology {requirement.technology_name} in the TechnologyDependencyManager of {key} is not registered in the TechnologyRegistry.")
 
 
 class JsonEnergySystemBuilder(EnergySystemBuilder):

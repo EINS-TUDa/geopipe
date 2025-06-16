@@ -72,6 +72,13 @@ class TechnologyRegistry:
         else:
             raise TechnologyNotFoundError(Technology, name)
 
+    def has_technology(self, name: str) -> bool:
+        """
+        Verify if a technology with the given name exists in the registry.
+        Returns True if it exists, False otherwise.
+        """
+        return name in self._technologies
+
 
 DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()
 

@@ -51,7 +51,7 @@ class RegionBuilder:
                                                        CensusTechnology.Renewable: "ind_heat_pump",
                                                        CensusTechnology.Electric: None,
                                                        CensusTechnology.Coal: None,
-                                                       CensusTechnology.District_Heating: None,
+                                                       CensusTechnology.District_Heating: "ind_district_heating_connection",
                                                        CensusTechnology.NoEnergyCarrier: None}
                                                    }
                    ),
@@ -63,6 +63,11 @@ class RegionBuilder:
                    )
         ]
         self.technology_dependency_manager = None
+        self.config = {
+            "cap_factor_ind_technologies": 1.1 # Factor to increase the capacity of individual technologies over the minimum required capacity
+        }
+
+
 
     def build_demands(self, polygon) -> list[RegionDemand]:
         collection = []
@@ -90,6 +95,7 @@ class RegionBuilder:
         collection = []
         technologies_with_shares = []
         all_technologies = self.technology_registry.get_all(return_type="name")
+        # Technologies which supply demands
         for r_demand in r_demands:
             if r_demand.demand.technology_shares_query_params is not None:
                 technologies_supplying_this_demand = (self.technology_registry.
@@ -114,27 +120,48 @@ class RegionBuilder:
                     normalized_shares = {tech: 0.0 for tech in model_tech_shares}
 
                 for tech, share in normalized_shares.items():
+                    initial_energy_output = r_demand.value * share
                     region_technology = RegionTechnology(
                         technology=self.technology_registry.get_by_name(tech),
-                        initial_energy_output=r_demand.value * share,
+                        initial_energy_output=initial_energy_output,
+                        initial_capacity= max(r_demand.profile)*initial_energy_output * self.config["cap_factor_ind_technologies"],
                         output_profile=r_demand.profile,
                     )
                     collection.append(region_technology)
 
+        # Add technologies that do not have shares defined in the data registry
         other_technologies = set(all_technologies) - set(technologies_with_shares)
         for tech_name in other_technologies:
             tech = self.technology_registry.get_by_name(tech_name)
             initial_output = 0.0
+            initial_capacity = 0.0
             profile = None
             region_technology = RegionTechnology(
                 technology=tech,
                 initial_energy_output=initial_output,
+                initial_capacity=initial_capacity,
                 output_profile=profile
             )
             collection.append(region_technology)
 
-        print(
-            "Next step: Include TechnologyDependencyManager. Extend Technologies for installed capacities on order to do that.")
+        # Add Technology dependencies if available
+        if self.technology_dependency_manager:
+            tech_capacities = {r_tech.technology.name: r_tech.initial_capacity for r_tech in collection}
+
+            for tech_name in list(tech_capacities.keys()):
+                requirements = self.technology_dependency_manager.get_requirements(tech_name)
+
+                for req in requirements:
+                    required_capacity = tech_capacities[tech_name] * req.capacity_factor * req.share
+                    tech_capacities[
+                        req.technology_name] += required_capacity
+
+            # Update the collection with the new capacities
+            for r_tech in collection:
+                tech_name = r_tech.technology.name
+                if tech_name in tech_capacities:
+                    r_tech.initial_capacity = tech_capacities[tech_name]
+
         return collection
 
     def build(self, polygon) -> Region:

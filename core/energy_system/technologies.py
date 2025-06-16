@@ -45,12 +45,26 @@ class IndOilBoiler(Technology):
         )
 
 @default_technology_registry
+class IndDistrictHeatingConnection(Technology):
+    def __init__(self):
+        super().__init__(
+            name="ind_district_heating_connection",
+            commodity_in="district_heat_out",
+            commodity_out="residential_heat",
+            efficiency=0.95,
+            technical_lifetime=30,
+            opex_cost_energy=0.005,
+            opex_cost_power=20,
+            capex_cost_power=5000
+        )
+
+@default_technology_registry
 class CTHeatPump(Technology):
     def __init__(self):
         super().__init__(
             name="cen_heat_pump",
             commodity_in="electricity",
-            commodity_out="heat_grid_heat_in",
+            commodity_out="district_heat_in",
             efficiency=3.5,
             technical_lifetime=20,
             opex_cost_energy=0.01,
@@ -63,7 +77,7 @@ class HGHeatGrid(Technology):
     def __init__(self):
         super().__init__(
             name="heat_grid",
-            commodity_in="heat_grid_heat_in",
+            commodity_in="district_heat_in",
             commodity_out="district_heat_out",
             efficiency=0.95,
             technical_lifetime=30,

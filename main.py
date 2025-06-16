@@ -33,7 +33,7 @@ if __name__ == "__main__":
     esb.set_default_technology_dependencies()
 
     es = esb.build()
-    es.plot(demand_name="residential_heat")
+    es.plot(demand_name="residential_heat", kind="power")
 
 
 
