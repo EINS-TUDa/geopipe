@@ -9,11 +9,13 @@ class Demand:
     demand_type: str
     commodity_in: str
     cooperation_of_technologies: bool = True
+    default_supply_technology: str | None = None  # Default technology to cover this demand in the initial modeling year if no other technology is specified. Can be None if there are no residual technologies available.
 
     demand_query_params: dict[str, any] = None
     profile_query_params: dict[str, any] = None
 
     technology_shares_query_params: dict[str, any] = None
+
 
 @dataclass
 class RegionDemand:
@@ -21,7 +23,6 @@ class RegionDemand:
     demand: Demand
     value: float = None
     profile: pd.Series = None
-
 
     def __post_init__(self):
         self.check_types()

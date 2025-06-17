@@ -1,6 +1,7 @@
 import geopandas as gpd
 import pandas as pd
 
+from core.data.datasets import CensusTechnology
 from core.energy_system.region import Region, RegionBuilder
 from core.energy_system.region_connection import RegionConnection
 from core.energy_system.rule_book import RegionRuleBook, EnergySystemRuleBook
@@ -24,6 +25,7 @@ class EnergySystem:
         from matplotlib.patches import Patch
         from shapely.geometry import Point
         import matplotlib.cm as cm
+        import numpy as np
 
         if kind not in ["energy", "power"]:
             raise ValueError("kind must be either 'energy' or 'power'")
@@ -41,10 +43,14 @@ class EnergySystem:
             region.polygon.boundary.plot(ax=ax, edgecolor="black", zorder=1)
             region.polygon.plot(ax=ax, alpha=0.3, color="grey")
 
-            # If demand_name is provided, calculate the pie chart data
+            # If demand_name is provided, process the demand data
             if demand_name:
                 demand = region.get_demand(demand_name)
                 if demand:
+                    # Get the demand value (this will determine pie size)
+                    demand_value = demand.value
+
+                    # Get technologies that supply this demand
                     if kind == "energy":
                         tech_outputs = {
                             r_tech.technology.name: r_tech.initial_energy_output
@@ -58,20 +64,29 @@ class EnergySystem:
                             if r_tech.technology.commodity_out == demand.demand.commodity_in
                         }
 
-                    # Normalize the outputs for the pie chart
-                    total_output = sum(tech_outputs.values())
-                    if total_output > 0:
-                        tech_outputs = {k: v / total_output for k, v in tech_outputs.items()}
-
                     # Get the centroid of the polygon for pie chart placement
                     centroid = region.polygon.geometry.iloc[0].centroid
                     if isinstance(centroid, Point):
                         x, y = centroid.x, centroid.y
 
-                        # Add the pie chart
-                        sizes = list(tech_outputs.values())
-                        colors = [color_map[tech] for tech in tech_outputs.keys()]
-                        pie_radius = 20 + total_output / 100000  # Adjust the radius based on total demand
+                        # Calculate the pie radius based on demand_value
+                        pie_radius = 20 + demand_value / 100000  # Adjust formula as needed
+
+                        # Total output from all technologies
+                        total_output = sum(tech_outputs.values())
+
+                        # If there are technologies supplying this demand with non-zero output
+                        if total_output > 0:
+                            # Normalize the outputs for the pie chart
+                            tech_outputs_normalized = {k: v / total_output for k, v in tech_outputs.items()}
+                            sizes = list(tech_outputs_normalized.values())
+                            colors = [color_map[tech] for tech in tech_outputs.keys()]
+                        else:
+                            # If no technology supplies this demand, show a single-colored pie
+                            sizes = [1]
+                            colors = ["darkgray"]  # Choose a color for demands without direct technology supply
+
+                        # Draw the pie chart
                         wedge, _ = ax.pie(
                             sizes,
                             colors=colors,
@@ -84,19 +99,19 @@ class EnergySystem:
 
                         [w.set_zorder(2) for w in wedge]
 
-                        # Add the total demand as text below the pie chart
-                        if kind =="energy":
+                        # Add the demand value as text below the pie chart
+                        if kind == "energy":
                             ax.text(
-                                x, y - pie_radius - 10,  # Position the text below the pie chart
-                                f"Total: {total_output / 1000:.0f} MWh ",
+                                x, y - pie_radius - 10,
+                                f"Demand: {demand_value / 1000:.0f} MWh",
                                 ha="center",
                                 fontsize=10,
                                 zorder=3
                             )
                         elif kind == "power":
                             ax.text(
-                                x, y - pie_radius - 10,  # Position the text below the pie chart
-                                f"Total: {total_output:.2f} kW",
+                                x, y - pie_radius - 10,
+                                f"Demand: {demand_value:.2f} kW",
                                 ha="center",
                                 fontsize=10,
                                 zorder=3
@@ -104,6 +119,10 @@ class EnergySystem:
 
         # Add a legend for the technologies
         legend_elements = [Patch(facecolor=color, label=tech) for tech, color in color_map.items()]
+        if demand_name and any(
+                sum(tech_outputs.values()) == 0 for region in self.regions if region.get_demand(demand_name)):
+            # Add a legend entry for demands without technology supply
+            legend_elements.append(Patch(facecolor="lightgray", label="Unsupplied Demand"))
         ax.legend(handles=legend_elements, loc="upper right", title="Technologies")
 
         # Set axis labels and title
@@ -130,6 +149,7 @@ class EnergySystemBuilder:
         self.unit = UnitEnum.GW.unit
         self.technology_dependency_manager = None
         self.region_builder_config = None
+        self.demands = None
 
     def set_unit(self, input_unit: UnitEnum):
         self.unit = input_unit.unit
@@ -165,6 +185,41 @@ class EnergySystemBuilder:
         self.technology_registry = technology_registry
         return self
 
+    def set_demands(self, demands: list[Demand]):
+        if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
+            raise TypeError("demands must be a list of Demand instances.")
+        self.demands = demands
+        return self
+
+    def set_default_demands(self):
+        self.demands = [
+            Demand(demand_type="residential_heat",
+                   commodity_in="residential_heat",
+                   cooperation_of_technologies=False,
+                   demand_query_params={"type": "residential_heat"},
+                   profile_query_params={"type": "residential_heat_profile"},
+                   technology_shares_query_params={"type": "residential_heat_technology_shares",
+                                                   "name_mapping": {
+                                                       CensusTechnology.Gas: "ind_gas_boiler",
+                                                       CensusTechnology.Oil: "ind_oil_boiler",
+                                                       CensusTechnology.Wood: "wood",
+                                                       CensusTechnology.Biomass: None,
+                                                       CensusTechnology.Renewable: "ind_heat_pump",
+                                                       CensusTechnology.Electric: None,
+                                                       CensusTechnology.Coal: None,
+                                                       CensusTechnology.District_Heating: "ind_district_heating_connection",
+                                                       CensusTechnology.NoEnergyCarrier: None}
+                                                   },
+                   default_supply_technology="ind_oil_boiler"
+                   ),
+            Demand(demand_type="residential_electricity",
+                   commodity_in="electricity",
+                   cooperation_of_technologies=True,
+                   demand_query_params={"type": "residential_electricity"},
+                   profile_query_params={"type": "residential_electricity_profile"},
+                   default_supply_technology=None,
+                   )]
+
     def set_connections(self, connections: list[RegionConnection]):
         self.connections = connections
 
@@ -199,6 +254,7 @@ class EnergySystemBuilder:
             data_registry=self.data_registry,
             technology_registry=self.technology_registry)
         rb.set_technology_dependency_manager(self.technology_dependency_manager)
+        rb.set_demands(self.demands)
         if self.region_rule_book:
             rb.set_rule_book(self.region_rule_book)
         if not self.region_builder_config:

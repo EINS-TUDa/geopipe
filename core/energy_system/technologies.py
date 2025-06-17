@@ -86,3 +86,17 @@ class HGHeatGrid(Technology):
             capex_cost_power=5000
         )
 
+@default_technology_registry
+class GridElectricity(Technology):
+    def __init__(self):
+        super().__init__(
+            name="grid_electricity",
+            commodity_in="dummy",
+            commodity_out="electricity",
+            efficiency=1.0,
+            technical_lifetime=30,
+            opex_cost_energy=0.01,
+            opex_cost_power=10,
+            capex_cost_power=1000
+        )
+

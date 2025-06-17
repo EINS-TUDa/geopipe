@@ -158,7 +158,7 @@ class ResidentialElectricityDemand(Dataset):
         return None
 
     def query(self, query: dict) -> float:
-        return 100
+        return 10000
 
 @default_data_registry
 class ResidentialElectricityDemandProfile(TemporalDataset):

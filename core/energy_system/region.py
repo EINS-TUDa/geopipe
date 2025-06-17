@@ -39,38 +39,17 @@ class RegionBuilder:
         self.rule_book = None
         self.technology_dependency_manager = None
         self.config = None
+        self.demands = None
 
-        self.demands = [
-            Demand(demand_type="residential_heat",
-                   commodity_in="residential_heat",
-                   cooperation_of_technologies=False,
-                   demand_query_params={"type": "residential_heat"},
-                   profile_query_params={"type": "residential_heat_profile"},
-                   technology_shares_query_params={"type": "residential_heat_technology_shares",
-                                                   "name_mapping": {
-                                                       CensusTechnology.Gas: "ind_gas_boiler",
-                                                       CensusTechnology.Oil: "ind_oil_boiler",
-                                                       CensusTechnology.Wood: "wood",
-                                                       CensusTechnology.Biomass: None,
-                                                       CensusTechnology.Renewable: "ind_heat_pump",
-                                                       CensusTechnology.Electric: None,
-                                                       CensusTechnology.Coal: None,
-                                                       CensusTechnology.District_Heating: "ind_district_heating_connection",
-                                                       CensusTechnology.NoEnergyCarrier: None}
-                                                   }
-                   ),
-            Demand(demand_type="residential_electricity",
-                   commodity_in="electricity",
-                   cooperation_of_technologies=True,
-                   demand_query_params={"type": "residential_electricity"},
-                   profile_query_params={"type": "residential_electricity_profile"},
-                   )
-        ]
-
+    def set_demands(self, demands: list[Demand]):
+        if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
+            raise TypeError(f"demands must be a list of Demand instances and not {type(demands)}.")
+        self.demands = demands
+        return self
 
     def set_rule_book(self, rule_book: RegionRuleBook):
         if not isinstance(rule_book, RegionRuleBook):
-            raise TypeError("rule_book must be an instance of RegionRuleBook.")
+            raise TypeError(f"rule_book must be an instance of RegionRuleBook and not {type(rule_book)}.")
         self.rule_book = rule_book
         return self
 
@@ -132,6 +111,13 @@ class RegionBuilder:
                     normalized_shares = {tech: share / total_share for tech, share in model_tech_shares.items()}
                 else:
                     normalized_shares = {tech: 0.0 for tech in model_tech_shares}
+                    if r_demand.demand.default_supply_technology:
+                        if r_demand.demand.default_supply_technology not in normalized_shares.keys():
+                            raise ValueError(
+                                f"Default supply technology {r_demand.demand.default_supply_technology} not found in "
+                                f"the technology shares for demand {r_demand.demand.demand_type}."
+                            )
+                        normalized_shares[r_demand.demand.default_supply_technology] = 1.0
 
                 for tech, share in normalized_shares.items():
                     initial_energy_output = r_demand.value * share

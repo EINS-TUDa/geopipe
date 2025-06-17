@@ -20,8 +20,8 @@ if __name__ == "__main__":
     data_registry = DataRegistry()
     data_registry.load_from_default()
 
-    polygon = gpd.read_file(Path("data") / "wah_bensheim_4_districts.geojson")
-    # polygon = gpd.read_file(Path("data") / "wah_1_polygon_without_census.geojson")
+    # polygon = gpd.read_file(Path("data") / "wah_bensheim_4_districts.geojson")
+    polygon = gpd.read_file(Path("data") / "wah_1_polygon_without_census.geojson")
 
     # region_builder = RegionBuilder(technology_registry=technology_registry, data_registry=data_registry)
     # region = region_builder.build(polygon=polygon)
@@ -29,19 +29,20 @@ if __name__ == "__main__":
     esb = EnergySystemBuilder()
     esb.set_polygons(polygon)
     esb.set_default_technology_dependencies()
+    esb.set_default_demands()
     esb.set_technology_registry(technology_registry)
     esb.set_data_registry(data_registry)
 
 
     es = esb.build()
-    es.plot(demand_name="residential_heat", kind="power")
+    es.plot(demand_name="residential_heat", kind="energy")
 
 
 
 
 
 
-    print("Test")
+    print("Finished")
 
 
 
