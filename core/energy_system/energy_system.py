@@ -185,13 +185,25 @@ class EnergySystemBuilder:
         self.technology_registry = technology_registry
         return self
 
-    def set_demands(self, demands: list[Demand]):
+    def set_demands(self, demands: list[Demand] = None, default: bool = False):
+        if default:
+            self._set_default_demands()
+            return self
         if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
             raise TypeError("demands must be a list of Demand instances.")
         self.demands = demands
         return self
 
-    def set_default_demands(self):
+    def set_technology_dependency_manager(self, manager: TechnologyDependencyManager = None, default: bool = False):
+        if default:
+            self._set_default_technology_dependency_manager()
+            return self
+        if not isinstance(manager, TechnologyDependencyManager):
+            raise TypeError("manager must be an instance of TechnologyDependencyManager.")
+        self.technology_dependency_manager = manager
+        return self
+
+    def _set_default_demands(self):
         self.demands = [
             Demand(demand_type="residential_heat",
                    commodity_in="residential_heat",
@@ -227,7 +239,7 @@ class EnergySystemBuilder:
         # Placeholder for building connections, can be implemented later
         return []
 
-    def set_default_technology_dependencies(self):
+    def _set_default_technology_dependency_manager(self):
         dependencies = {
             "ind_district_heating_connection": [
                 TechnologyRequirement(technology_name="heat_grid", capacity_factor=1.5)
