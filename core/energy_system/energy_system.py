@@ -3,7 +3,7 @@ import pandas as pd
 
 from core.energy_system.region import Region, RegionBuilder
 from core.energy_system.region_connection import RegionConnection
-from core.energy_system.rule_book import RuleBook
+from core.energy_system.rule_book import RegionRuleBook, EnergySystemRuleBook
 from core.energy_system.demand import Demand
 from core.energy_system.unit import Unit, UnitEnum
 from core.data.data_registry import DataRegistry
@@ -123,11 +123,13 @@ class EnergySystemBuilder:
         self.polygons = None
         self.region_builder = None
         self.rule_book = None
+        self.region_rule_book = None
         self.data_registry = None
         self.technology_registry = None
         self.connections = None
         self.unit = UnitEnum.GW.unit
         self.technology_dependency_manager = None
+        self.region_builder_config = None
 
     def set_unit(self, input_unit: UnitEnum):
         self.unit = input_unit.unit
@@ -147,7 +149,11 @@ class EnergySystemBuilder:
         self.polygons = polygons.to_crs(self.base_crs)
         return self
 
-    def set_rule_book(self, rule_book: RuleBook | None):
+    def set_region_rule_book(self, rule_book: RegionRuleBook):
+        self.region_rule_book = rule_book
+        return self
+
+    def set_energy_system_rule_book(self, rule_book: EnergySystemRuleBook):
         self.rule_book = rule_book
         return self
 
@@ -162,83 +168,9 @@ class EnergySystemBuilder:
     def set_connections(self, connections: list[RegionConnection]):
         self.connections = connections
 
-    def set_manual_demands(self, region_id, demand: Demand):
-        ...
-
-    def set_manual_individual_technology(self, region, technology: Technology):
-        ...
-
     def build_connections(self) -> list[RegionConnection]:
         # Placeholder for building connections, can be implemented later
         return []
-
-    def validate_district_heating_networks(self, energy_system: EnergySystem, min_threshold=0.0) -> EnergySystem:
-        """Validate district heating, ensuring that the total district heating demand exceed the minimum threshold."""
-        print("Function validate_district_heating_networks is only claude written - check")
-        # 1. Nachbarregionen identifizieren
-        region_neighbors = self._find_neighboring_regions(energy_system.regions)
-
-        # 2. Regionen mit Fernwärme in Cluster gruppieren
-        dh_clusters = self._group_district_heating_regions(energy_system.regions, region_neighbors)
-
-        # 3. Für jeden Cluster die Gesamtwärmemenge berechnen
-        cluster_total_heat = {}
-        for cluster_id, regions in dh_clusters.items():
-            total_heat = 0
-            for region in regions:
-                for r_tech in region.region_technologies:
-                    if r_tech.technology.name == "ind_district_heating_connection":
-                        total_heat += r_tech.initial_energy_output
-            cluster_total_heat[cluster_id] = total_heat
-
-        # 4. Fernwärme in kleinen Clustern entfernen
-        for cluster_id, total_heat in cluster_total_heat.items():
-            if total_heat < min_threshold:
-                for region in dh_clusters[cluster_id]:
-                    region.region_technologies = [
-                        r_tech for r_tech in region.region_technologies
-                        if r_tech.technology.name != "ind_district_heating_connection"]
-        return energy_system
-
-    @staticmethod
-    def _find_neighboring_regions(regions):
-        neighbors = {region.id: [] for region in regions}
-        for i, region1 in enumerate(regions):
-            for j, region2 in enumerate(regions):
-                if i != j and region1.polygon.touches(region2.polygon).any():
-                    neighbors[region1.id].append(region2.id)
-        return neighbors
-
-    def _group_district_heating_regions(self, regions, neighbors):
-        # Regionen mit Fernwärme identifizieren
-        dh_regions = {}
-        for region in regions:
-            if any(r_tech.technology.name == "ind_district_heating_connection"
-                   for r_tech in region.region_technologies):
-                dh_regions[region.id] = region
-
-        # Cluster bilden mit Tiefensuche
-        clusters = {}
-        visited = set()
-        cluster_id = 0
-
-        for region_id in dh_regions:
-            if region_id not in visited:
-                cluster = []
-                self._dfs_cluster(region_id, dh_regions, neighbors, visited, cluster)
-                if cluster:
-                    clusters[cluster_id] = [dh_regions[r_id] for r_id in cluster]
-                    cluster_id += 1
-
-        return clusters
-
-    def _dfs_cluster(self, region_id, dh_regions, neighbors, visited, cluster):
-        visited.add(region_id)
-        cluster.append(region_id)
-
-        for neighbor_id in neighbors[region_id]:
-            if neighbor_id in dh_regions and neighbor_id not in visited:
-                self._dfs_cluster(neighbor_id, dh_regions, neighbors, visited, cluster)
 
     def set_default_technology_dependencies(self):
         dependencies = {
@@ -251,33 +183,51 @@ class EnergySystemBuilder:
         }
         self.technology_dependency_manager = TechnologyDependencyManager(dependencies=dependencies)
 
+    def set_default_region_builder_config(self):
+        self.region_builder_config = {
+            "cap_factor_ind_technologies": 1.1,  # Factor to increase the capacity of individual technologies over the minimum required capacity
+        }
+        return self
+
     def build(self) -> EnergySystem:
+        # verify the required attributes are set
         self.verify()
-        regions = []
+
+        # setup region builder
         rb = RegionBuilder(
             base_crs=self.base_crs,
             data_registry=self.data_registry,
-            technology_registry=self.technology_registry
-        )
-        rb.technology_dependency_manager = self.technology_dependency_manager
+            technology_registry=self.technology_registry)
+        rb.set_technology_dependency_manager(self.technology_dependency_manager)
+        if self.region_rule_book:
+            rb.set_rule_book(self.region_rule_book)
+        if not self.region_builder_config:
+            self.set_default_region_builder_config()
+        rb.set_config(self.region_builder_config)
 
+        # build regions from polygons
+        regions = []
         for row in self.polygons.itertuples(index=False):
             polygon = gpd.GeoDataFrame([{"geometry": row.geometry, "id": getattr(row, "id")}],
                                        crs=self.polygons.crs)
             regions.append(rb.build(polygon=polygon))
 
+        # build connections if not provided
         if self.connections is None:
             connections = self.build_connections()
         else:
             connections = self.connections
 
+        # create the energy system
         es = EnergySystem(
             name=self.energy_system_name,
             regions=regions,
             units=self.unit,
             connections=connections)
 
-        # es = self.validate_district_heating_networks(es)
+        # apply energy system rule book if set
+        if self.rule_book:
+            es = self.rule_book.apply(es)
 
         return es
 
@@ -286,7 +236,7 @@ class EnergySystemBuilder:
             raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
         if not isinstance(self.polygons, gpd.GeoDataFrame):
             raise ValueError(f"Geometry must be set and a GeoDataFrame and not {type(self.polygons)}")
-        if not isinstance(self.rule_book, RuleBook | None):
+        if not isinstance(self.rule_book, EnergySystemRuleBook | None):
             raise ValueError(f"RuleBook must be set and of type RuleBook or None and not {type(self.rule_book)}")
         if not isinstance(self.data_registry, DataRegistry):
             raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")

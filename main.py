@@ -5,6 +5,7 @@ from core.data.data_registry import DataRegistry
 from core.data.datasets import ResidentialHeatDemandProfile
 from core.energy_system.energy_system import EnergySystemBuilder
 from core.energy_system.region import RegionBuilder
+from core.energy_system.rule_book import EnergySystemRuleBook, ValidateDistrictHeating
 from core.energy_system.technology_registry import TechnologyRegistry
 from tests.test_district import test_district_from_bounding_box, test_residential_yearly_heat_demand
 
@@ -25,12 +26,16 @@ if __name__ == "__main__":
     # region_builder = RegionBuilder(technology_registry=technology_registry, data_registry=data_registry)
     # region = region_builder.build(polygon=polygon)
 
+    esb_rb = EnergySystemRuleBook()
+    esb_rb.add_rule(ValidateDistrictHeating(min_threshold=1000))
+
     esb = EnergySystemBuilder()
     esb.set_polygons(polygon)
+    esb.set_default_technology_dependencies()
     esb.set_technology_registry(technology_registry)
     esb.set_data_registry(data_registry)
-    esb.set_rule_book(None)
-    esb.set_default_technology_dependencies()
+    esb.set_energy_system_rule_book(esb_rb)
+
 
     es = esb.build()
     es.plot(demand_name="residential_heat", kind="power")

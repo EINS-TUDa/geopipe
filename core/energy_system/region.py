@@ -1,7 +1,7 @@
 from core.data.data_registry import DataRegistry
 from core.data.datasets import CensusTechnology
 from core.energy_system.demand import Demand, RegionDemand
-from core.energy_system.rule_book import RuleBook
+from core.energy_system.rule_book import RegionRuleBook
 import geopandas as gpd
 
 from core.energy_system.technology import Technology, RegionTechnology, TechnologyDependencyManager, \
@@ -33,9 +33,13 @@ class RegionBuilder:
                  data_registry: DataRegistry,
                  base_crs: str = "EPSG:25832", ):
         self.base_crs = base_crs
-        self.rule_book = None
         self.data_registry = data_registry
         self.technology_registry = technology_registry
+
+        self.rule_book = None
+        self.technology_dependency_manager = None
+        self.config = None
+
         self.demands = [
             Demand(demand_type="residential_heat",
                    commodity_in="residential_heat",
@@ -62,11 +66,21 @@ class RegionBuilder:
                    profile_query_params={"type": "residential_electricity_profile"},
                    )
         ]
-        self.technology_dependency_manager = None
-        self.config = {
-            "cap_factor_ind_technologies": 1.1 # Factor to increase the capacity of individual technologies over the minimum required capacity
-        }
 
+
+    def set_rule_book(self, rule_book: RegionRuleBook):
+        if not isinstance(rule_book, RegionRuleBook):
+            raise TypeError("rule_book must be an instance of RegionRuleBook.")
+        self.rule_book = rule_book
+        return self
+
+    def set_technology_dependency_manager(self, manager):
+        self.technology_dependency_manager = manager
+        return self
+
+    def set_config(self, config: dict):
+        self.config = config
+        return self
 
 
     def build_demands(self, polygon) -> list[RegionDemand]:
