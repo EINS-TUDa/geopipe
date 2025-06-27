@@ -236,7 +236,14 @@ class EnergySystemBuilder:
         self.connections = connections
 
     def build_connections(self) -> list[RegionConnection]:
-        # Placeholder for building connections, can be implemented later
+        """
+        Different logics should be implemented here to build connections between regions.
+        1. If a region touches another region, a connection should be created.
+        2. If there is a connection via a street, a connection should be created.
+        Or: Take user defined connections from a file.
+
+        Also, it should be possible to define the commodities that are transported via the connection.
+        """
         return []
 
     def _set_default_technology_dependency_manager(self):
@@ -296,6 +303,7 @@ class EnergySystemBuilder:
         # apply energy system rule book if set
         if self.rule_book:
             es = self.rule_book.apply(es)
+        print("Add energy system builder rule book. Add district heating rule (minimum energy output). See git for inspiration")
 
         return es
 
