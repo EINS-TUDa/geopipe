@@ -6,15 +6,15 @@ import shapely.geometry
 
 import numpy as np
 
-from core.data.dataset import Dataset, SpatialDataset, TemporalDataset
-from core.data.data_registry import DataRegistry, default_data_registry
+from pypeline.data.dataset import Dataset, SpatialDataset, TemporalDataset
+from pypeline.data.data_registry import DataRegistry, default_data_registry
 import geopandas as gpd
 import pandas as pd
 import requests
 
 from shapely.geometry import shape
 
-from core.energy_system.technology_registry import default_technology_registry
+from pypeline.energy_system.technology_registry import default_technology_registry
 
 
 class CensusTechnology(Enum):

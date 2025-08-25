@@ -1,4 +1,4 @@
-from core.optimization.solver import OptimizationBackend
+from pypeline.optimization.solver import OptimizationBackend
 
 
 class CESMGamsBackend(OptimizationBackend):

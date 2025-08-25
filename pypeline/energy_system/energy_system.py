@@ -1,15 +1,15 @@
 import geopandas as gpd
 import pandas as pd
 
-from core.data.datasets import CensusTechnology
-from core.energy_system.region import Region, RegionBuilder
-from core.energy_system.region_connection import RegionConnection
-from core.energy_system.rule_book import RegionRuleBook, EnergySystemRuleBook
-from core.energy_system.demand import Demand
-from core.energy_system.unit import Unit, UnitEnum
-from core.data.data_registry import DataRegistry
-from core.energy_system.technology_registry import TechnologyRegistry
-from core.energy_system.technology import Technology, RegionTechnology, TechnologyRequirement, \
+from pypeline.data.datasets import CensusTechnology
+from pypeline.energy_system.region import Region, RegionBuilder
+from pypeline.energy_system.region_connection import RegionConnection
+from pypeline.energy_system.rule_book import RegionRuleBook, EnergySystemRuleBook
+from pypeline.energy_system.demand import Demand
+from pypeline.energy_system.unit import Unit, UnitEnum
+from pypeline.data.data_registry import DataRegistry
+from pypeline.energy_system.technology_registry import TechnologyRegistry
+from pypeline.energy_system.technology import Technology, RegionTechnology, TechnologyRequirement, \
     TechnologyDependencyManager
 
 

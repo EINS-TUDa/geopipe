@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Type
 
-from core.energy_system.technology import Technology
+from pypeline.energy_system.technology import Technology
 
 
 class TechnologyNotFoundError(Exception):
@@ -60,6 +60,8 @@ class TechnologyRegistry:
         """
         Load technologies from the global registry, filtering by allowed classes if specified.
         """
+        if not DEFAULT_TECHNOLOGY_REGISTRY.get_all():
+            raise ValueError("No technologies registered in the default technology registry.")
         for tech in DEFAULT_TECHNOLOGY_REGISTRY.get_all():
             self.register(tech)
 

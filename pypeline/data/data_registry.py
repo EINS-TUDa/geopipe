@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from core.data.dataset import Dataset
+from pypeline.data.dataset import Dataset
 import geopandas as gpd
 
 
@@ -50,7 +50,7 @@ class DataRegistry:
 
 
 class DefaultDataRegistry:
-    # stores classes while DataRegistry stores instances
+    # stores classes while DataRegistry stores instances so that data is only loaded if needed
     def __init__(self):
         self._registry: list[type[Dataset]] = []
 

@@ -1,5 +1,5 @@
-from core.energy_system.technology import Technology
-from core.energy_system.technology_registry import default_technology_registry
+from pypeline.energy_system.technology import Technology
+from pypeline.energy_system.technology_registry import default_technology_registry
 
 
 @default_technology_registry

@@ -1,12 +1,12 @@
-from core.data.data_registry import DataRegistry
-from core.data.datasets import CensusTechnology
-from core.energy_system.demand import Demand, RegionDemand
-from core.energy_system.rule_book import RegionRuleBook
+from pypeline.data.data_registry import DataRegistry
+from pypeline.data.datasets import CensusTechnology
+from pypeline.energy_system.demand import Demand, RegionDemand
+from pypeline.energy_system.rule_book import RegionRuleBook
 import geopandas as gpd
 
-from core.energy_system.technology import Technology, RegionTechnology, TechnologyDependencyManager, \
+from pypeline.energy_system.technology import Technology, RegionTechnology, TechnologyDependencyManager, \
     TechnologyRequirement
-from core.energy_system.technology_registry import TechnologyRegistry
+from pypeline.energy_system.technology_registry import TechnologyRegistry
 
 
 class Region:

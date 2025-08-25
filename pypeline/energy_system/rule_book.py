@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from core.energy_system.region import Region
+    from pypeline.energy_system.region import Region
 
 
 class RegionRuleBook:
