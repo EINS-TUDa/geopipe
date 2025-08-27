@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -62,3 +64,64 @@ class LimitTechnologyInRegionRule(RegionRule):
         """Applies the rule to a given region."""
         if self.condition(region):
             region.restrict_technology(self.technology)
+
+class MinimumDHNThroughputRule(EnergySystemRule):
+    """
+    Require a minimum annual heat delivered by DHN-like techs for the given demand.
+    Writes per-region targets (MWh) to energy_system.constraints['min_dhn_throughput_mwh'].
+    """
+    def __init__(self,
+                 demand_name="residential_heat",
+                 min_share=None,                     # bspw 0.20 via DHN
+                 min_mwh_by_region=None,             # dict {region_id: MWh}
+                 dhn_tech_names=None):               
+        self.demand_name = demand_name
+        self.min_share = min_share
+        self.min_mwh_by_region = min_mwh_by_region
+        self.dhn_tech_names = tuple(dhn_tech_names) if dhn_tech_names else (
+            # include connection so delivered energy is counted on the consumer side
+            "ind_district_heating_connection",
+            "heat_grid", "cen_heat_pump", "cen_gas_boiler", "cen_chp"
+        )
+
+    def apply(self, energy_system):
+        constraints = getattr(energy_system, "constraints", {})
+        targets = {}
+
+        for region in energy_system.regions:
+            raw_id = getattr(region, "id", getattr(region, "id_", 0))
+            if hasattr(raw_id, "iloc"):           # pandas Series length 1
+                raw_id = raw_id.iloc[0]
+            try:
+                import numpy as _np
+                if isinstance(raw_id, _np.generic):  # numpy -> python
+                    raw_id = raw_id.item()
+            except Exception:
+                pass
+            rid = int(raw_id)
+            rd = region.get_demand(self.demand_name)
+            if rd is None:
+                continue
+
+            annual_mwh = float(getattr(rd, "value", getattr(rd, "annual", 0.0)))
+
+            # choose target
+            if self.min_mwh_by_region and rid in self.min_mwh_by_region:
+                target = float(self.min_mwh_by_region[rid])
+            elif self.min_share is not None:
+                target = max(0.0, float(self.min_share)) * annual_mwh
+            else:
+                continue
+
+            has_dhn = any(
+                getattr(getattr(rt, "technology", None), "name", "") in self.dhn_tech_names
+                for rt in getattr(region, "region_technologies", [])
+            )
+            if not has_dhn:
+                continue
+
+            targets[rid] = target
+
+        constraints.setdefault("min_dhn_throughput_mwh", {}).update(targets)
+        energy_system.constraints = constraints
+        return energy_system

@@ -11,7 +11,7 @@ data_registry = DataRegistry()
 data_registry.load_from_default()
 
 polygons = gpd.read_file(Path("data") / "wah_bensheim_4_districts.geojson")
-# polygons = gpd.read_file(Path("data") / "wah_1_polygon_without_census.geojson")
+#polygons = gpd.read_file(Path("data") / "wah_1_polygon_without_census.geojson")
 
 esb = EnergySystemBuilder()
 esb.set_polygons(polygons)

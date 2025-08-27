@@ -303,7 +303,6 @@ class EnergySystemBuilder:
         # apply energy system rule book if set
         if self.rule_book:
             es = self.rule_book.apply(es)
-        print("Add energy system builder rule book. Add district heating rule (minimum energy output). See git for inspiration")
 
         return es
 
