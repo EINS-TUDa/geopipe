@@ -1,13 +1,13 @@
 from __future__ import annotations
+
 import argparse
 import sqlite3
 import sys
-import types                      
+import types
 from pathlib import Path
 
 def _ensure_cesm_package(cesm_dir: Path) -> None:
     """
-    Create a lightweight 'cesm' package so pkg_resources.resource_filename('cesm', ...)
     resolves files under the CESM folder without importing CESM/cesm.py.
     """
     if "cesm" in sys.modules and getattr(sys.modules["cesm"], "__path__", None):
@@ -40,6 +40,9 @@ def main() -> int:
     sys.path.insert(0, str(cesm_dir))
     _ensure_cesm_package(cesm_dir)
 
+    from core.input_parser import Parser
+    from core.model import Model
+
     data_dir    = cesm_dir / "Data"
     techmap_dir = data_dir / "Techmap"
     ts_dir      = data_dir / "TimeSeries"
@@ -54,18 +57,17 @@ def main() -> int:
     must_exist(cesm_dir, "CESM folder")
     must_exist(techmap_dir / f"{model_name}.xlsx", "Techmap workbook")
     ts_dir.mkdir(parents=True, exist_ok=True)
+
     runs_dir.mkdir(exist_ok=True)
     db_dir.mkdir(exist_ok=True)
-
-    from core.input_parser import Parser
-    from core.model import Model
-
-    # write the db file 
     conn = sqlite3.connect(":memory:")
+
     parser = Parser(model_name, techmap_dir_path=techmap_dir, ts_dir_path=ts_dir, db_conn=conn, scenario=scenario_name)
     parser.parse()
+
     model = Model(conn=conn)
     model.solve()
+    model.save_output()
 
     if db_path.exists():
         db_path.unlink()

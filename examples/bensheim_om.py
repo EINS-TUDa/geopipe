@@ -2,13 +2,14 @@
 from pathlib import Path
 import sys
 import geopandas as gpd
+import sqlite3
 
 from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
 from pypeline.optimization.cesm_to_om_adapter import build_om_from_es
 from pypeline.optimization.cesm_backend import CESMBackend
-from tools.cesm_writer import write_cesm_inputs_from_data 
+from tools.cesm_writer import write_cesm_inputs_from_data
 
 def must_exist(p: Path, what: str) -> None:
     if not p.exists():
@@ -17,7 +18,8 @@ def must_exist(p: Path, what: str) -> None:
 def main():
     tech_reg = TechnologyRegistry(); tech_reg.load_from_default()
     data_reg = DataRegistry();       data_reg.load_from_default()
-    polygons = gpd.read_file(Path("data") / "wah_bensheim_4_districts.geojson")
+    polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
+    polygons = gpd.read_file(Path(polygons_path))
 
     esb = EnergySystemBuilder(energy_system_name="Bensheim")
     esb.set_polygons(polygons)
@@ -53,23 +55,29 @@ def main():
         model_name=model_name,
         scenario_name=scenario_name,
         tss_name=tss_name,
+        polygons_path=polygons_path,            
         data_dir=Path("data"),
         heat_file="D_Heat_Household_J.txt",
+        heat_unit="MWH",
         elec_profile_file="corrected_eletricity_demand_2016.txt",
+        heat_commodity_base="Heat",
         electric_boiler_eta=0.95,
-        elec_price_eur_per_mwh=120.0,  
-        export_price_eur_per_mwh=0.0,  
-        cap_max_mw=1e6,
-        start_year=2020, end_year=2030, year_gap=5,
-        discount_rate=0.05, dt_hours=1,
+        elec_price_eur_per_mwh=80.0,
+        export_price_eur_per_mwh=0.0,
+        eb_cap_max_mw=None,       
+        eb_max_eout_mwh=None,     
+        pipe_loss_fraction=0.05,
+        pipe_cap_max_mw=1e6,
+        pipe_opex_eur_per_mwh=0.0,
     )
 
     xlsx = techmap_dir / f"{model_name}.xlsx"
     tss  = ts_dir / f"{tss_name}.txt"
     must_exist(xlsx, "Techmap workbook")
-    must_exist(tss, "Time-series file")
+    must_exist(tss,  "Time-series file")
 
-    print(f"Techmaps in CESM/Data/Techmap: {[p.stem for p in techmap_dir.glob('*.xlsx')]}")
+    visible = sorted([p.stem for p in techmap_dir.glob("*.xlsx") if p.is_file()])
+    print(f"Techmaps in CESM/Data/Techmap: {visible}")
     print(f"Expecting CESM to run: -m {model_name} -s {scenario_name}")
     print(f"TSS file present: {tss.resolve()}")
 
@@ -82,12 +90,43 @@ def main():
         cli=[sys.executable, str(runner)],
         run_args=["--workdir", ".", "-m", model_name, "-s", scenario_name],
         run_subdir=run_name,
-        write_inputs=False,  
+        write_inputs=False,
     )
 
     solution = backend.optimize(om)
     print("Using DB:", solution.results.get("db"))
     print(solution.results)
+
+    try:
+        sys.path.insert(0, str(Path("CESM")))
+        from core.plotter import Plotter, PlotType
+        from core.data_access import DAO
+
+        db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            dao = DAO(conn)
+            plotter = Plotter(dao)
+
+            sankey_fig = plotter.plot_sankey(year=2020)
+            sankey_fig.show()
+
+            plotter.plot_timeseries(
+                timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
+                year=2020,
+                commodity="Electricity",
+            )
+            plotter.plot_timeseries(
+                timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
+                year=2020,
+                commodity="Electricity",
+            )
+        finally:
+            conn.close()
+    except ModuleNotFoundError:
+        print("Plotting skipped - CESM core is not on PYTHONPATH")
+    except Exception as e:
+        print(f"Plotting failed: {e}")
 
 if __name__ == "__main__":
     try:
