@@ -48,27 +48,42 @@ def main():
     ts_dir      = workdir / "Data" / "TimeSeries"
     techmap_dir.mkdir(parents=True, exist_ok=True)
     ts_dir.mkdir(parents=True, exist_ok=True)
+    heat_file = "D_Heat_Household_J.txt"
+    electricity_file = "corrected_eletricity_demand_2016.txt"
 
     write_cesm_inputs_from_data(
-        om,
-        workdir=workdir,
-        model_name=model_name,
-        scenario_name=scenario_name,
-        tss_name=tss_name,
-        polygons_path=polygons_path,            
-        data_dir=Path("data"),
-        heat_file="D_Heat_Household_J.txt",
-        heat_unit="MWH",
-        elec_profile_file="corrected_eletricity_demand_2016.txt",
-        heat_commodity_base="Heat",
-        electric_boiler_eta=0.95,
-        elec_price_eur_per_mwh=80.0,
-        export_price_eur_per_mwh=0.0,
-        eb_cap_max_mw=None,       
-        eb_max_eout_mwh=None,     
-        pipe_loss_fraction=0.05,
-        pipe_cap_max_mw=1e6,
-        pipe_opex_eur_per_mwh=0.0,
+    om,
+    workdir=workdir,
+    model_name=model_name,
+    scenario_name=scenario_name,
+    tss_name=tss_name,
+    polygons_path=polygons_path,
+    data_dir=Path("data"),
+    heat_file=heat_file,
+    heat_unit="MWH",
+    elec_profile_file=electricity_file,
+    heat_commodity_base="Heat",
+
+    # EB tiers
+    eb_small_eta=0.95,
+    eb_small_capex_eur_per_mw=11000.0,
+    eb_small_opex_eur_per_mw=0.0,
+    eb_small_opex_eur_per_mwh=0.0,
+    eb_small_cap_max_mw=0.1,
+
+    eb_large_eta=0.96,
+    eb_large_capex_eur_per_mw=10000.0,
+    eb_large_opex_eur_per_mw=0.0,
+    eb_large_opex_eur_per_mwh=0.0,
+    eb_large_out_frac_min=0.5,
+    eb_large_cap_min_mw=0.04,
+    eb_large_cap_max_mw=0.85,
+
+    # Pipes
+    pipe_loss_fraction=0.01,
+    pipe_capex_eur_per_mw=50000,
+    pipe_opex_eur_per_mwh=0.0,
+    pipe_cap_max_mw=10.0,
     )
 
     xlsx = techmap_dir / f"{model_name}.xlsx"
@@ -111,16 +126,16 @@ def main():
             sankey_fig = plotter.plot_sankey(year=2020)
             sankey_fig.show()
 
-            plotter.plot_timeseries(
-                timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-                year=2020,
-                commodity="Electricity",
-            )
-            plotter.plot_timeseries(
-                timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
-                year=2020,
-                commodity="Electricity",
-            )
+            # plotter.plot_timeseries(
+            #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
+            #     year=2020,
+            #     commodity="Electricity",
+            # )
+            # plotter.plot_timeseries(
+            #     timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
+            #     year=2020,
+            #     commodity="Electricity",
+            # )
         finally:
             conn.close()
     except ModuleNotFoundError:

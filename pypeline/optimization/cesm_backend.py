@@ -135,12 +135,10 @@ class CESMBackend(OptimizationModel):
         with sqlite3.connect(db_path) as con:
             cur = con.cursor()
 
-            # tables
             cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [t[0] for t in cur.fetchall()]
             out["tables"] = tables
 
-            # columns + row counts
             def pragma_cols(table: str) -> list[str]:
                 cur.execute(f"PRAGMA table_info({table})")
                 return [row[1] for row in cur.fetchall()]
@@ -173,7 +171,6 @@ class CESMBackend(OptimizationModel):
                 """)
                 tech_map = {row[0]: row[1] for row in cur.fetchall()}
 
-            # per year KPIs
             kpis: Dict[str, Any] = {}
 
             if "output_y" in tables and all(c in columns["output_y"] for c in ("y_id", "total_annual_co2_emission")):
@@ -293,11 +290,10 @@ def write_cesm_inputs_minimal_from_om(om: OMContext, cesm_root: Path, model_name
     df_co = pd.DataFrame([{"commodity_name": c, "order": None, "color": None} for c in commodities]) if commodities else pd.DataFrame(columns=["commodity_name","order","color"])
     df_cp = pd.DataFrame([{"conversion_process_name": p, "order": None, "color": None} for p in processes]) if processes else pd.DataFrame(columns=["conversion_process_name","order","color"])
 
-    # Expect om.conversion_sub_processes as iterable of dicts like: {"cp": "Central_Heat_Pump", "cin": "Electricity", "cout": "Decentral_Heat", param_name: value, ...}
     cs = list(getattr(om, "conversion_sub_processes", []) or [])
 
     base_cols = ["conversion_process_name", "commodity_in", "commodity_out", "scenario"]
-    # A superset of common params that CESM understands, NaN if unavailable.
+    
     param_cols = [
         "spec_co2","efficiency","technical_lifetime","technical_availability","c_rate",
         "efficiency_charge","is_storage",

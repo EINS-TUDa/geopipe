@@ -80,6 +80,17 @@ class TechnologyRegistry:
         Returns True if it exists, False otherwise.
         """
         return name in self._technologies
+    
+    def subregistry_by_flags(self, flags: dict[str, bool]) -> "TechnologyRegistry":
+        """
+        Create a new registry that only contains technologies whose name is True in `flags`.
+        Missing names are ignored. Order/instances are preserved.
+        """
+        sub = TechnologyRegistry()
+        for name, tech in self._technologies.items():
+            if flags.get(name, False):
+                sub.register(tech)
+        return sub
 
 
 DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()

@@ -5,6 +5,8 @@ import sqlite3
 import sys
 import types
 from pathlib import Path
+from core.input_parser import Parser
+from core.model import Model
 
 def _ensure_cesm_package(cesm_dir: Path) -> None:
     """
@@ -40,8 +42,7 @@ def main() -> int:
     sys.path.insert(0, str(cesm_dir))
     _ensure_cesm_package(cesm_dir)
 
-    from core.input_parser import Parser
-    from core.model import Model
+
 
     data_dir    = cesm_dir / "Data"
     techmap_dir = data_dir / "Techmap"
@@ -66,8 +67,18 @@ def main() -> int:
     parser.parse()
 
     model = Model(conn=conn)
-    model.solve()
-    model.save_output()
+    try:
+        model.solve()
+    except Exception as e:
+        print("Model failed to solve.")
+        print(e)
+        raise
+    try:
+        model.save_output()
+    except Exception as e:
+        print("Model didn’t return a feasible solution.")
+        print(e)
+        raise
 
     if db_path.exists():
         db_path.unlink()
