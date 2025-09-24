@@ -45,3 +45,8 @@ dependencies = [
 dev = [
     "pytest>=8.3.5",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pypeline*"]
+exclude = ["CESM*", "data*", "examples*", "tests*", "tools*", "docs*"]

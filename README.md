@@ -5,29 +5,37 @@ PYthon-based data piPELINe for Energy system modeling
 ## How to run with CESM
 1. Clone the repository
     ```
-    > git clone https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/
+   git clone https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/
     ```
-2. Initialize and update submodules
+2. Change into the directory
+    ```
+    cd data_pipeline_esm
+    ```
+3. Initialize git
+    ```
+    git init --initial-branch=main
+    ```
+4. Initialize and update submodules
     ``` 
-    > git submodule update --init --recursive
+    git submodule update --init --recursive
     ```
-3. Create an environment
+5. Create an environment
     ```
-    > python -m venv .venv
+    python -m venv .venv
     ```
-4. Activate the environment
+6. Activate the environment
     ```
-    > .venv/Scripts/activate
+    .venv/Scripts/activate
     ```
-5. Install the package
+7. Install the package
     ```
-    > pip install -e . 
+    pip install -e . 
     ```
     For development, use:
     ```
-    > pip install -e .[dev]
+    pip install -e .[dev]
     ```
-6. Install the submodule
+8. Install the submodule
     ```
-    > pip install -e ./cesm
+    pip install -e ./cesm
     ```
