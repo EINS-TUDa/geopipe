@@ -112,40 +112,33 @@ def main():
     print("Using DB:", solution.results.get("db"))
     print(solution.results)
 
+
+
+
+    from cesm import Plotter, PlotType
+    from cesm import DAO
+
+    db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
+    conn = sqlite3.connect(str(db_path))
     try:
-        sys.path.insert(0, str(Path("CESM")))
-        from core.plotter import Plotter, PlotType
-        from core.data_access import DAO
+        dao = DAO(conn)
+        plotter = Plotter(dao)
 
-        db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
-        conn = sqlite3.connect(str(db_path))
-        try:
-            dao = DAO(conn)
-            plotter = Plotter(dao)
+        sankey_fig = plotter.plot_sankey(year=2020)
+        sankey_fig.show()
 
-            sankey_fig = plotter.plot_sankey(year=2020)
-            sankey_fig.show()
-
-            # plotter.plot_timeseries(
-            #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-            #     year=2020,
-            #     commodity="Electricity",
-            # )
-            # plotter.plot_timeseries(
-            #     timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
-            #     year=2020,
-            #     commodity="Electricity",
-            # )
-        finally:
-            conn.close()
-    except ModuleNotFoundError:
-        print("Plotting skipped - CESM core is not on PYTHONPATH")
-    except Exception as e:
-        print(f"Plotting failed: {e}")
+        # plotter.plot_timeseries(
+        #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
+        #     year=2020,
+        #     commodity="Electricity",
+        # )
+        # plotter.plot_timeseries(
+        #     timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
+        #     year=2020,
+        #     commodity="Electricity",
+        # )
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(e)
-        sys.exit(1)
+    main()

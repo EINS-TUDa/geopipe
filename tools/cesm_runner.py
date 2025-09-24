@@ -5,8 +5,8 @@ import sqlite3
 import sys
 import types
 from pathlib import Path
-from core.input_parser import Parser
-from core.model import Model
+from cesm import Parser
+from cesm import Model
 
 def _ensure_cesm_package(cesm_dir: Path) -> None:
     """
@@ -38,11 +38,6 @@ def main() -> int:
     if not core_dir.exists():
         print(f"ERROR: Missing CESM folder: {cesm_dir}")
         return 2
-
-    sys.path.insert(0, str(cesm_dir))
-    _ensure_cesm_package(cesm_dir)
-
-
 
     data_dir    = cesm_dir / "Data"
     techmap_dir = data_dir / "Techmap"
