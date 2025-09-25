@@ -11,31 +11,26 @@ PYthon-based data piPELINe for Energy system modeling
     ```
     cd data_pipeline_esm
     ```
-3. Initialize git
-    ```
-    git init --initial-branch=main
-    ```
-4. Initialize and update submodules
+3. Initialize and update submodules
     ``` 
     git submodule update --init --recursive
     ```
-5. Create an environment
+4. Create an environment
     ```
     python -m venv .venv
     ```
-6. Activate the environment
+5. Activate the environment
     ```
     .venv/Scripts/activate
     ```
-7. Install the package
+6. Install the package
     ```
     pip install -e . 
     ```
     For development, use:
     ```
     pip install -e .[dev]
-    ```
-8. Install the submodule
+7. Install the submodule
     ```
     pip install -e ./cesm
     ```
