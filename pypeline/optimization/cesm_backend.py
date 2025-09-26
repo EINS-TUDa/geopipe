@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from pypeline.optimization.solver import OptimizationModel, Solution
+from pypeline.optimization.solver import OptimizationModel, Solution, Results
 from pypeline.optimization.cesm_to_om_adapter import OMContext
 
 import pandas as pd
@@ -129,116 +130,80 @@ class CESMBackend(OptimizationModel):
             )
 
 
-    def _parse_outputs(self, db_path: Path) -> Dict[str, Any]:
-        out: Dict[str, Any] = {"status": "ok", "db": str(db_path)}
-
+    def _parse_outputs(self, db_path: Path) -> Results:
+        """Reads the CESM outputs and transforms it into the pypeline results format, as defined in Results."""
         with sqlite3.connect(db_path) as con:
             cur = con.cursor()
 
             cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [t[0] for t in cur.fetchall()]
-            out["tables"] = tables
-
-            def pragma_cols(table: str) -> list[str]:
-                cur.execute(f"PRAGMA table_info({table})")
-                return [row[1] for row in cur.fetchall()]
-
-            columns = {t: pragma_cols(t) for t in tables}
-            row_counts = {}
-            for t in tables:
-                try:
-                    cur.execute(f"SELECT COUNT(*) FROM {t}")
-                    row_counts[t] = int(cur.fetchone()[0])
-                except Exception:
-                    row_counts[t] = -1
-            out["columns"] = columns
-            out["row_counts"] = row_counts
 
             # helper maps
             def kv(table: str, k: str, v: str) -> dict:
+                """Returns a dict mapping k -> v for all rows in table."""
                 cur.execute(f"SELECT {k}, {v} FROM {table}")
                 return {row[0]: row[1] for row in cur.fetchall()}
-
             year_map = kv("year", "id", "value") if "year" in tables else {}
             com_map  = kv("commodity", "id", "name") if "commodity" in tables else {}
-
             tech_map: dict[int, str] = {}
-            if "conversion_subprocess" in tables and "conversion_process" in tables:
-                cur.execute("""
-                    SELECT cs.id, cp.name
-                    FROM conversion_subprocess cs
-                    JOIN conversion_process cp ON cs.cp_id = cp.id
-                """)
-                tech_map = {row[0]: row[1] for row in cur.fetchall()}
+            cur.execute("""
+                            SELECT cs.id, cp.name
+                            FROM conversion_subprocess cs
+                            JOIN conversion_process cp ON cs.cp_id = cp.id
+                        """)
+            tech_map = {row[0]: row[1] for row in cur.fetchall()}
 
-            kpis: Dict[str, Any] = {}
+            df_cs = pd.read_sql_query("""SELECT 
+                            cs.id, 
+                            cp.name AS cp,
+                            co_in.name AS cin,
+                            co_out.name AS cout
+                        FROM conversion_subprocess cs
+                        JOIN conversion_process cp ON cs.cp_id = cp.id
+                        LEFT JOIN commodity co_in ON cs.cin_id = co_in.id
+                        LEFT JOIN commodity co_out ON cs.cout_id = co_out.id""", con)
 
-            if "output_y" in tables and all(c in columns["output_y"] for c in ("y_id", "total_annual_co2_emission")):
-                cur.execute(""" SELECT y_id, SUM(total_annual_co2_emission) FROM output_y GROUP BY y_id """)
-                kpis["emissions_by_year"] = {str(year_map.get(y, y)): float(v) for (y, v) in cur.fetchall()}
 
-            if "output_co_y_t" in tables and all(c in columns["output_co_y_t"] for c in ("co_id","y_id","enetgen","enetcons")):
-                cur.execute(""" SELECT co_id, y_id, SUM(enetgen) AS gen, SUM(enetcons) AS cons FROM output_co_y_t GROUP BY co_id, y_id""")
-                gen = {}
-                cons = {}
-                for co, y, g, c in cur.fetchall():
-                    cn = str(com_map.get(co, co))
-                    yn = str(year_map.get(y, y))
-                    gen.setdefault(cn, {})[yn] = float(g)
-                    cons.setdefault(cn, {})[yn] = float(c)
-                kpis["gen_by_commodity_year"]  = gen
-                kpis["cons_by_commodity_year"] = cons
+            # extract regions from name strings (e.g. "Demand_D0")
+            def extract_region(name: str) -> Optional[int]:
+                """Extracts the region number from a technology name with _D{region} suffix.
+                Returns None if no region suffix is found."""
+                match = re.search(r"_D(\d+)$", str(name))
+                if match:
+                    return int(match.group(1))
+                return None
 
-                bal: Dict[str, float] = {}
-                for c, per_year in gen.items():
-                    for yname, gval in per_year.items():
-                        bal[yname] = bal.get(yname, 0.0) + gval
-                for c, per_year in cons.items():
-                    for yname, cval in per_year.items():
-                        bal[yname] = bal.get(yname, 0.0) - cval
-                kpis["net_energy_balance_by_year"] = bal
+            def strip_region_suffix_from_name(name: str) -> str:
+                """Strips the _D{region} suffix from a technology name."""
+                return re.sub(r"_D\d+$", "", str(name))
 
-            if "output_cs_y" in tables and all(c in columns["output_cs_y"] for c in ("cs_id","y_id","eouttot")):
-                cur.execute(""" SELECT cs_id, y_id, SUM(eouttot) FROM output_cs_y GROUP BY cs_id, y_id """)
-                e_by_tech = {}
-                for cs, y, val in cur.fetchall():
-                    tn = str(tech_map.get(cs, cs))
-                    yn = str(year_map.get(y, y))
-                    e_by_tech.setdefault(tn, {})[yn] = float(val)
-                kpis["energy_by_tech_year"] = e_by_tech
+            def output_cs_y_to_df(variable: str) -> pd.DataFrame:
+                df = pd.read_sql_query(f"SELECT cs_id, y_id, {variable} FROM output_cs_y", con)
+                df["y_id"] = df["y_id"].map(year_map)
+                df = df.merge(df_cs[["id", "cp", "cin", "cout"]], left_on="cs_id", right_on="id", how="left")
+                df = df.drop(columns=["cs_id", "id"])  # remove id columns
+                df["r"] = df["cp"].apply(extract_region)
+                df["cp"] = df["cp"].apply(strip_region_suffix_from_name)
+                df = df.rename(columns={"y_id": "y"})
+                return df
 
-            if "output_cs_y" in tables and all(c in columns["output_cs_y"] for c in ("cs_id","y_id","cap_active","cap_new")):
-                cur.execute(""" SELECT cs_id, y_id, SUM(cap_active), SUM(cap_new) FROM output_cs_y GROUP BY cs_id, y_id """)
-                cap_active = {}
-                cap_new = {}
-                for cs, y, a, n in cur.fetchall():
-                    tn = str(tech_map.get(cs, cs))
-                    yn = str(year_map.get(y, y))
-                    cap_active.setdefault(tn, {})[yn] = float(a)
-                    cap_new.setdefault(tn, {})[yn] = float(n)
-                kpis["cap_active_by_tech_year"] = cap_active
-                kpis["cap_new_by_tech_year"]    = cap_new
+            df_yearly_energy_outputs = output_cs_y_to_df(variable="eouttot")
+            df_active_capacities = output_cs_y_to_df(variable="cap_active")
 
-            if "output_cs_y_t" in tables and all(c in columns["output_cs_y_t"] for c in ("cs_id","y_id","pout")):
-                cur.execute(""" SELECT cs_id, y_id, MAX(pout) FROM output_cs_y_t GROUP BY cs_id, y_id """)
-                peak = {}
-                for cs, y, p in cur.fetchall():
-                    tn = str(tech_map.get(cs, cs))
-                    yn = str(year_map.get(y, y))
-                    peak.setdefault(tn, {})[yn] = float(p)
-                kpis["peak_pout_by_tech_year"] = peak
+            cur.execute("SELECT OPEX, CAPEX, TOTEX FROM output_global LIMIT 1")
+            row = cur.fetchone()
+            opex = float(row[0])
+            capex = float(row[1])
+            totex = float(row[2])
 
-            if "output_global" in tables and any(c in columns["output_global"] for c in ("OPEX","CAPEX","TOTEX")):
-                cur.execute("SELECT OPEX, CAPEX, TOTEX FROM output_global LIMIT 1")
-                row = cur.fetchone()
-                if row is not None:
-                    kpis["system_cost_totals"] = {"OPEX": float(row[0]) if row[0] is not None else None,
-                                                 "CAPEX": float(row[1]) if row[1] is not None else None,
-                                                 "TOTEX": float(row[2]) if row[2] is not None else None,}
-
-            out["kpis"] = kpis
-
-        return out
+        results = Results(
+            active_capacities= df_active_capacities,
+            yearly_energy_outputs = df_yearly_energy_outputs,
+            opex = opex,
+            capex = capex,
+            totex = totex,
+        )
+        return results
 
 
 def write_cesm_inputs_minimal_from_om(om: OMContext, cesm_root: Path, model_name: str, scenario_name: str, tss_name: str,) -> None:

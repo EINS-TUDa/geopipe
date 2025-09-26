@@ -9,6 +9,7 @@ from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThr
 from pypeline.energy_system.scenario import Scenario
 from pypeline.optimization.cesm_to_om_adapter import build_om_from_es
 from pypeline.optimization.cesm_backend import CESMBackend
+from pypeline.plot.plotter import EnergySystemPlotter
 from tools.cesm_writer import write_cesm_inputs_from_data
 
 def must_exist(p: Path, what: str) -> None:
@@ -18,6 +19,7 @@ def must_exist(p: Path, what: str) -> None:
 def main():
     tech_reg = TechnologyRegistry(); tech_reg.load_from_default()
     data_reg = DataRegistry();       data_reg.load_from_default()
+
     polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
     polygons = gpd.read_file(Path(polygons_path))
 
@@ -33,6 +35,8 @@ def main():
     esb.set_energy_system_rule_book(rulebook)
 
     es = esb.build()
+    es_plotter = EnergySystemPlotter(es)
+    es_plotter.plot()
     print("Constraints:", getattr(es, "constraints", {}))
 
     model_name    = "Bensheim"
@@ -109,11 +113,6 @@ def main():
     )
 
     solution = backend.optimize(om)
-    print("Using DB:", solution.results.get("db"))
-    print(solution.results)
-
-
-
 
     from cesm import Plotter, PlotType
     from cesm import DAO
