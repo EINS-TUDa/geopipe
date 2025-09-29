@@ -1,0 +1,10 @@
+{
+  "name": "ind_oil_boiler",
+  "commodity_in": "oil",
+  "commodity_out": "residential_heat",
+  "efficiency": 0.9,
+  "technical_lifetime": 15,
+  "opex_cost_energy": 0.02,
+  "opex_cost_power": 30,
+  "capex_cost_power": 800
+}

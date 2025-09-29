@@ -5,19 +5,20 @@ import geopandas as gpd
 import sqlite3
 
 from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry
+from pypeline.energy_system.catalog import register_default_technologies
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
-from pypeline.optimization.cesm_to_om_adapter import build_om_from_es
-from pypeline.optimization.cesm_backend import CESMBackend
+from pypeline.optimization.om_adapter import build_om_from_es
+from tools.cesm_plugin import CESMBackend  # unified backend import (replaces pypeline.optimization.cesm_backend)
 from pypeline.plot.plotter import EnergySystemPlotter
-from tools.cesm_writer import write_cesm_inputs_from_data
+from tools.cesm_plugin import write_cesm_inputs_from_data  # unified API
 
 def must_exist(p: Path, what: str) -> None:
     if not p.exists():
         raise FileNotFoundError(f"Missing {what}: {p.resolve()}")
 
 def main():
-    tech_reg = TechnologyRegistry(); tech_reg.load_from_default()
+    tech_reg = TechnologyRegistry(); register_default_technologies(tech_reg)
     data_reg = DataRegistry();       data_reg.load_from_default()
 
     polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
@@ -101,8 +102,9 @@ def main():
     print(f"TSS file present: {tss.resolve()}")
 
     project_root = Path(__file__).resolve().parents[1]
-    runner = project_root / "tools" / "cesm_runner.py"
-    must_exist(runner, "runner script")
+    # Use unified plugin directly as runner
+    runner = project_root / "tools" / "cesm_plugin.py"
+    must_exist(runner, "plugin script")
 
     backend = CESMBackend(
         workdir=str(workdir),
@@ -114,8 +116,19 @@ def main():
 
     solution = backend.optimize(om)
 
-    from cesm import Plotter, PlotType
-    from cesm import DAO
+    # Try normal cesm module first (if installed / shimmed), else fall back to local CESM/core paths.
+    try:
+        from cesm import Plotter, PlotType  # type: ignore
+        from cesm import DAO  # type: ignore
+    except ImportError:
+        cesm_root = Path("CESM").resolve()
+        core_dir = cesm_root / "core"
+        for p in (cesm_root, core_dir):
+            sp = str(p)
+            if sp not in sys.path:
+                sys.path.insert(0, sp)
+        from core.plotter import Plotter, PlotType  # type: ignore
+        from core.data_access import DAO  # type: ignore
 
     db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
     conn = sqlite3.connect(str(db_path))
@@ -126,16 +139,6 @@ def main():
         sankey_fig = plotter.plot_sankey(year=2020)
         sankey_fig.show()
 
-        # plotter.plot_timeseries(
-        #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-        #     year=2020,
-        #     commodity="Electricity",
-        # )
-        # plotter.plot_timeseries(
-        #     timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
-        #     year=2020,
-        #     commodity="Electricity",
-        # )
     finally:
         conn.close()
 

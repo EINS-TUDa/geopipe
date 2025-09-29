@@ -1,0 +1,10 @@
+{
+  "name": "ind_heat_pump",
+  "commodity_in": "electricity",
+  "commodity_out": "residential_heat",
+  "efficiency": 3.5,
+  "technical_lifetime": 20,
+  "opex_cost_energy": 0.01,
+  "opex_cost_power": 50,
+  "capex_cost_power": 1000
+}

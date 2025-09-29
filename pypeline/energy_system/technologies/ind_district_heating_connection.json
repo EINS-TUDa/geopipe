@@ -1,0 +1,10 @@
+{
+  "name": "ind_district_heating_connection",
+  "commodity_in": "district_heat_out",
+  "commodity_out": "residential_heat",
+  "efficiency": 0.95,
+  "technical_lifetime": 30,
+  "opex_cost_energy": 0.005,
+  "opex_cost_power": 20,
+  "capex_cost_power": 5000
+}

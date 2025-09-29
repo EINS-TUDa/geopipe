@@ -1,0 +1,12 @@
+{
+  "conversion_process_name": "Pipe",
+  "commodity_in": "Heat",
+  "commodity_out": "Heat",
+  "efficiency": 0.99,
+  "technical_availability": 1.0,
+  "technical_lifetime": 30,
+  "cap_max": 1000000000.0,
+  "max_eout": 1000000000000.0,
+  "opex_cost_energy": 1.0,
+  "capex_cost_power": 1000.0
+}

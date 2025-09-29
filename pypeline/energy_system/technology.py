@@ -1,7 +1,14 @@
 from abc import ABC
 from dataclasses import dataclass, field
+from typing import Optional
 
 import pandas as pd
+from .technology_stage import (
+    TechnologyStage,
+    TechnologyCategory,
+    DEFAULT_STAGE,
+    DEFAULT_CATEGORY,
+)
 
 
 class Technology(ABC):
@@ -14,7 +21,9 @@ class Technology(ABC):
                  opex_cost_energy: float = 0,
                  opex_cost_power: float = 0,
                  capex_cost_power: float = 0,
-                 availability_profile: pd.Series = None):
+                 availability_profile: Optional[pd.Series] = None,
+                 stage: TechnologyStage | str = DEFAULT_STAGE,
+                 category: TechnologyCategory | str = DEFAULT_CATEGORY):
         self.name = name
         self.commodity_in = commodity_in
         self.commodity_out = commodity_out
@@ -24,6 +33,9 @@ class Technology(ABC):
         self.opex_cost_power = opex_cost_power
         self.capex_cost_power = capex_cost_power
         self.availability_profile = availability_profile
+        # normalize to enums (allow passing raw strings for JSON flexibility)
+        self.stage = TechnologyStage(stage) if not isinstance(stage, TechnologyStage) else stage
+        self.category = TechnologyCategory(category) if not isinstance(category, TechnologyCategory) else category
 
 
 class CHP(Technology):
