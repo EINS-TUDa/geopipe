@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import json
-from typing import List
+from typing import Dict, List, Sequence
 
 from pypeline.energy_system.technology import Technology
 from pypeline.energy_system.technology_spec import TechnologySpec, validate_spec_dict, validate_specs
@@ -20,18 +20,34 @@ def _load_spec(path: Path) -> TechnologySpec:
         capex_cost_power=float(data.get("capex_cost_power", 0.0)),
     )
 
+
+def _collect_specs(files: Dict[str, Path], preferred_order: Sequence[str]) -> List[TechnologySpec]:
+    specs: List[TechnologySpec] = []
+    remaining: Dict[str, Path] = dict(files)
+
+    def append_if_valid(path: Path) -> None:
+        try:
+            specs.append(_load_spec(path))
+        except Exception:
+            pass
+
+    for name in preferred_order:
+        path = remaining.pop(name, None)
+        if path is not None:
+            append_if_valid(path)
+
+    for path in sorted(remaining.values(), key=lambda p: p.name):
+        append_if_valid(path)
+
+    validate_specs(specs)
+    return specs
+
 def load_specs_from_dir(directory: Path) -> List[TechnologySpec]:
     directory = Path(directory)
     if not directory.exists() or not directory.is_dir():
         return []
-    specs: List[TechnologySpec] = []
-    for p in sorted(directory.glob("*.json")):
-        try:
-            specs.append(_load_spec(p))
-        except Exception:
-            continue
-    validate_specs(specs)
-    return specs
+    files = {p.stem: p for p in directory.glob("*.json")}
+    return _collect_specs(files, [])
 
 def load_specs_from_package() -> List[TechnologySpec]:
     base = Path(__file__).resolve().parent
@@ -48,33 +64,10 @@ def load_specs_from_package() -> List[TechnologySpec]:
         "grid_electricity",
     ]
     files = {p.stem: p for p in data_dir.glob("*.json")}
-    specs: List[TechnologySpec] = []
-    for name in preferred_order:
-        p = files.pop(name, None)
-        if p is not None:
-            try:
-                specs.append(_load_spec(p))
-            except Exception:
-                continue
-    for p in sorted(files.values()):
-        try:
-            specs.append(_load_spec(p))
-        except Exception:
-            continue
-    validate_specs(specs)
-    return specs
+    return _collect_specs(files, preferred_order)
 
 def instantiate(spec: TechnologySpec) -> Technology:
-    return Technology(
-        name=spec.name,
-        commodity_in=spec.commodity_in,
-        commodity_out=spec.commodity_out,
-        efficiency=spec.efficiency,
-        technical_lifetime=spec.technical_lifetime,
-        opex_cost_energy=spec.opex_cost_energy,
-        opex_cost_power=spec.opex_cost_power,
-        capex_cost_power=spec.capex_cost_power,
-    )
+    return spec.to_technology()
 
 def instantiate_all(specs: List[TechnologySpec]) -> List[Technology]:
     return [instantiate(s) for s in specs]

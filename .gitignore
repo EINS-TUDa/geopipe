@@ -1,6 +1,5 @@
 .venv
 .idea
 __pycache__
-tests/
 scripts/
-CESM/
+*.egg-info/
