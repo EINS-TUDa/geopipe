@@ -5,19 +5,22 @@ import geopandas as gpd
 import sqlite3
 
 from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry
+from pypeline.energy_system.catalog import register_default_technologies
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
-from pypeline.optimization.cesm_to_om_adapter import build_om_from_es
-from pypeline.optimization.cesm_backend import CESMBackend
-from tools.cesm_writer import write_cesm_inputs_from_data
+from pypeline.optimization.om_adapter import build_om_from_es
+from tools.cesm_plugin import CESMBackend  # unified backend import (replaces pypeline.optimization.cesm_backend)
+from pypeline.plot.plotter import EnergySystemPlotter
+from tools.cesm_plugin import write_cesm_inputs_from_data  # unified API
 
 def must_exist(p: Path, what: str) -> None:
     if not p.exists():
         raise FileNotFoundError(f"Missing {what}: {p.resolve()}")
 
 def main():
-    tech_reg = TechnologyRegistry(); tech_reg.load_from_default()
+    tech_reg = TechnologyRegistry(); register_default_technologies(tech_reg)
     data_reg = DataRegistry();       data_reg.load_from_default()
+
     polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
     polygons = gpd.read_file(Path(polygons_path))
 
@@ -33,6 +36,8 @@ def main():
     esb.set_energy_system_rule_book(rulebook)
 
     es = esb.build()
+    es_plotter = EnergySystemPlotter(es)
+    es_plotter.plot()
     print("Constraints:", getattr(es, "constraints", {}))
 
     model_name    = "Bensheim"
@@ -48,27 +53,42 @@ def main():
     ts_dir      = workdir / "Data" / "TimeSeries"
     techmap_dir.mkdir(parents=True, exist_ok=True)
     ts_dir.mkdir(parents=True, exist_ok=True)
+    heat_file = "D_Heat_Household_J.txt"
+    electricity_file = "corrected_eletricity_demand_2016.txt"
 
     write_cesm_inputs_from_data(
-        om,
-        workdir=workdir,
-        model_name=model_name,
-        scenario_name=scenario_name,
-        tss_name=tss_name,
-        polygons_path=polygons_path,            
-        data_dir=Path("data"),
-        heat_file="D_Heat_Household_J.txt",
-        heat_unit="MWH",
-        elec_profile_file="corrected_eletricity_demand_2016.txt",
-        heat_commodity_base="Heat",
-        electric_boiler_eta=0.95,
-        elec_price_eur_per_mwh=80.0,
-        export_price_eur_per_mwh=0.0,
-        eb_cap_max_mw=None,       
-        eb_max_eout_mwh=None,     
-        pipe_loss_fraction=0.05,
-        pipe_cap_max_mw=1e6,
-        pipe_opex_eur_per_mwh=0.0,
+    om,
+    workdir=workdir,
+    model_name=model_name,
+    scenario_name=scenario_name,
+    tss_name=tss_name,
+    polygons_path=polygons_path,
+    data_dir=Path("data"),
+    heat_file=heat_file,
+    heat_unit="MWH",
+    elec_profile_file=electricity_file,
+    heat_commodity_base="Heat",
+
+    # EB tiers
+    eb_small_eta=0.95,
+    eb_small_capex_eur_per_mw=11000.0,
+    eb_small_opex_eur_per_mw=0.0,
+    eb_small_opex_eur_per_mwh=0.0,
+    eb_small_cap_max_mw=0.1,
+
+    eb_large_eta=0.96,
+    eb_large_capex_eur_per_mw=10000.0,
+    eb_large_opex_eur_per_mw=0.0,
+    eb_large_opex_eur_per_mwh=0.0,
+    eb_large_out_frac_min=0.5,
+    eb_large_cap_min_mw=0.04,
+    eb_large_cap_max_mw=0.85,
+
+    # Pipes
+    pipe_loss_fraction=0.01,
+    pipe_capex_eur_per_mw=50000,
+    pipe_opex_eur_per_mwh=0.0,
+    pipe_cap_max_mw=10.0,
     )
 
     xlsx = techmap_dir / f"{model_name}.xlsx"
@@ -82,8 +102,9 @@ def main():
     print(f"TSS file present: {tss.resolve()}")
 
     project_root = Path(__file__).resolve().parents[1]
-    runner = project_root / "tools" / "cesm_runner.py"
-    must_exist(runner, "runner script")
+    # Use unified plugin directly as runner
+    runner = project_root / "tools" / "cesm_plugin.py"
+    must_exist(runner, "plugin script")
 
     backend = CESMBackend(
         workdir=str(workdir),
@@ -94,43 +115,32 @@ def main():
     )
 
     solution = backend.optimize(om)
-    print("Using DB:", solution.results.get("db"))
-    print(solution.results)
 
+    # Try normal cesm module first (if installed / shimmed), else fall back to local CESM/core paths.
     try:
-        sys.path.insert(0, str(Path("CESM")))
-        from core.plotter import Plotter, PlotType
-        from core.data_access import DAO
+        from cesm import Plotter, PlotType  # type: ignore
+        from cesm import DAO  # type: ignore
+    except ImportError:
+        cesm_root = Path("CESM").resolve()
+        core_dir = cesm_root / "core"
+        for p in (cesm_root, core_dir):
+            sp = str(p)
+            if sp not in sys.path:
+                sys.path.insert(0, sp)
+        from core.plotter import Plotter, PlotType  # type: ignore
+        from core.data_access import DAO  # type: ignore
 
-        db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
-        conn = sqlite3.connect(str(db_path))
-        try:
-            dao = DAO(conn)
-            plotter = Plotter(dao)
+    db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        dao = DAO(conn)
+        plotter = Plotter(dao)
 
-            sankey_fig = plotter.plot_sankey(year=2020)
-            sankey_fig.show()
+        sankey_fig = plotter.plot_sankey(year=2020)
+        sankey_fig.show()
 
-            plotter.plot_timeseries(
-                timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-                year=2020,
-                commodity="Electricity",
-            )
-            plotter.plot_timeseries(
-                timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
-                year=2020,
-                commodity="Electricity",
-            )
-        finally:
-            conn.close()
-    except ModuleNotFoundError:
-        print("Plotting skipped - CESM core is not on PYTHONPATH")
-    except Exception as e:
-        print(f"Plotting failed: {e}")
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(e)
-        sys.exit(1)
+    main()

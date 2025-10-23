@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypeline"
+version = "0.1.0"
+description = "PYthon-based data piPELINe for Energy system modeling"
+authors = [
+    {name = "Carolin Ayasse", email = "carolin.ayasse@eins.tu-darmstadt.de"},
+    {name = "Alexander Christ", email = "alexchrist@outlook.com"},
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "certifi>=2025.4.26",
+    "charset-normalizer>=3.4.2",
+    "colorama>=0.4.6",
+    "contourpy>=1.3.2",
+    "cycler>=0.12.1",
+    "et_xmlfile>=2.0.0",
+    "fonttools>=4.58.0",
+    "geopandas>=1.0.1",
+    "idna>=3.10",
+    "kiwisolver>=1.4.8",
+    "matplotlib>=3.10.3",
+    "numpy>=2.2.5",
+    "openpyxl>=3.1.5",
+    "packaging>=25.0",
+    "pandas>=2.2.3",
+    "pillow>=11.2.1",
+    "pyogrio>=0.11.0",
+    "pyparsing>=3.2.3",
+    "pyproj>=3.7.1",
+    "python-dateutil>=2.9.0",
+    "pytz>=2025.2",
+    "requests>=2.32.3",
+    "shapely>=2.1.0",
+    "six>=1.17.0",
+    "tzdata>=2025.2",
+    "urllib3>=2.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pypeline*", "tools*"]
+exclude = ["CESM*", "data*", "examples*", "tests*", "docs*"]

@@ -1,0 +1,3 @@
+[submodule "cesm"]
+	path = CESM
+	url = https://github.com/EINS-TUDa/CESM

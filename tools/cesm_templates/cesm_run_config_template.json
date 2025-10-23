@@ -1,0 +1,34 @@
+{
+  "cesm_params": {
+    "start_year": 2020,
+    "end_year": 2030,
+    "year_gap": 5,
+    "discount_rate": 0.05,
+    "dt_hours": 1
+  },
+  "commodity_config": {
+    "heat_commodity_base": "Heat",
+    "electricity": {
+      "price_eur_per_mwh": 100.0,
+      "export_price_eur_per_mwh": -10.0
+    }
+  },
+  "data_files": {
+    "heat_file": "D_Heat_Household_J.txt",
+    "heat_unit": "MWH",
+    "elec_profile_file": "corrected_eletricity_demand_2016.txt"
+  },
+  "pipe_config": {
+    "loss_fraction": 0.01,
+    "cap_max_mw": 10.0,
+    "lifetime_years": 30,
+    "opex_eur_per_mwh": 1.0,
+    "capex_eur_per_mw": 1000.0
+  },
+  "network": {
+    "edge_strategy": "mst",
+    "min_shared_border_m": 0.0,
+    "max_pipes_per_district": null,
+    "neighbor_distance_m": null
+  }
+}

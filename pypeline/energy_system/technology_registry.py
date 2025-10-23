@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import Type
 
 from pypeline.energy_system.technology import Technology
+from pypeline.energy_system.technology_stage import TechnologyStage, TechnologyCategory
 
 
 class TechnologyNotFoundError(Exception):
@@ -13,7 +14,6 @@ class TechnologyNotFoundError(Exception):
 
 class TechnologyRegistry:
     def __init__(self):
-        # Group technologies by their class (e.g., IndividualTechnology, Demand, etc.)
         self._technologies: dict[str, Technology] = {}
 
     def register(self, tech: Technology):
@@ -80,6 +80,33 @@ class TechnologyRegistry:
         Returns True if it exists, False otherwise.
         """
         return name in self._technologies
+    
+    def subregistry_by_flags(self, flags: dict[str, bool]) -> "TechnologyRegistry":
+        """
+        Create a new registry that only contains technologies whose name is True in `flags`.
+        Missing names are ignored. Order/instances are preserved.
+        """
+        sub = TechnologyRegistry()
+        for name, tech in self._technologies.items():
+            if flags.get(name, False):
+                sub.register(tech)
+        return sub
+
+    def get_by_stage(self, stage: TechnologyStage | str, return_type: str = "instance"):
+        stage_enum = TechnologyStage(stage) if not isinstance(stage, TechnologyStage) else stage
+        if return_type == "name":
+            return [t.name for t in self._technologies.values() if t.stage == stage_enum]
+        if return_type == "instance":
+            return [t for t in self._technologies.values() if t.stage == stage_enum]
+        raise ValueError("return_type must be 'name' or 'instance'")
+
+    def get_by_category(self, category: TechnologyCategory | str, return_type: str = "instance"):
+        cat_enum = TechnologyCategory(category) if not isinstance(category, TechnologyCategory) else category
+        if return_type == "name":
+            return [t.name for t in self._technologies.values() if t.category == cat_enum]
+        if return_type == "instance":
+            return [t for t in self._technologies.values() if t.category == cat_enum]
+        raise ValueError("return_type must be 'name' or 'instance'")
 
 
 DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()
