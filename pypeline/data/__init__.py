@@ -11,8 +11,7 @@ Main components:
 from pypeline.data.data_registry import DataRegistry
 from pypeline.data.dataset import (
     Dataset,
-    PostgreSQLTableDataset,
-    PostgreSQLColumnDataset,
+    PostgreSQLDataset,
     CSVDataset,
 )
 from pypeline.data.database_connection import DatabaseConnection
@@ -21,8 +20,7 @@ from pypeline.data.database_connection import DatabaseConnection
 __all__ = [
     "DataRegistry",
     "Dataset",
-    "PostgreSQLTableDataset",
-    "PostgreSQLColumnDataset",
+    "PostgreSQLDataset",
     "CSVDataset",
     "DatabaseConnection",
 ]

@@ -1,5 +1,4 @@
 from pypeline.data.data_registry import DataRegistry
-from pypeline.data.datasets import CensusTechnology
 from pypeline.energy_system.demand import Demand, RegionDemand
 from pypeline.energy_system.rule_book import RegionRuleBook
 import geopandas as gpd

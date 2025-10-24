@@ -1,9 +1,5 @@
-"""
-Simplified Dataset - combines DataSource and Dataset into one concept.
-"""
-
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Optional, Callable
 import geopandas as gpd
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -13,13 +9,10 @@ from pypeline.data.database_connection import DatabaseConnection
 class Dataset(ABC):
     """
     A Dataset represents a queryable data source with metadata.
-
-    Combines:
     - Physical connection (database, file, etc.)
     - Logical structure (table, column, etc.)
     - Metadata (keys, priority, region)
     """
-
     def __init__(
         self,
         keys: list[str],
@@ -47,29 +40,13 @@ class Dataset(ABC):
 
     @abstractmethod
     def query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
-        """
-        Executes a query on this dataset.
-
-        Args:
-            query: Dictionary with query parameters (at least 'key')
-
-        Returns:
-            Query result as DataFrame or GeoDataFrame
-        """
         raise NotImplementedError
 
     @abstractmethod
     def is_available(self) -> bool:
-        """Checks if the dataset is accessible."""
         raise NotImplementedError
 
     def is_in_region(self, region: gpd.GeoDataFrame) -> bool:
-        """
-        Checks if this dataset is valid for a specific region.
-
-        Returns:
-            True if dataset is valid in the region
-        """
         if self.regional_validity is None:
             return True  # Globally valid
 
@@ -77,21 +54,18 @@ class Dataset(ABC):
         return self.regional_validity.intersects(region.unary_union).any()
 
 
-class PostgreSQLTableDataset(Dataset):
-    """
-    Dataset for a PostgreSQL table.
-    """
-
+class PostgreSQLDataset(Dataset):
     def __init__(
         self,
         keys: list[str],
         db_connection: DatabaseConnection,
-        schema: str,
-        table: str,
+        schema: Optional[str] = None,
+        table: Optional[str] = None,
         geometry_column: Optional[str] = None,
-        priority: int = 10,
+        priority: int = 2,
         crs: Optional[str] = None,
         regional_validity: Optional[gpd.GeoDataFrame] = None,
+        query_function: Optional[Callable] = None,
     ):
         """
         Args:
@@ -103,6 +77,8 @@ class PostgreSQLTableDataset(Dataset):
             priority: Dataset priority (higher = preferred)
             crs: Optional, CRS string (e.g., "EPSG:25832")
             regional_validity: Optional GeoDataFrame defining validity region
+            query_function: Optional custom query function with signature:
+                           func(dataset: PostgreSQLTableDataset, query: dict) -> pd.DataFrame | gpd.GeoDataFrame
         """
         super().__init__(
             keys=keys,
@@ -111,25 +87,27 @@ class PostgreSQLTableDataset(Dataset):
             regional_validity=regional_validity,
         )
 
+        if (schema is None or table is None) and query_function is None:
+            raise ValueError("Either schema and table must be provided, or a query_function must be provided.")
+
         self.db_connection = db_connection
         self.schema = schema
         self.table = table
         self.geometry_column = geometry_column
+        self._custom_query_function = query_function
 
     def query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
         """
-        Executes a query on the table.
-
-        Args:
-            query: Dictionary with parameters:
-                - key: str (required)
-                - region: gpd.GeoDataFrame (optional)
-                - columns: list[str] (optional, default: all)
-                - filters: dict (optional, WHERE conditions)
-
-        Returns:
-            DataFrame or GeoDataFrame
+        Executes a query on the table. If a custom query_function was provided, it will be used instead.
         """
+        # Use custom query function if provided
+        if self._custom_query_function is not None:
+            return self._custom_query_function(self, query)
+
+        # Default query logic
+        return self._default_query(query)
+
+    def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
         columns = query.get("columns")
         filters = query.get("filters")
         region = query.get("region")
@@ -171,102 +149,6 @@ class PostgreSQLTableDataset(Dataset):
         """Checks if the database is accessible."""
         return self.db_connection.is_available()
 
-
-class PostgreSQLColumnDataset(Dataset):
-    """
-    Dataset for a specific column in a PostgreSQL table.
-
-    Useful when different columns represent different information types
-    (e.g., Wärmeatlas Hessen with multiple heat demand columns).
-    """
-
-    def __init__(
-        self,
-        keys: list[str],
-        db_connection: DatabaseConnection,
-        schema: str,
-        table: str,
-        column: str,
-        geometry_column: Optional[str] = None,
-        priority: int = 10,
-        crs: Optional[str] = None,
-        regional_validity: Optional[gpd.GeoDataFrame] = None,
-    ):
-        """
-        Args:
-            keys: List of data types this dataset provides
-            db_connection: Database connection
-            schema: Database schema name
-            table: Table name
-            column: Column name with relevant data
-            geometry_column: Optional, name of geometry column
-            priority: Dataset priority
-            crs: Optional, CRS string
-            regional_validity: Optional GeoDataFrame defining validity region
-        """
-        super().__init__(
-            keys=keys,
-            priority=priority,
-            crs=crs,
-            regional_validity=regional_validity,
-        )
-
-        self.db_connection = db_connection
-        self.schema = schema
-        self.table = table
-        self.column = column
-        self.geometry_column = geometry_column
-
-    def query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
-        """
-        Executes a query on the specific column.
-
-        Args:
-            query: Dictionary with parameters:
-                - key: str (required)
-                - region: gpd.GeoDataFrame (optional)
-                - aggregation: str (optional, e.g., "SUM", "AVG")
-                - additional_columns: list[str] (optional)
-
-        Returns:
-            DataFrame or GeoDataFrame
-        """
-        aggregation = query.get("aggregation")
-        additional_columns = query.get("additional_columns", [])
-        region = query.get("region")
-
-        # Build columns
-        if aggregation:
-            cols = [f'{aggregation}("{self.column}") as "{self.column}"']
-        else:
-            cols = [f'"{self.column}"']
-
-        if self.geometry_column and self.geometry_column not in cols:
-            cols.append(f'"{self.geometry_column}"')
-
-        cols.extend(f'"{c}"' for c in additional_columns)
-
-        sql = f'SELECT {", ".join(cols)} FROM "{self.schema}"."{self.table}"'
-
-        # Spatial filter
-        if region is not None and self.geometry_column:
-            region_wkt = region.unary_union.wkt
-            region_srid = region.crs.to_epsg() if region.crs else 4326
-            sql += (
-                f' WHERE ST_Intersects("{self.geometry_column}", '
-                f"ST_GeomFromText('{region_wkt}', {region_srid}))"
-            )
-
-        # Execute query
-        engine = self.db_connection.get_engine()
-        if self.geometry_column:
-            return gpd.read_postgis(sql, engine, geom_col=self.geometry_column)
-        else:
-            return pd.read_sql(sql, engine)
-
-    def is_available(self) -> bool:
-        """Checks if the database is accessible."""
-        return self.db_connection.is_available()
 
 
 class CSVDataset(Dataset):
@@ -321,4 +203,3 @@ class CSVDataset(Dataset):
         """Checks if the CSV file exists."""
         import os
         return os.path.exists(self.file_path)
-

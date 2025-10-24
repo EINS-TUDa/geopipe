@@ -1,7 +1,6 @@
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.data.datasets import CensusTechnology
 from pypeline.energy_system.region import Region, RegionBuilder
 from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_system.rule_book import RegionRuleBook, EnergySystemRuleBook
