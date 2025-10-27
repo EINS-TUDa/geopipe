@@ -54,3 +54,6 @@ class DatabaseConnection:
     def __repr__(self) -> str:
         return f"DatabaseConnection(host='{self.host}', database='{self.database}')"
 
+    def connection_string_full(self) -> str:
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
+

@@ -8,8 +8,8 @@ from pypeline.data import (
 from sqlalchemy import text
 
 ***REMOVED***_conn = DatabaseConnection(
-    # host="localhost",
-    host="ds1.example.com",
+    host="localhost",
+    # host="ds1.example.com",
     port=54328,
     database="***REMOVED***",
     user="***REMOVED***",
@@ -30,20 +30,39 @@ def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> "pd.DataFrame"
     region_epsg = region.crs.to_epsg() if region.crs else 4326
     region_geom_wkt = region.union_all().wkt
 
-    # Create SQL with SUM aggregation for all columns
     columns_sql = ", ".join([f'SUM("{col}") as "{col}"' for col in columns])
 
-    sql = f"""
+    sql_total_values = f"""
     SELECT {columns_sql}
-    FROM need.zensus_2022_100m_energietraeger
+    FROM clean_census_energietraeger.clean_census_energietraeger
     WHERE ST_Within(
-        ST_Transform(geometry, {region_epsg}),
-        ST_GeomFromText('{region_geom_wkt}', {region_epsg})
+        geometry,
+        ST_Transform(ST_GeomFromText('{region_geom_wkt}', {region_epsg}), 
+        Find_SRID('clean_census_energietraeger', 'clean_census_energietraeger', 'geometry'))
     )
     """
 
+    sql_shares = f"""
+    WITH totals AS (
+        SELECT {columns_sql}
+        FROM clean_census_energietraeger.clean_census_energietraeger
+        WHERE ST_Within(
+            geometry,
+            ST_Transform(ST_GeomFromText('{region_geom_wkt}', {region_epsg}), 
+            Find_SRID('clean_census_energietraeger', 'clean_census_energietraeger', 'geometry'))
+        )
+    ),
+    total_sum AS (
+        SELECT {' + '.join([f'"{col}"' for col in columns])} AS gesamt
+        FROM totals
+    )
+    SELECT
+        {', '.join([f'CASE WHEN gesamt > 0 THEN "{col}"::NUMERIC / gesamt ELSE 0 END AS "{col}"' for col in columns])}
+    FROM totals, total_sum
+    """
+
     engine = dataset.db_connection.get_engine()
-    df = pd.read_sql(text(sql), engine)
+    df = pd.read_sql(text(sql_shares), engine)
 
     return df
 
@@ -62,7 +81,7 @@ DEFAULT_REGISTRY.register(census_heating_dataset)
 # Simple test query for debugging
 # Note: this will attempt a DB connection; keep commented out in non-db environments
 test_query = {"key": "heating_shares",
-         "region": gpd.read_file("../../data/polygon_neuburg.geojson")
+            "region": gpd.read_file("../../data/polygon_neuburg.geojson")
 }
 data = DEFAULT_REGISTRY.query(test_query)
 print(data)
