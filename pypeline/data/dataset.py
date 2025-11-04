@@ -160,7 +160,9 @@ class CSVDataset(Dataset):
         self,
         keys: list[str],
         file_path: str,
+        pandas_kwargs: Optional[dict[str, Any]] = None,
         priority: int = 10,
+        regional_validity: Optional[gpd.GeoDataFrame] = None,
     ):
         """
         Args:
@@ -168,10 +170,12 @@ class CSVDataset(Dataset):
             file_path: Path to CSV file
             priority: Dataset priority
         """
-        super().__init__(keys=keys, priority=priority)
+        super().__init__(keys=keys, priority=priority, regional_validity=regional_validity)
         self.file_path = file_path
+        self.pandas_kwargs = pandas_kwargs or {}
 
-    def query(self, query: dict) -> pd.DataFrame:
+
+    def query(self, query: dict) -> pd.Series:
         """
         Reads the CSV file and optionally filters.
 
@@ -184,20 +188,9 @@ class CSVDataset(Dataset):
         Returns:
             DataFrame
         """
-        df = pd.read_csv(self.file_path)
-
-        # Filter columns
-        columns = query.get("columns")
-        if columns:
-            df = df[columns]
-
-        # Filter rows
-        filters = query.get("filters")
-        if filters:
-            for col, value in filters.items():
-                df = df[df[col] == value]
-
-        return df
+        df = pd.read_csv(self.file_path, **self.pandas_kwargs)
+        s = pd.Series(df.values.ravel())
+        return s
 
     def is_available(self) -> bool:
         """Checks if the CSV file exists."""

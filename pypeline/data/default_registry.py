@@ -3,7 +3,7 @@ import pandas as pd
 from pypeline.data import (
     DataRegistry,
     DatabaseConnection,
-    PostgreSQLDataset,
+    PostgreSQLDataset, CSVDataset,
 )
 from sqlalchemy import text
 
@@ -18,7 +18,7 @@ from sqlalchemy import text
 print(***REMOVED***_conn.is_available())
 
 
-def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> "pd.DataFrame":
+def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:
     if query["key"] != "heating_shares":
         raise ValueError("census_grid_query only supports 'heating_types' key")
 
@@ -27,45 +27,33 @@ def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> "pd.DataFrame"
     columns = ["heizoel", "biomasse_biogas", "strom", "fernwaerme", "gas",
                "holz_holzpellets", "solar_geothermie_waermepumpen", "kohle", "kein_energietraeger"]
 
-    region_epsg = region.crs.to_epsg() if region.crs else 4326
+    region_epsg = region.crs.to_epsg()
     region_geom_wkt = region.union_all().wkt
 
-    columns_sql = ", ".join([f'SUM("{col}") as "{col}"' for col in columns])
+    columns_sql = ", ".join([f'COALESCE(SUM("{col}"), 0) AS "{col}"' for col in columns])
 
-    sql_total_values = f"""
-    SELECT {columns_sql}
-    FROM clean_census_energietraeger.clean_census_energietraeger
-    WHERE ST_Within(
-        geometry,
-        ST_Transform(ST_GeomFromText('{region_geom_wkt}', {region_epsg}), 
-        Find_SRID('clean_census_energietraeger', 'clean_census_energietraeger', 'geometry'))
-    )
-    """
-
-    sql_shares = f"""
-    WITH totals AS (
-        SELECT {columns_sql}
-        FROM clean_census_energietraeger.clean_census_energietraeger
+    sql_shares = text(f"""
+        SELECT
+            {columns_sql}
+        FROM clean_census_energietraeger.shares_2_buildings
         WHERE ST_Within(
-            geometry,
-            ST_Transform(ST_GeomFromText('{region_geom_wkt}', {region_epsg}), 
-            Find_SRID('clean_census_energietraeger', 'clean_census_energietraeger', 'geometry'))
+            centroid,
+            ST_Transform(
+                ST_GeomFromText(:wkt, :epsg),
+                ST_SRID(centroid))
         )
-    ),
-    total_sum AS (
-        SELECT {' + '.join([f'"{col}"' for col in columns])} AS gesamt
-        FROM totals
-    )
-    SELECT
-        {', '.join([f'CASE WHEN gesamt > 0 THEN "{col}"::NUMERIC / gesamt ELSE 0 END AS "{col}"' for col in columns])}
-    FROM totals, total_sum
-    """
+    """)
 
     engine = dataset.db_connection.get_engine()
-    df = pd.read_sql(text(sql_shares), engine)
+    df_shares = pd.read_sql(sql_shares, engine, params={"wkt": region_geom_wkt, "epsg": int(region_epsg)})
+    total = df_shares[columns].sum(axis=1).iloc[0]
+    if total and total != 0:
+        df_shares[columns] = df_shares[columns] / total
+    else:
+        df_shares[columns] = 0
+    heating_shares = df_shares.iloc[0].to_dict()
 
-    return df
-
+    return heating_shares
 
 census_heating_dataset = PostgreSQLDataset(
         keys=["heating_shares"],
@@ -74,14 +62,74 @@ census_heating_dataset = PostgreSQLDataset(
         query_function=census_grid_query
     )
 
+def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
+    if query["key"] != "residential_heat_demand":
+        raise ValueError("***REMOVED***_kwp_query only supports 'residential_heat_demand' key")
+
+    region: gpd.GeoDataFrame = query["region"]
+
+    region_epsg = region.crs.to_epsg()
+    region_geom_wkt = region.union_all().wkt
+
+    sql_text = text("""
+        SELECT
+            COALESCE(SUM(demand_heating), 0) AS total_demand
+        FROM kwp.buildings_heat_demand
+        WHERE ST_Within(
+            centroid,
+            ST_Transform(
+                ST_GeomFromText(:wkt, :epsg),
+                ST_SRID(centroid)
+            )
+        )
+        """)
+
+    engine = dataset.db_connection.get_engine()
+    df = pd.read_sql(sql_text, engine, params={"wkt": region_geom_wkt, "epsg": int(region_epsg)})
+
+    row = df.iloc[0]
+    total_demand = float(row["total_demand"])
+
+    return total_demand
+
+***REMOVED***_kwp_dataset = PostgreSQLDataset(
+        keys=["residential_heat_demand"],
+        db_connection=***REMOVED***_conn,
+        priority=1,
+        query_function=***REMOVED***_kwp_query
+    )
+
+residential_heat_demand_profile_dataset = CSVDataset(
+        keys=["residential_heat_demand_profile"],
+        file_path="data/D_Heat_Household_J.txt",
+        pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
+        priority=1,
+    )
+
+
 
 DEFAULT_REGISTRY = DataRegistry()
 DEFAULT_REGISTRY.register(census_heating_dataset)
+DEFAULT_REGISTRY.register(***REMOVED***_kwp_dataset)
+DEFAULT_REGISTRY.register(residential_heat_demand_profile_dataset)
 
-# Simple test query for debugging
-# Note: this will attempt a DB connection; keep commented out in non-db environments
-test_query = {"key": "heating_shares",
-            "region": gpd.read_file("../../data/polygon_neuburg.geojson")
-}
-data = DEFAULT_REGISTRY.query(test_query)
-print(data)
+
+
+
+if __name__ == "__main__":
+    # Simple test query for debugging
+    test_query_1 = {"key": "heating_shares",
+                "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
+    test_query_2 = {"key": "residential_heat_demand",
+                "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
+    test_query_3 = {"key": "residential_heat_demand_profile"}
+    residential_heat_demand_profile_dataset.file_path = "../../data/D_Heat_Household_J.txt"
+    data_1 = DEFAULT_REGISTRY.query(test_query_1)
+    data_2 = DEFAULT_REGISTRY.query(test_query_2)
+    data_3 = DEFAULT_REGISTRY.query(test_query_3)
+    print(data_1)
+    print(data_2)
+    print(data_3)
+    print("todo: introduce test for keys and required data format")
+
+
