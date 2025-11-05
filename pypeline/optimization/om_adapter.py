@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_system.tss import four_times_indices
 from pypeline.optimization.validation import assert_fractional, renormalize_to_one
+from pypeline.energy_system.technology import Technology
 
 
 @dataclass
@@ -20,6 +21,8 @@ class OMContext:
     tss_indices: List[int]                      # 0-based hour indices
     tss_weights: List[int]
     constraints: Dict[str, dict] | None = None
+    technologies: Dict[str, Technology] | None = None
+    region_technology_metrics: Dict[int, Dict[str, Dict[str, float]]] | None = None
 
 
 def _shares_from_energy_outputs(tech_to_energy_mwh: Dict[str, float]) -> Dict[str, float]:
@@ -96,6 +99,9 @@ def build_om_from_es( energy_system, scenario: Scenario, demand_name: str = "res
 
     demand_profile: Optional[List[float]] = None
 
+    region_metrics: Dict[int, Dict[str, Dict[str, float]]] = {}
+    tech_objects: Dict[str, Technology] = {}
+
     for idx, r in enumerate(regions):
         rid = _safe_int_id(getattr(r, "id", getattr(r, "id_", idx)), idx)
         region_ids.append(rid)
@@ -121,10 +127,16 @@ def build_om_from_es( energy_system, scenario: Scenario, demand_name: str = "res
             tech = getattr(rt, "technology", None)
             if tech is None:
                 continue
+            tech_objects.setdefault(getattr(tech, "name", f"tech-{len(tech_objects)}"), tech)
             if getattr(tech, "commodity_out", None) == commodity_out:
                 tech_to_e[getattr(tech, "name", "unknown")] = float(
                     getattr(rt, "initial_energy_output", 0.0)
                 )
+            metrics = region_metrics.setdefault(rid, {})
+            metrics[getattr(tech, "name", "unknown")] = {
+                "initial_energy_output": float(getattr(rt, "initial_energy_output", 0.0)),
+                "initial_capacity": float(getattr(rt, "initial_capacity", 0.0)),
+            }
 
         loc_shares = _shares_from_energy_outputs(tech_to_e)
         for t, s in loc_shares.items():
@@ -167,4 +179,6 @@ def build_om_from_es( energy_system, scenario: Scenario, demand_name: str = "res
         tss_indices=tss_idx,
         tss_weights=tss_w,
         constraints=constraints,
+        technologies=tech_objects,
+        region_technology_metrics=region_metrics,
     )

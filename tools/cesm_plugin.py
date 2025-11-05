@@ -38,8 +38,32 @@ from pypeline.energy_system.technology_registry import TechnologyRegistry
 InputWriter = Callable[[OMContext, Path, str, str, str], None]
 PathLike = Union[str, Path]
 
+# Census heating categories (100 m grid) mapped to existing technology names.
+# Extend as additional technologies become available or more granular data is supplied.
+CENSUS_HEATING_CATEGORY_TO_TECH: Dict[str, Optional[str]] = {
+    "Gas": "ind_gas_boiler",
+    "Heizoel": "ind_oil_boiler",
+    "Holz_Holzpellets": "ind_biomass_boiler",
+    "Biomasse_Biogas": "ind_biogas_boiler",
+    "Solar_Geothermie_Waermepumpen": "ind_heat_pump",
+    "Strom": "ind_direct_electric",
+    "Kohle": "ind_coal_boiler",
+    "Fernwaerme": "HeatExchanger",
+    "kein_Energietraeger": None,
+}
+
+
+def census_category_to_tech(category: str) -> Optional[str]:
+    """Map a Census 2022 heating carrier label to a technology name used in the registry."""
+    if category is None:
+        return None
+    key = category.strip()
+    if not key:
+        return None
+    return CENSUS_HEATING_CATEGORY_TO_TECH.get(key)
+
 # ====================================================================================
-# Backend adapter (merged from cesm_backend)
+# Backend adapter
 # ====================================================================================
 class CESMBackend(OptimizationModel):
     """Adapter that writes CESM inputs, invokes CESM, and parses results."""
@@ -399,21 +423,6 @@ def write_cesm_inputs_from_data(
     heat_unit: str = "MWH",
     elec_profile_file: str = "corrected_eletricity_demand_2016.txt",
     heat_commodity_base: str = "Heat",
-    eb_lifetime_years: int = 30,
-    eb_small_eta: float = 0.95,
-    eb_small_capex_eur_per_mw: float = 1_200_000.0,
-    eb_small_opex_eur_per_mw: float = 15_000.0,
-    eb_small_opex_eur_per_mwh: float = 0.5,
-    eb_small_cap_max_mw: Optional[float] = None,
-    eb_small_max_eout_mwh: Optional[float] = None,
-    eb_large_eta: float = 0.96,
-    eb_large_capex_eur_per_mw: float = 600_000.0,
-    eb_large_opex_eur_per_mw: float = 10_000.0,
-    eb_large_opex_eur_per_mwh: float = 0.2,
-    eb_large_out_frac_min: float = 0.25,
-    eb_large_cap_min_mw: float = 0.0,
-    eb_large_cap_max_mw: Optional[float] = None,
-    eb_large_max_eout_mwh: Optional[float] = None,
     elec_price_eur_per_mwh: float = 100.0,
     export_price_eur_per_mwh: float = -10.0,
     pipe_loss_fraction: float = 0.05,
@@ -426,7 +435,6 @@ def write_cesm_inputs_from_data(
     max_pipes_per_district: Optional[int] = None,
     neighbor_distance_m: Optional[float] = None,
     selected_techs: list[Technology] | TechnologyRegistry | None = None,
-    include_default_components: bool = True,
 ) -> None:
     workdir = Path(workdir)
     techmap_dir = workdir / "Data" / "Techmap"
@@ -439,18 +447,27 @@ def write_cesm_inputs_from_data(
         end_year = getattr(om_scenario, "end_year", end_year)
         year_gap = getattr(om_scenario, "year_gap", year_gap)
     data_dir = Path(data_dir) if data_dir is not None else Path("data")
-    heat_series = _load_numeric_txt(data_dir / heat_file)
-    if heat_unit.upper() == "J":
-        annual_heat_mwh_total = float(heat_series.sum() / 3.6e9)
-    elif heat_unit.upper() == "MWH":
-        annual_heat_mwh_total = float(heat_series.sum())
-    else:
-        raise ValueError("heat_unit must be 'J' or 'MWh'.")
-    profile_full = _load_numeric_txt(data_dir / elec_profile_file)
-    prof_sum = float(profile_full.sum())
-    if prof_sum <= 0:
-        raise ValueError(f"Electricity profile {elec_profile_file} sums to zero; cannot normalize.")
-    profile_full = profile_full / prof_sum
+    om_regions = list(getattr(om, "regions", []))
+
+    profile_full = None
+    try:
+        om_profile = getattr(om, "profile", None)
+        if om_profile is not None:
+            if hasattr(om_profile, "values"):
+                om_profile = om_profile.values
+            profile_arr = np.asarray(list(om_profile), dtype=float)
+            if profile_arr.size == 8760:
+                prof_sum = float(profile_arr.sum())
+                if prof_sum > 0:
+                    profile_full = profile_arr / prof_sum
+    except Exception:
+        profile_full = None
+    if profile_full is None:
+        profile_full = _load_numeric_txt(data_dir / elec_profile_file)
+        prof_sum = float(profile_full.sum())
+        if prof_sum <= 0:
+            raise ValueError(f"Electricity profile {elec_profile_file} sums to zero; cannot normalize.")
+        profile_full = profile_full / prof_sum
     tss_file = ts_dir / f"{tss_name}.txt"
     if not tss_file.exists():
         tss_file.write_text("\n".join(str(i) for i in range(1, 225)), encoding="utf-8")
@@ -465,10 +482,19 @@ def write_cesm_inputs_from_data(
     districts: List[int]
     heat_names: List[str]
     directed_edges: List[Tuple[int, int]] = []
+    base_heat_name = heat_commodity_base
     if polygons_path is None:
-        districts = [0]
-        heat_names = [f"{heat_commodity_base}"]
-        area_weights = np.asarray([1.0], dtype=float)
+        count = len(om_regions) if om_regions else 1
+        if count <= 0:
+            count = 1
+        districts = list(range(count))
+        area_weights = np.ones(count, dtype=float)
+        if area_weights.sum() > 0:
+            area_weights = area_weights / area_weights.sum()
+        if count == 1:
+            heat_names = [f"{base_heat_name}"]
+        else:
+            heat_names = [f"{base_heat_name}_D{i}" for i in districts]
     else:
         if gpd is None:
             raise RuntimeError("geopandas required for polygons_path.")
@@ -491,9 +517,9 @@ def write_cesm_inputs_from_data(
             area_weights = areas / areas.sum()
         districts = list(range(n))
         if n == 1:
-            heat_names = [f"{heat_commodity_base}"]
+            heat_names = [f"{base_heat_name}"]
         else:
-            heat_names = [f"{heat_commodity_base}_D{i}" for i in range(n)]
+            heat_names = [f"{base_heat_name}_D{i}" for i in range(n)]
             undirected_edges = _edges_pruned(
                 gdf,
                 edge_strategy=edge_strategy,
@@ -504,15 +530,59 @@ def write_cesm_inputs_from_data(
             for i, j in undirected_edges:
                 directed_edges.append((i, j))
                 directed_edges.append((j, i))
-    annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
-    if eb_small_cap_max_mw is None:
-        eb_small_cap_max_mw = max(1.0, annual_heat_mwh_total / (365 * 24)) * 100.0
-    if eb_small_max_eout_mwh is None:
-        eb_small_max_eout_mwh = annual_heat_mwh_total * 100.0
-    if eb_large_cap_max_mw is None:
-        eb_large_cap_max_mw = max(1.0, annual_heat_mwh_total / (365 * 24)) * 100.0
-    if eb_large_max_eout_mwh is None:
-        eb_large_max_eout_mwh = annual_heat_mwh_total * 100.0
+
+    district_index = {d: idx for idx, d in enumerate(districts)}
+    if len(districts) <= 1:
+        grid_hub_name = f"{base_heat_name}_Grid"
+        grid_names = [grid_hub_name]
+    else:
+        grid_hub_name = f"{base_heat_name}_GridHub"
+        grid_names = [f"{base_heat_name}_Grid_D{d}" for d in districts]
+
+    def _annual_demands_from_om() -> List[float]:
+        if not om_regions:
+            return []
+        annual_map = getattr(om, "annual_demand", {}) or {}
+        target_year = start_year if isinstance(start_year, int) else None
+        if target_year is None:
+            om_years = getattr(om, "years", None)
+            if om_years:
+                target_year = om_years[0]
+        if target_year is None and annual_map:
+            first_region = next(iter(annual_map.values()), {})
+            if first_region:
+                target_year = next(iter(first_region.keys()))
+        values: List[float] = []
+        for rid in om_regions:
+            per_year = annual_map.get(rid, {})
+            val = per_year.get(target_year) if isinstance(target_year, int) else None
+            if val is None and per_year:
+                val = next(iter(per_year.values()))
+            values.append(float(val or 0.0))
+        return values
+
+    annual_heat_by_d = _annual_demands_from_om()
+    if annual_heat_by_d and len(annual_heat_by_d) != len(districts):
+        total_from_om = float(sum(annual_heat_by_d))
+        if total_from_om > 0:
+            annual_heat_by_d = (area_weights * total_from_om).tolist()
+        else:
+            annual_heat_by_d = [0.0] * len(districts)
+    if not annual_heat_by_d:
+        annual_heat_by_d = [0.0] * len(districts)
+    annual_heat_mwh_total = float(sum(annual_heat_by_d))
+    if annual_heat_mwh_total <= 0.0:
+        heat_series = _load_numeric_txt(data_dir / heat_file)
+        if heat_unit.upper() == "J":
+            annual_heat_mwh_total = float(heat_series.sum() / 3.6e9)
+        elif heat_unit.upper() == "MWH":
+            annual_heat_mwh_total = float(heat_series.sum())
+        else:
+            raise ValueError("heat_unit must be 'J' or 'MWh'.")
+        annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
+    else:
+        if len(annual_heat_by_d) != len(districts):
+            annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
     xlsx = techmap_dir / f"{model_name}.xlsx"
     units_df = _units_df()
     scenario_df = _scenario_df(
@@ -525,15 +595,72 @@ def write_cesm_inputs_from_data(
     )
     tss_df = _tss_df(tss_name=tss_name, dt_hours=dt_hours)
     base = ["Electricity", "External", "Dummy"]
-    commodity_list = base + heat_names
+    commodity_list = base + [grid_hub_name] + grid_names + heat_names
+    commodity_list = list(dict.fromkeys(commodity_list))
     sel_list: list[Technology] = []
     if isinstance(selected_techs, TechnologyRegistry):
         sel_list = selected_techs.get_all(return_type="instance")
     elif isinstance(selected_techs, list):
-        sel_list = selected_techs or []
+        sel_list = [t for t in selected_techs if isinstance(t, Technology)]
+    elif selected_techs is None:
+        om_techs = getattr(om, "technologies", None)
+        if isinstance(om_techs, dict):
+            sel_list = [t for t in om_techs.values() if isinstance(t, Technology)]
+    dedup: dict[str, Technology] = {}
+    filtered: list[Technology] = []
+    for tech in sel_list:
+        if tech.name not in dedup:
+            dedup[tech.name] = tech
+            filtered.append(tech)
+    sel_list = filtered
+
+    def _to_int_id(raw: Any, fallback: int) -> int:
+        if hasattr(raw, "iloc"):
+            try:
+                raw = raw.iloc[0]
+            except Exception:
+                pass
+        if isinstance(raw, np.generic):
+            raw = raw.item()
+        try:
+            return int(raw)
+        except Exception:
+            try:
+                return int(float(raw))
+            except Exception:
+                return int(fallback)
+
+    constraints_raw = getattr(om, "constraints", {}) or {}
+    min_dhn_targets_raw = (
+        constraints_raw.get("min_dhn_throughput_mwh", {}) if isinstance(constraints_raw, dict) else {}
+    )
+    min_dhn_targets: dict[int, float] = {}
+    if isinstance(min_dhn_targets_raw, dict):
+        for key, value in min_dhn_targets_raw.items():
+            try:
+                rid = _to_int_id(key, 0)
+            except Exception:
+                continue
+            try:
+                val = float(value)
+            except Exception:
+                continue
+            if val > 0:
+                min_dhn_targets[rid] = float(val)
+
+    om_region_ids = list(getattr(om, "regions", []))
+    district_to_region: dict[int, int] = {}
+    for idx, district_id in enumerate(districts):
+        raw_rid = om_region_ids[idx] if idx < len(om_region_ids) else district_id
+        district_to_region[district_id] = _to_int_id(raw_rid, district_id)
+
+    total_min_dhn = float(sum(min_dhn_targets.values())) if min_dhn_targets else 0.0
+
+    demand_commodity = getattr(om, "commodity", None) or "residential_heat"
+
     for tech in sel_list:
         cin = _canon_co(tech.commodity_in)
-        if tech.commodity_out == "residential_heat":
+        if tech.commodity_out == demand_commodity:
             pass
         else:
             cout = _canon_co(tech.commodity_out)
@@ -541,20 +668,37 @@ def write_cesm_inputs_from_data(
                 commodity_list.append(cout)
         if cin not in commodity_list:
             commodity_list.append(cin)
-    commodity_df = pd.DataFrame(
-        [{"commodity_name": c, "order": i + 1, "color": ""} for i, c in enumerate(commodity_list)],
-        columns=["commodity_name", "order", "color"],
+    produced_commodities = {_canon_co(t.commodity_out) for t in sel_list}
+    required_inputs = {_canon_co(t.commodity_in) for t in sel_list}
+    protected_commodities = set(heat_names + grid_names + [grid_hub_name])
+    supply_candidates = sorted(
+        c
+        for c in required_inputs - produced_commodities
+        if c not in ("", "Dummy") and c.lower() != "electricity" and c not in protected_commodities
     )
-    conv_procs: List[str] = ["GridImportElec", "GridExportElec"]
+
+    for commodity in supply_candidates:
+        if commodity not in commodity_list:
+            commodity_list.append(commodity)
+    conv_procs: List[str] = ["GridExportElec"]
     if len(districts) == 1:
-        conv_procs += ["ElectricBoiler", "HeatDemand"]
+        conv_procs.append("HeatDemand")
     else:
-        conv_procs += [f"EB_small_D{i}" for i in districts]
-        conv_procs += [f"EB_large_D{i}" for i in districts]
         conv_procs += [f"HeatDemand_D{i}" for i in districts]
         conv_procs += [f"Pipe_D{i}_D{j}" for (i, j) in directed_edges]
     for tech in sel_list:
-        if len(districts) == 1 or tech.commodity_out != "residential_heat":
+        if tech.name == "ind_district_heating_connection":
+            if len(districts) == 1:
+                name = "HeatExchanger"
+                if name not in conv_procs:
+                    conv_procs.append(name)
+            else:
+                for d in districts:
+                    name = f"HeatExchanger_D{d}"
+                    if name not in conv_procs:
+                        conv_procs.append(name)
+            continue
+        if len(districts) == 1 or tech.commodity_out != demand_commodity:
             name = f"{tech.name}"
             if name not in conv_procs:
                 conv_procs.append(name)
@@ -563,24 +707,39 @@ def write_cesm_inputs_from_data(
                 name = f"{tech.name}_D{i}"
                 if name not in conv_procs:
                     conv_procs.append(name)
+
+    extra_supply_rows: List[dict[str, Any]] = []
+    supply_price_defaults = {"gas": 60.0, "oil": 90.0}
+    for commodity in supply_candidates:
+        if commodity not in commodity_list:
+            commodity_list.append(commodity)
+        cp_name = f"{commodity.capitalize()}Supply"
+        if cp_name not in conv_procs:
+            conv_procs.append(cp_name)
+        price = float(supply_price_defaults.get(commodity.lower(), elec_price_eur_per_mwh))
+        extra_supply_rows.append(
+            {
+                "conversion_process_name": cp_name,
+                "commodity_in": "Dummy",
+                "commodity_out": commodity,
+                "scenario": scenario_name,
+                "efficiency": 1.0,
+                "technical_availability": 1.0,
+                "max_eout": 1e12,
+                "cap_max": 1e9,
+                "opex_cost_energy": price,
+            }
+        )
+    commodity_df = pd.DataFrame(
+        [{"commodity_name": c, "order": idx + 1, "color": ""} for idx, c in enumerate(commodity_list)],
+        columns=["commodity_name", "order", "color"],
+    )
+
     convproc_df = pd.DataFrame(
         [{"conversion_process_name": t, "order": i + 1, "color": ""} for i, t in enumerate(conv_procs)],
         columns=["conversion_process_name", "order", "color"],
     )
     cs_rows: List[dict] = []
-    cs_rows.append(
-        {
-            "conversion_process_name": "GridImportElec",
-            "commodity_in": "Dummy",
-            "commodity_out": "Electricity",
-            "scenario": scenario_name,
-            "efficiency": 1.0,
-            "technical_availability": 1.0,
-            "max_eout": 1e12,
-            "cap_max": 1e9,
-            "opex_cost_energy": float(elec_price_eur_per_mwh),
-        }
-    )
     cs_rows.append(
         {
             "conversion_process_name": "GridExportElec",
@@ -594,93 +753,166 @@ def write_cesm_inputs_from_data(
             "opex_cost_energy": float(export_price_eur_per_mwh),
         }
     )
-    if include_default_components:
-        for i in districts:
-            heat_comm = heat_names[i]
-            cs_rows.append(
-                {
-                    "conversion_process_name": f"EB_small_D{i}",
-                    "commodity_in": "Electricity",
-                    "commodity_out": heat_comm,
-                    "scenario": scenario_name,
-                    "efficiency": float(eb_small_eta),
-                    "technical_availability": 1.0,
-                    "technical_lifetime": int(eb_lifetime_years),
-                    "cap_min": 0.0,
-                    "cap_max": float(eb_small_cap_max_mw),
-                    "max_eout": float(eb_small_max_eout_mwh),
-                    "capex_cost_power": float(eb_small_capex_eur_per_mw),
-                    "opex_cost_power": float(eb_small_opex_eur_per_mw),
-                    "opex_cost_energy": float(eb_small_opex_eur_per_mwh),
-                }
-            )
-            cs_rows.append(
-                {
-                    "conversion_process_name": f"EB_large_D{i}",
-                    "commodity_in": "Electricity",
-                    "commodity_out": heat_comm,
-                    "scenario": scenario_name,
-                    "efficiency": float(eb_large_eta),
-                    "technical_availability": 1.0,
-                    "technical_lifetime": int(eb_lifetime_years),
-                    "cap_min": float(eb_large_cap_min_mw),
-                    "cap_max": float(eb_large_cap_max_mw),
-                    "max_eout": float(eb_large_max_eout_mwh),
-                    "capex_cost_power": float(eb_large_capex_eur_per_mw),
-                    "opex_cost_power": float(eb_large_opex_eur_per_mw),
-                    "opex_cost_energy": float(eb_large_opex_eur_per_mwh),
-                    "out_frac_min": float(eb_large_out_frac_min),
-                }
-            )
-            cs_rows.append(
-                {
-                    "conversion_process_name": f"HeatDemand_D{i}",
-                    "commodity_in": heat_comm,
-                    "commodity_out": "Dummy",
-                    "scenario": scenario_name,
-                    "efficiency": 1.0,
-                    "technical_availability": 1.0,
-                    "min_eout": float(annual_heat_by_d[i]),
-                    "output_profile": demand_profile_name,
-                }
-            )
-        pipe_eff = max(0.0, 1.0 - float(pipe_loss_fraction))
-        for (i, j) in directed_edges:
-            cs_rows.append(
-                {
-                    "conversion_process_name": f"Pipe_D{i}_D{j}",
-                    "commodity_in": heat_names[i],
-                    "commodity_out": heat_names[j],
-                    "scenario": scenario_name,
-                    "efficiency": pipe_eff,
-                    "technical_availability": 1.0,
-                    "technical_lifetime": int(pipe_lifetime_years),
-                    "cap_max": float(pipe_cap_max_mw),
-                    "max_eout": 1e12,
-                    "opex_cost_energy": float(pipe_opex_eur_per_mwh),
-                    "capex_cost_power": float(pipe_capex_eur_per_mw),
-                }
-            )
-    def _add_cs_row(cp_name: str, cin: str, cout: str, tech: Technology):
+    cs_rows.extend(extra_supply_rows)
+    for idx, i in enumerate(districts):
+        heat_comm = heat_names[i]
+        cp_name = "HeatDemand" if len(districts) == 1 else f"HeatDemand_D{i}"
+        min_eout = float(annual_heat_by_d[i]) if i < len(annual_heat_by_d) else 0.0
         cs_rows.append(
-            tech_to_cesms_row(
-                tech,
-                cp_name=cp_name,
-                cin=cin,
-                cout=cout,
-                scenario_name=scenario_name,
-            )
+            {
+                "conversion_process_name": cp_name,
+                "commodity_in": heat_comm,
+                "commodity_out": "Dummy",
+                "scenario": scenario_name,
+                "efficiency": 1.0,
+                "technical_availability": 1.0,
+                "min_eout": min_eout,
+                "output_profile": demand_profile_name,
+            }
         )
-    for tech in sel_list:
+
+    pipe_eff = max(0.0, 1.0 - float(pipe_loss_fraction))
+    for (i, j) in directed_edges:
+        src_idx = district_index.get(i, i if 0 <= i < len(grid_names) else 0)
+        dst_idx = district_index.get(j, j if 0 <= j < len(grid_names) else 0)
+        cs_rows.append(
+            {
+                "conversion_process_name": f"Pipe_D{i}_D{j}",
+                "commodity_in": grid_names[src_idx],
+                "commodity_out": grid_names[dst_idx],
+                "scenario": scenario_name,
+                "efficiency": pipe_eff,
+                "technical_availability": 1.0,
+                "technical_lifetime": int(pipe_lifetime_years),
+                "cap_max": float(pipe_cap_max_mw),
+                "max_eout": 1e12,
+                "opex_cost_energy": float(pipe_opex_eur_per_mwh),
+                "capex_cost_power": float(pipe_capex_eur_per_mw),
+            }
+        )
+
+    def _min_eout_override(tech: Technology, district: Optional[int] = None) -> Optional[dict[str, float]]:
+        cout = _canon_co(tech.commodity_out)
+        if tech.name == "ind_district_heating_connection" and district is not None:
+            rid = district_to_region.get(district, district)
+            target = min_dhn_targets.get(rid)
+            if target and target > 0:
+                return {"min_eout": float(target)}
+        if total_min_dhn > 0 and cout in {"district_heat_in", "district_heat_out"}:
+            return {"min_eout": float(total_min_dhn)}
+        return None
+
+    def _build_cs_row(
+        cp_name: str,
+        cin: str,
+        cout: str,
+        tech: Technology,
+        overrides: Optional[dict[str, float]] = None,
+    ) -> dict[str, Any]:
+        row = tech_to_cesms_row(
+            tech,
+            cp_name=cp_name,
+            cin=cin,
+            cout=cout,
+            scenario_name=scenario_name,
+        )
+        if overrides:
+            row.update(overrides)
+        return row
+
+    def _rows_residential(tech: Technology) -> List[dict[str, Any]]:
+        rows: List[dict[str, Any]] = []
         if len(districts) == 1:
-            cout = heat_names[0] if tech.commodity_out == "residential_heat" else tech.commodity_out
-            _add_cs_row(f"{tech.name}", tech.commodity_in, cout, tech)
-        else:
-            if tech.commodity_out == "residential_heat":
-                for i in districts:
-                    _add_cs_row(f"{tech.name}_D{i}", tech.commodity_in, heat_names[i], tech)
+            district = districts[0]
+            overrides = _min_eout_override(tech, district)
+            heat_comm = heat_names[district_index.get(district, 0)] if heat_names else tech.commodity_out
+            rows.append(
+                _build_cs_row(
+                    cp_name=f"{tech.name}",
+                    cin=tech.commodity_in,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                )
+            )
+            return rows
+        for district in districts:
+            overrides = _min_eout_override(tech, district)
+            heat_idx = district_index.get(district)
+            heat_comm = heat_names[heat_idx] if heat_idx is not None and heat_idx < len(heat_names) else tech.commodity_out
+            rows.append(
+                _build_cs_row(
+                    cp_name=f"{tech.name}_D{district}",
+                    cin=tech.commodity_in,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                )
+            )
+        return rows
+
+    def _rows_heat_exchanger(tech: Technology) -> List[dict[str, Any]]:
+        rows: List[dict[str, Any]] = []
+        if len(districts) == 1:
+            district = districts[0]
+            overrides = _min_eout_override(tech, district)
+            heat_idx = district_index.get(district, 0)
+            heat_comm = heat_names[heat_idx] if heat_names else tech.commodity_out
+            rows.append(
+                _build_cs_row(
+                    cp_name="HeatExchanger",
+                    cin=tech.commodity_in,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                )
+            )
+            return rows
+        for district in districts:
+            overrides = _min_eout_override(tech, district)
+            heat_idx = district_index.get(district)
+            heat_comm = heat_names[heat_idx] if heat_idx is not None and heat_idx < len(heat_names) else tech.commodity_out
+            rows.append(
+                _build_cs_row(
+                    cp_name=f"HeatExchanger_D{district}",
+                    cin=tech.commodity_in,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                )
+            )
+        return rows
+
+    def _rows_default(tech: Technology) -> List[dict[str, Any]]:
+        overrides = _min_eout_override(tech, None)
+        return [
+            _build_cs_row(
+                cp_name=f"{tech.name}",
+                cin=tech.commodity_in,
+                cout=tech.commodity_out,
+                tech=tech,
+                overrides=overrides,
+            )
+        ]
+
+    technology_to_cs: Dict[str, Callable[[Technology], List[dict[str, Any]]]] = {
+        "ind_heat_pump": _rows_residential,
+        "ind_gas_boiler": _rows_residential,
+        "ind_oil_boiler": _rows_residential,
+        "ind_district_heating_connection": _rows_heat_exchanger,
+        "heat_grid": _rows_default,
+        "cen_heat_pump": _rows_default,
+        "grid_electricity": _rows_default,
+    }
+
+    for tech in sel_list:
+        builder = technology_to_cs.get(tech.name)
+        if builder is None:
+            if _canon_co(tech.commodity_out) == _canon_co(demand_commodity):
+                builder = _rows_residential
             else:
-                _add_cs_row(f"{tech.name}", tech.commodity_in, tech.commodity_out, tech)
+                builder = _rows_default
+        cs_rows.extend(builder(tech))
     base_cols = ["conversion_process_name", "commodity_in", "commodity_out", "scenario"]
     param_cols = _param_cols()
     convsubproc_df = pd.DataFrame(cs_rows)

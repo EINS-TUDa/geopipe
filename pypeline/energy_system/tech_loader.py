@@ -1,14 +1,22 @@
 from __future__ import annotations
 from pathlib import Path
-import json
-from typing import Dict, List, Sequence
+from typing import Dict, List
+
+import yaml
 
 from pypeline.energy_system.technology import Technology
-from pypeline.energy_system.technology_spec import TechnologySpec, validate_spec_dict, validate_specs
+from pypeline.energy_system.technology_spec import (
+    TechnologySpec,
+    validate_spec_dict,
+    validate_specs,
+)
+from pypeline.energy_system.technology_stage import TechnologyStage, TechnologyCategory
 
-def _load_spec(path: Path) -> TechnologySpec:
-    data = json.loads(path.read_text(encoding="utf-8"))
+
+def _spec_from_dict(data: Dict) -> TechnologySpec:
     validate_spec_dict(data)
+    stage = data.get("stage")
+    category = data.get("category")
     return TechnologySpec(
         name=data["name"],
         commodity_in=data["commodity_in"],
@@ -18,53 +26,38 @@ def _load_spec(path: Path) -> TechnologySpec:
         opex_cost_energy=float(data.get("opex_cost_energy", 0.0)),
         opex_cost_power=float(data.get("opex_cost_power", 0.0)),
         capex_cost_power=float(data.get("capex_cost_power", 0.0)),
+        stage=TechnologyStage(stage) if stage else TechnologyStage.STAGE1,
+        category=TechnologyCategory(category) if category else TechnologyCategory.DEMAND_LINK,
     )
 
 
-def _collect_specs(files: Dict[str, Path], preferred_order: Sequence[str]) -> List[TechnologySpec]:
+def _load_specs_from_yaml(path: Path) -> List[TechnologySpec]:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not raw:
+        return []
+    entries = raw
+    if isinstance(raw, dict):
+        entries = raw.get("technologies") or list(raw.values())
     specs: List[TechnologySpec] = []
-    remaining: Dict[str, Path] = dict(files)
-
-    def append_if_valid(path: Path) -> None:
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
         try:
-            specs.append(_load_spec(path))
+            specs.append(_spec_from_dict(item))
         except Exception:
-            pass
-
-    for name in preferred_order:
-        path = remaining.pop(name, None)
-        if path is not None:
-            append_if_valid(path)
-
-    for path in sorted(remaining.values(), key=lambda p: p.name):
-        append_if_valid(path)
-
+            continue
     validate_specs(specs)
     return specs
 
-def load_specs_from_dir(directory: Path) -> List[TechnologySpec]:
-    directory = Path(directory)
-    if not directory.exists() or not directory.is_dir():
-        return []
-    files = {p.stem: p for p in directory.glob("*.json")}
-    return _collect_specs(files, [])
-
 def load_specs_from_package() -> List[TechnologySpec]:
     base = Path(__file__).resolve().parent
-    data_dir = base / "technologies"
+    data_dir = base / "configs"
     if not data_dir.exists():
         return []
-    preferred_order = [
-        "ind_heat_pump",
-        "ind_gas_boiler",
-        "ind_oil_boiler",
-        "ind_district_heating_connection",
-        "cen_heat_pump",
-        "heat_grid",
-        "grid_electricity",
-    ]
-    files = {p.stem: p for p in data_dir.glob("*.json")}
-    return _collect_specs(files, preferred_order)
+    yaml_path = data_dir / "technologies.yaml"
+    if not yaml_path.exists():
+        return []
+    return _load_specs_from_yaml(yaml_path)
 
 def instantiate(spec: TechnologySpec) -> Technology:
     return spec.to_technology()

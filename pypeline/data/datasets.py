@@ -14,7 +14,7 @@ import requests
 
 from shapely.geometry import shape
 
-from pypeline.energy_system.technology_registry import default_technology_registry
+from pypeline.energy_system.technology_registry import DEFAULT_TECHNOLOGY_REGISTRY
 
 
 class CensusTechnology(Enum):

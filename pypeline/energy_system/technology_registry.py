@@ -111,9 +111,6 @@ class TechnologyRegistry:
 
 DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()
 
-def default_technology_registry(cls):
-    DEFAULT_TECHNOLOGY_REGISTRY.register(cls())
-    return cls
 
 
 

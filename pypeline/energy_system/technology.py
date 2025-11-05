@@ -1,4 +1,3 @@
-from abc import ABC
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -11,7 +10,7 @@ from .technology_stage import (
 )
 
 
-class Technology(ABC):
+class Technology:
     def __init__(self,
                  name: str,
                  commodity_in: str,
@@ -33,13 +32,8 @@ class Technology(ABC):
         self.opex_cost_power = opex_cost_power
         self.capex_cost_power = capex_cost_power
         self.availability_profile = availability_profile
-        # normalize to enums (allow passing raw strings for JSON flexibility)
         self.stage = TechnologyStage(stage) if not isinstance(stage, TechnologyStage) else stage
         self.category = TechnologyCategory(category) if not isinstance(category, TechnologyCategory) else category
-
-
-class CHP(Technology):
-    ...
 
 @dataclass
 class RegionTechnology:

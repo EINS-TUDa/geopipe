@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from pypeline.energy_system.technology import Technology
+from pypeline.energy_system.technology import (
+	Technology,
+	TechnologyStage,
+	TechnologyCategory,
+	DEFAULT_STAGE,
+	DEFAULT_CATEGORY,
+)
 
 
 REQUIRED_SPEC_FIELDS: tuple[str, ...] = (
@@ -31,6 +37,8 @@ class TechnologySpec:
 	opex_cost_energy: float = 0.0
 	opex_cost_power: float = 0.0
 	capex_cost_power: float = 0.0
+	stage: TechnologyStage | str = DEFAULT_STAGE
+	category: TechnologyCategory | str = DEFAULT_CATEGORY
 
 	def to_dict(self) -> dict[str, Any]:
 		return {
@@ -42,6 +50,8 @@ class TechnologySpec:
 			"opex_cost_energy": self.opex_cost_energy,
 			"opex_cost_power": self.opex_cost_power,
 			"capex_cost_power": self.capex_cost_power,
+			"stage": self.stage.value if isinstance(self.stage, TechnologyStage) else str(self.stage),
+			"category": self.category.value if isinstance(self.category, TechnologyCategory) else str(self.category),
 		}
 
 	def to_technology(self) -> Technology:
@@ -54,6 +64,8 @@ class TechnologySpec:
 			opex_cost_energy=self.opex_cost_energy,
 			opex_cost_power=self.opex_cost_power,
 			capex_cost_power=self.capex_cost_power,
+			stage=self.stage,
+			category=self.category,
 		)
 
 
@@ -78,6 +90,18 @@ def validate_spec_dict(data: dict[str, Any]) -> None:
 	for attr in numeric_fields:
 		if attr in data and not isinstance(data[attr], (int, float)):
 			raise TypeError(f"TechnologySpec.{attr} must be numeric if provided")
+
+	if "stage" in data and data["stage"] is not None:
+		try:
+			TechnologyStage(data["stage"])
+		except Exception as exc:
+			raise ValueError(f"Invalid technology stage '{data['stage']}'") from exc
+
+	if "category" in data and data["category"] is not None:
+		try:
+			TechnologyCategory(data["category"])
+		except Exception as exc:
+			raise ValueError(f"Invalid technology category '{data['category']}'") from exc
 
 
 def validate_specs(specs: Iterable[TechnologySpec]) -> None:
