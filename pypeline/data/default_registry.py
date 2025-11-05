@@ -7,6 +7,10 @@ from pypeline.data import (
 )
 from sqlalchemy import text
 
+from pypeline.data.data_utils import get_gdf_from_ags
+from pypeline.data.dataset import SimpleDataset
+from pypeline.energy_system.unit import UnitEnum
+
 ***REMOVED***_conn = DatabaseConnection(
     host="localhost",
     # host="ds1.example.com",
@@ -22,11 +26,20 @@ def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, floa
     if query["key"] != "heating_shares":
         raise ValueError("census_grid_query only supports 'heating_types' key")
 
-    region: gpd.GeoDataFrame = query["region"]
+    name_mapping = {   "gas": "ind_gas_boiler",
+                       "heizoel": "ind_oil_boiler",
+                       "holz_holzpellets": "wood",
+                       "biomasse_biogas": None,
+                       "solar_geothermie_waermepumpen": "ind_heat_pump",
+                       "strom": None,
+                       "kohle": None,
+                       "fernwaerme": "ind_district_heating_connection",
+                       "kein_energietraeger": None}
 
     columns = ["heizoel", "biomasse_biogas", "strom", "fernwaerme", "gas",
                "holz_holzpellets", "solar_geothermie_waermepumpen", "kohle", "kein_energietraeger"]
 
+    region: gpd.GeoDataFrame = query["region"]
     region_epsg = region.crs.to_epsg()
     region_geom_wkt = region.union_all().wkt
 
@@ -52,15 +65,10 @@ def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, floa
     else:
         df_shares[columns] = 0
     heating_shares = df_shares.iloc[0].to_dict()
+    heating_shares = {name_mapping[k]: v for k, v in heating_shares.items() if name_mapping[k] is not None}
 
     return heating_shares
 
-census_heating_dataset = PostgreSQLDataset(
-        keys=["heating_shares"],
-        db_connection=***REMOVED***_conn,
-        priority=5,
-        query_function=census_grid_query
-    )
 
 def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
     if query["key"] != "residential_heat_demand":
@@ -92,11 +100,21 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 
     return total_demand
 
+census_heating_dataset = PostgreSQLDataset(
+        keys=["heating_shares"],
+        db_connection=***REMOVED***_conn,
+        priority=5,
+        query_function=census_grid_query,
+        regional_validity=get_gdf_from_ags(["09 1 85 149"])
+    )
+
 ***REMOVED***_kwp_dataset = PostgreSQLDataset(
         keys=["residential_heat_demand"],
+        unit = UnitEnum.KWH,
         db_connection=***REMOVED***_conn,
-        priority=1,
-        query_function=***REMOVED***_kwp_query
+        priority=5,
+        query_function=***REMOVED***_kwp_query,
+        regional_validity=get_gdf_from_ags(["09 1 85 149"])
     )
 
 residential_heat_demand_profile_dataset = CSVDataset(
@@ -106,12 +124,30 @@ residential_heat_demand_profile_dataset = CSVDataset(
         priority=1,
     )
 
+residential_electricity_demand_profile_dataset = CSVDataset(
+        keys=["residential_electricity_demand_profile"],
+        file_path="data/corrected_eletricity_demand_2016.txt",
+        pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
+        priority=1,
+    )
 
+residential_yearly_electricity_demand = SimpleDataset(
+    keys=["residential_electricity_demand"],
+    unit=UnitEnum.KWH,
+    data=3500.0,
+    priority=1,
+)
 
-DEFAULT_REGISTRY = DataRegistry()
-DEFAULT_REGISTRY.register(census_heating_dataset)
-DEFAULT_REGISTRY.register(***REMOVED***_kwp_dataset)
-DEFAULT_REGISTRY.register(residential_heat_demand_profile_dataset)
+_DEFAULT_REGISTRY = DataRegistry()
+_DEFAULT_REGISTRY.register(census_heating_dataset)
+_DEFAULT_REGISTRY.register(***REMOVED***_kwp_dataset)
+_DEFAULT_REGISTRY.register(residential_heat_demand_profile_dataset)
+_DEFAULT_REGISTRY.register(residential_electricity_demand_profile_dataset)
+_DEFAULT_REGISTRY.register(residential_yearly_electricity_demand)
+
+def get_default_registry() -> DataRegistry:
+    """Returns the default DataRegistry instance."""
+    return _DEFAULT_REGISTRY
 
 
 
@@ -124,9 +160,9 @@ if __name__ == "__main__":
                 "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
     test_query_3 = {"key": "residential_heat_demand_profile"}
     residential_heat_demand_profile_dataset.file_path = "../../data/D_Heat_Household_J.txt"
-    data_1 = DEFAULT_REGISTRY.query(test_query_1)
-    data_2 = DEFAULT_REGISTRY.query(test_query_2)
-    data_3 = DEFAULT_REGISTRY.query(test_query_3)
+    data_1 = _DEFAULT_REGISTRY.query(test_query_1)
+    data_2 = _DEFAULT_REGISTRY.query(test_query_2)
+    data_3 = _DEFAULT_REGISTRY.query(test_query_3)
     print(data_1)
     print(data_2)
     print(data_3)

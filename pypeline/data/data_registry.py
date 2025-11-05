@@ -98,34 +98,5 @@ class DataRegistry:
         # The first dataset has the highest priority
         return datasets[0].query(query)
 
-    @classmethod
-    def from_default(cls, allowed_keys: Optional[list[str]] = None) -> 'DataRegistry':
-        """
-        Creates a DataRegistry with predefined default datasets from the pypeline package.
 
-        Args:
-            allowed_keys: Optional list of keys to load.
-                         If None, all default datasets are loaded.
-
-        Returns:
-            DataRegistry instance with default datasets registered
-        """
-        registry = cls()
-
-        # Explicit list of default datasets
-        # TODO: Import and add the actual default dataset classes here
-        default_classes = [
-            # Example:
-            # from pypeline.data_new.datasets.zensus_datasets import Zensus2022Population
-            # Zensus2022Population,
-        ]
-
-        for dataset_cls in default_classes:
-            instance = dataset_cls()
-
-            # Check if at least one key of the dataset is allowed
-            if allowed_keys is None or any(k in allowed_keys for k in instance.keys):
-                registry.register(instance)
-
-        return registry
 

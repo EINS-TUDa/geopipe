@@ -22,10 +22,10 @@ def main():
     tech_reg = TechnologyRegistry(); register_default_technologies(tech_reg)
     data_reg = get_default_registry()
 
-    polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
+    polygons_path = Path("data") / "polygon_neuburg.geojson"
     polygons = gpd.read_file(Path(polygons_path))
 
-    esb = EnergySystemBuilder(energy_system_name="Bensheim")
+    esb = EnergySystemBuilder(energy_system_name="neuburg")
     esb.set_polygons(polygons)
     esb.set_technology_dependency_manager(default=True)
     esb.set_demands(default=True)
@@ -41,7 +41,7 @@ def main():
     es_plotter.plot()
     print("Constraints:", getattr(es, "constraints", {}))
 
-    model_name    = "Bensheim"
+    model_name    = "Neuburg"
     scenario_name = "Base4twk"
     tss_name      = "4ThinWeeks"
     run_name      = f"{model_name}-{scenario_name}"
