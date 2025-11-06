@@ -51,11 +51,6 @@
 - name: heat_grid
   commodity_in: district_heat_in
   commodity_out: district_heat_out
-  efficiency: 0.95
-  technical_lifetime: 30
-  opex_cost_energy: 0.005
-  opex_cost_power: 20
-  capex_cost_power: 5000
   stage: stage2
   category: grid
 - name: grid_electricity

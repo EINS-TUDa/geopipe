@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Protocol
 
 from pypeline.energy_system.tech_loader import (
@@ -37,8 +38,11 @@ class SpecProvider(Protocol):
 class YamlPackageSpecProvider:
     """Provide specs by reading the bundled YAML file from the package."""
 
+    def __init__(self, extra_spec_files: Iterable[str | Path] | None = None) -> None:
+        self._extra_spec_files = list(extra_spec_files or [])
+
     def iter_specs(self) -> Iterable[TechnologySpec]:
-        return load_specs_from_package()
+        return load_specs_from_package(self._extra_spec_files)
 
 
 @dataclass(slots=True)

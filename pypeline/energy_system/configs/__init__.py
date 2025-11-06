@@ -1,7 +1,8 @@
 """Default technology catalog.
 
 Importing this package registers the bundled technology specifications into the
-shared default registry. Specification data lives in `technologies.yaml`.
+shared default registry. Specification data lives in `technologies.yaml` while
+field defaults live in `defaults.yaml`; both are merged during loading.
 """
 from __future__ import annotations
 
