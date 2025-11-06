@@ -1,9 +1,9 @@
 """Composable catalog for loading and analysing technology specifications.
 
 The catalog coordinates one or more specification providers, validates their
-output, and produces runtime ``Technology`` instances ready for registration.
-It also offers lightweight analytics helpers so callers can understand how the
-specs relate to commodities, categories, and stages before wiring them into an
+output, and produces runtime Technology instances ready for registration.
+It also offers lightweight analytic helpers so callers can understand how the
+specs relate to commodities, categories, and stages before wiring them into the
 energy system.
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ from pypeline.energy_system.technology_stage import TechnologyCategory, Technolo
 
 
 class SpecProvider(Protocol):
-    """A source that can yield ``TechnologySpec`` instances."""
+    """A source that can yield TechnologySpec instances."""
 
     def iter_specs(self) -> Iterable[TechnologySpec]:  # pragma: no cover - structural typing
         ...
