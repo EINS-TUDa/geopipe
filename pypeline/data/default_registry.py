@@ -8,7 +8,7 @@ from pypeline.data import (
 from sqlalchemy import text
 
 from pypeline.data.data_utils import get_gdf_from_ags
-from pypeline.data.dataset import SimpleDataset
+from pypeline.data.dataset import SimpleDataset, FileDataset
 from pypeline.energy_system.unit import UnitEnum
 
 ***REMOVED***_conn = DatabaseConnection(
@@ -22,7 +22,7 @@ from pypeline.energy_system.unit import UnitEnum
 print(***REMOVED***_conn.is_available())
 
 
-def census_grid_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:
+def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:
     if query["key"] != "heating_shares":
         raise ValueError("census_grid_query only supports 'heating_types' key")
 
@@ -75,7 +75,6 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
         raise ValueError("***REMOVED***_kwp_query only supports 'residential_heat_demand' key")
 
     region: gpd.GeoDataFrame = query["region"]
-
     region_epsg = region.crs.to_epsg()
     region_geom_wkt = region.union_all().wkt
 
@@ -100,11 +99,56 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 
     return total_demand
 
+def waermeatlas_hessen_query(dataset: FileDataset, query: dict) -> float:
+    if query["key"] != "residential_heat_demand":
+        raise ValueError("waermeatlas_hessen_query only supports 'residential_heat_demand' key")
+
+    region: gpd.GeoDataFrame = query["region"]
+    region_epsg = region.crs.to_epsg()
+
+    gdf = gpd.read_file(dataset.file_path, layer="WAH_Punkte")
+    gdf = gdf.to_crs(epsg=region_epsg)
+    gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
+    return gdf_in_region["qnutzwaerme_2020_kwh"].sum()
+
+def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, float]:
+    if query["key"] != "heating_shares":
+        raise ValueError("census_south_hessen_query only supports 'heating_shares' key")
+
+    name_mapping = {   "gas": "ind_gas_boiler",
+                       "heizoel": "ind_oil_boiler",
+                       "holz_holzpellets": "wood",
+                       "biomasse_biogas": None,
+                       "solar_geothermie_waermepumpen": "ind_heat_pump",
+                       "strom": None,
+                       "kohle": None,
+                       "fernwaerme": "ind_district_heating_connection",
+                       "kein_energietraeger": None}
+
+    region: gpd.GeoDataFrame = query["region"]
+    region_epsg = region.crs.to_epsg()
+
+    gdf = dataset.get_data()
+    if gdf.crs.to_epsg() != region_epsg:
+        gdf = gdf.to_crs(epsg=region_epsg)
+
+    gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
+
+    columns = ["heizoel", "biomasse_biogas", "strom", "fernwaerme", "gas",
+               "holz_holzpellets", "solar_geothermie_waermepumpen", "kohle", "kein_energietraeger"]
+
+    heating_shares = {}
+
+
+
+    return heating_shares
+
+
 census_heating_dataset = PostgreSQLDataset(
         keys=["heating_shares"],
         db_connection=***REMOVED***_conn,
         priority=5,
-        query_function=census_grid_query,
+        query_function=***REMOVED***_census_query,
         regional_validity=get_gdf_from_ags(["09 1 85 149"])
     )
 
@@ -138,12 +182,33 @@ residential_yearly_electricity_demand = SimpleDataset(
     priority=1,
 )
 
+waermeatlas_hessen_dataset = FileDataset(
+        keys=["residential_heat_demand"],
+        file_path="data/WaermeatlasHessen.gpkg",
+        query_function=waermeatlas_hessen_query,
+        unit=UnitEnum.KWH,
+        priority=5,
+        crs="EPSG:25832",
+        regional_validity=get_gdf_from_ags(["06"])
+    )
+
+census_south_hessen_dataset = FileDataset(
+        keys=["heating_shares"],
+        file_path="data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
+        query_function=census_south_hessen_query,  # Implement if needed
+        priority=3,
+        regional_validity=get_gdf_from_ags(["06"])
+    )
+
+
 _DEFAULT_REGISTRY = DataRegistry()
 _DEFAULT_REGISTRY.register(census_heating_dataset)
 _DEFAULT_REGISTRY.register(***REMOVED***_kwp_dataset)
 _DEFAULT_REGISTRY.register(residential_heat_demand_profile_dataset)
 _DEFAULT_REGISTRY.register(residential_electricity_demand_profile_dataset)
 _DEFAULT_REGISTRY.register(residential_yearly_electricity_demand)
+_DEFAULT_REGISTRY.register(waermeatlas_hessen_dataset)
+_DEFAULT_REGISTRY.register(census_south_hessen_dataset)
 
 def get_default_registry() -> DataRegistry:
     """Returns the default DataRegistry instance."""
@@ -167,5 +232,3 @@ if __name__ == "__main__":
     print(data_2)
     print(data_3)
     print("todo: introduce test for keys and required data format")
-
-
