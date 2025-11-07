@@ -5,7 +5,7 @@ import geopandas as gpd
 import sqlite3
 
 from pypeline import EnergySystemBuilder, TechnologyRegistry
-from pypeline.data.default_registry import get_default_registry
+from pypeline.data.default_registry import get_default_data_registry
 from pypeline.energy_system.catalog import register_default_technologies
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
@@ -20,7 +20,7 @@ def must_exist(p: Path, what: str) -> None:
 
 def main():
     tech_reg = TechnologyRegistry(); register_default_technologies(tech_reg)
-    data_reg = get_default_registry()
+    data_reg = get_default_data_registry()
 
     polygons_path = Path("data") / "polygon_neuburg.geojson"
     polygons = gpd.read_file(Path(polygons_path))

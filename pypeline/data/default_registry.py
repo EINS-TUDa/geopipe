@@ -108,15 +108,15 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, fl
     if query["key"] != "heating_shares":
         raise ValueError("census_south_hessen_query only supports 'heating_shares' key")
 
-    name_mapping = {   "gas": "ind_gas_boiler",
-                       "heizoel": "ind_oil_boiler",
-                       "holz_holzpellets": "wood",
-                       "biomasse_biogas": None,
-                       "solar_geothermie_waermepumpen": "ind_heat_pump",
-                       "strom": None,
-                       "kohle": None,
-                       "fernwaerme": "ind_district_heating_connection",
-                       "kein_energietraeger": None}
+    name_mapping = {   "Gas": "ind_gas_boiler",
+                       "Heizoel": "ind_oil_boiler",
+                       "Holz_Holzpellets": "wood",
+                       "Biomasse_Biogas": None,
+                       "Solar_Geothermie_Waermepumpen": "ind_heat_pump",
+                       "Strom": None,
+                       "Kohle": None,
+                       "Fernwaerme": "ind_district_heating_connection",
+                       "kein_Energietraeger": None}
 
     region: gpd.GeoDataFrame = query["region"]
     region_epsg = region.crs.to_epsg()
@@ -125,15 +125,24 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, fl
     if gdf.crs.to_epsg() != region_epsg:
         gdf = gdf.to_crs(epsg=region_epsg)
 
-    gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
+    technologies = ["Heizoel", "Biomasse_Biogas", "Strom", "Fernwaerme", "Gas",
+                    "Holz_Holzpellets", "Solar_Geothermie_Waermepumpen", "Kohle", "kein_Energietraeger"]
 
-    columns = ["heizoel", "biomasse_biogas", "strom", "fernwaerme", "gas",
-               "holz_holzpellets", "solar_geothermie_waermepumpen", "kohle", "kein_energietraeger"]
+    gdf_in_region = gpd.sjoin(gdf, region, predicate="intersects", how="inner")
 
-    heating_shares = {}
+    for tech in technologies:
+        gdf_in_region[tech] = pd.to_numeric(gdf_in_region[tech], errors='coerce').fillna(0)
 
+    tech_amounts = {}
+    for tech in technologies:
+        tech_amounts[tech] = gdf_in_region[tech].sum()
+    total = sum(tech_amounts.values())
+    if total == 0:
+        tech_shares = {tech: 0.0 for tech in technologies}
+    else:
+        tech_shares = {tech: amount / total for tech, amount in tech_amounts.items()}
 
-
+    heating_shares = {name_mapping[k]: v for k, v in tech_shares.items() if name_mapping[k] is not None}
     return heating_shares
 
 
@@ -217,7 +226,7 @@ def _create_default_datasets() -> list:
     ]
 
 
-def get_default_registry() -> DataRegistry:
+def get_default_data_registry() -> DataRegistry:
     """
     Returns the default DataRegistry instance.
     Uses lazy initialization - the registry is created only on first call.
@@ -241,16 +250,19 @@ if __name__ == "__main__":
     test_query_2 = {"key": "residential_heat_demand",
                 "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
     test_query_3 = {"key": "residential_heat_demand_profile"}
+    test_query_4 = {"key": "heating_shares", "region": gpd.read_file("../../data/baublock_bensheim_epsg25832.geojson")}
 
-    registry = get_default_registry()
+    registry = get_default_data_registry()
     for ds in registry.get_datasets():
-        if hasattr(ds, 'file_path') and ds.file_path == "data/D_Heat_Household_J.txt":
-            ds.file_path = "../../data/D_Heat_Household_J.txt"
+        if isinstance(ds, FileDataset):
+            ds.file_path = "../../" + ds.file_path
 
     data_1 = registry.query(test_query_1)
     data_2 = registry.query(test_query_2)
     data_3 = registry.query(test_query_3)
+    data_4 = registry.query(test_query_4)
     print(data_1)
     print(data_2)
     print(data_3)
+    print(data_4)
     print("todo: introduce test for keys and required data format")
