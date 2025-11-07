@@ -53,11 +53,11 @@ class DataRegistry:
 
     def get_datasets(
         self,
-        key: str,
+        key: Optional[str] = None,
         region: Optional[gpd.GeoDataFrame] = None
         ) -> list[Dataset]:
         """
-        Returns all datasets for a type (optionally filtered by region).
+        Returns all datasets for a type (optionally filtered by region and key).
 
         Args:
             key: The requested data type
@@ -66,7 +66,11 @@ class DataRegistry:
         Returns:
             List of datasets, sorted by priority
         """
-        candidates = self._type_to_datasets.get(key, [])
+        if key is None:
+            # all datasets
+            candidates = [ds for datasets in self._type_to_datasets.values() for ds in datasets]
+        else:
+            candidates = self._type_to_datasets[key]
 
         if region is None:
             return candidates

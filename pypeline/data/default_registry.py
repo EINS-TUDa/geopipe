@@ -11,15 +11,8 @@ from pypeline.data.data_utils import get_gdf_from_ags
 from pypeline.data.dataset import SimpleDataset, FileDataset
 from pypeline.energy_system.unit import UnitEnum
 
-***REMOVED***_conn = DatabaseConnection(
-    host="localhost",
-    # host="ds1.example.com",
-    port=54328,
-    database="***REMOVED***",
-    user="***REMOVED***",
-    password="***REMOVED***"
-)
-print(***REMOVED***_conn.is_available())
+# Module-level variable for singleton instance
+_DEFAULT_REGISTRY: DataRegistry | None = None
 
 
 def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:
@@ -144,7 +137,20 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, fl
     return heating_shares
 
 
-census_heating_dataset = PostgreSQLDataset(
+def _create_default_datasets() -> list:
+    """Create and return all default datasets (lazy initialization)."""
+    # Create database connection
+    ***REMOVED***_conn = DatabaseConnection(
+        host="localhost",
+        # host="ds1.example.com",
+        port=54328,
+        database="***REMOVED***",
+        user="***REMOVED***",
+        password="***REMOVED***"
+    )
+    print(f"***REMOVED*** on {***REMOVED***_conn.host} available: {***REMOVED***_conn.is_available()}")
+
+    census_heating_dataset = PostgreSQLDataset(
         keys=["heating_shares"],
         db_connection=***REMOVED***_conn,
         priority=5,
@@ -152,37 +158,37 @@ census_heating_dataset = PostgreSQLDataset(
         regional_validity=get_gdf_from_ags(["09 1 85 149"])
     )
 
-***REMOVED***_kwp_dataset = PostgreSQLDataset(
+    ***REMOVED***_kwp_dataset = PostgreSQLDataset(
         keys=["residential_heat_demand"],
-        unit = UnitEnum.KWH,
+        unit=UnitEnum.KWH,
         db_connection=***REMOVED***_conn,
         priority=5,
         query_function=***REMOVED***_kwp_query,
         regional_validity=get_gdf_from_ags(["09 1 85 149"])
     )
 
-residential_heat_demand_profile_dataset = CSVDataset(
+    residential_heat_demand_profile_dataset = CSVDataset(
         keys=["residential_heat_demand_profile"],
         file_path="data/D_Heat_Household_J.txt",
         pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
         priority=1,
     )
 
-residential_electricity_demand_profile_dataset = CSVDataset(
+    residential_electricity_demand_profile_dataset = CSVDataset(
         keys=["residential_electricity_demand_profile"],
         file_path="data/corrected_eletricity_demand_2016.txt",
         pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
         priority=1,
     )
 
-residential_yearly_electricity_demand = SimpleDataset(
-    keys=["residential_electricity_demand"],
-    unit=UnitEnum.KWH,
-    data=3500.0,
-    priority=1,
-)
+    residential_yearly_electricity_demand = SimpleDataset(
+        keys=["residential_electricity_demand"],
+        unit=UnitEnum.KWH,
+        data=3500.0,
+        priority=1,
+    )
 
-waermeatlas_hessen_dataset = FileDataset(
+    waermeatlas_hessen_dataset = FileDataset(
         keys=["residential_heat_demand"],
         file_path="data/WaermeatlasHessen.gpkg",
         query_function=waermeatlas_hessen_query,
@@ -192,29 +198,40 @@ waermeatlas_hessen_dataset = FileDataset(
         regional_validity=get_gdf_from_ags(["06"])
     )
 
-census_south_hessen_dataset = FileDataset(
+    census_south_hessen_dataset = FileDataset(
         keys=["heating_shares"],
         file_path="data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
-        query_function=census_south_hessen_query,  # Implement if needed
+        query_function=census_south_hessen_query,
         priority=3,
         regional_validity=get_gdf_from_ags(["06"])
     )
 
+    return [
+        census_heating_dataset,
+        ***REMOVED***_kwp_dataset,
+        residential_heat_demand_profile_dataset,
+        residential_electricity_demand_profile_dataset,
+        residential_yearly_electricity_demand,
+        waermeatlas_hessen_dataset,
+        census_south_hessen_dataset,
+    ]
 
-_DEFAULT_REGISTRY = DataRegistry()
-_DEFAULT_REGISTRY.register(census_heating_dataset)
-_DEFAULT_REGISTRY.register(***REMOVED***_kwp_dataset)
-_DEFAULT_REGISTRY.register(residential_heat_demand_profile_dataset)
-_DEFAULT_REGISTRY.register(residential_electricity_demand_profile_dataset)
-_DEFAULT_REGISTRY.register(residential_yearly_electricity_demand)
-_DEFAULT_REGISTRY.register(waermeatlas_hessen_dataset)
-_DEFAULT_REGISTRY.register(census_south_hessen_dataset)
 
 def get_default_registry() -> DataRegistry:
-    """Returns the default DataRegistry instance."""
+    """
+    Returns the default DataRegistry instance.
+    Uses lazy initialization - the registry is created only on first call.
+    Subsequent calls return the same instance (singleton pattern).
+    """
+    global _DEFAULT_REGISTRY
+
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = DataRegistry()
+        datasets = _create_default_datasets()
+        for dataset in datasets:
+            _DEFAULT_REGISTRY.register(dataset)
+
     return _DEFAULT_REGISTRY
-
-
 
 
 if __name__ == "__main__":
@@ -224,10 +241,15 @@ if __name__ == "__main__":
     test_query_2 = {"key": "residential_heat_demand",
                 "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
     test_query_3 = {"key": "residential_heat_demand_profile"}
-    residential_heat_demand_profile_dataset.file_path = "../../data/D_Heat_Household_J.txt"
-    data_1 = _DEFAULT_REGISTRY.query(test_query_1)
-    data_2 = _DEFAULT_REGISTRY.query(test_query_2)
-    data_3 = _DEFAULT_REGISTRY.query(test_query_3)
+
+    registry = get_default_registry()
+    for ds in registry.get_datasets():
+        if hasattr(ds, 'file_path') and ds.file_path == "data/D_Heat_Household_J.txt":
+            ds.file_path = "../../data/D_Heat_Household_J.txt"
+
+    data_1 = registry.query(test_query_1)
+    data_2 = registry.query(test_query_2)
+    data_3 = registry.query(test_query_3)
     print(data_1)
     print(data_2)
     print(data_3)
