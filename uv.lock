@@ -171,6 +171,39 @@ wheels = [
 ]
 
 [[package]]
+name = "cesm"
+version = "0.0.9"
+source = { editable = "CESM" }
+dependencies = [
+    { name = "click" },
+    { name = "gurobipy" },
+    { name = "inquirerpy" },
+    { name = "kaleido" },
+    { name = "numpy" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pyarrow" },
+    { name = "scipy" },
+    { name = "setuptools" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "click" },
+    { name = "gurobipy" },
+    { name = "inquirerpy" },
+    { name = "kaleido" },
+    { name = "numpy" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pyarrow" },
+    { name = "scipy" },
+    { name = "setuptools" },
+]
+
+[[package]]
 name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2040,6 +2073,7 @@ dependencies = [
     { name = "beautifulsoup4" },
     { name = "bleach" },
     { name = "certifi" },
+    { name = "cesm" },
     { name = "cffi" },
     { name = "charset-normalizer" },
     { name = "choreographer" },
@@ -2193,6 +2227,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = "==4.14.2" },
     { name = "bleach", specifier = "==6.2.0" },
     { name = "certifi", specifier = "==2025.8.3" },
+    { name = "cesm", editable = "CESM" },
     { name = "cffi", specifier = "==2.0.0" },
     { name = "charset-normalizer", specifier = "==3.4.3" },
     { name = "choreographer", specifier = "==1.1.1" },

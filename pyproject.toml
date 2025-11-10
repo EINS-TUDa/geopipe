@@ -25,6 +25,7 @@ dependencies = [
     "beautifulsoup4==4.14.2",
     "bleach==6.2.0",
     "certifi==2025.8.3",
+    "cesm",
     "cffi==2.0.0",
     "charset-normalizer==3.4.3",
     "choreographer==1.1.1",
@@ -168,3 +169,6 @@ dev = [
 where = ["."]
 include = ["pypeline*", "tools*"]
 exclude = ["CESM*", "data*", "examples*", "tests*", "docs*"]
+
+[tool.uv.sources]
+cesm = { path = "CESM", editable = true }
