@@ -1122,7 +1122,6 @@ dependencies = [
     { name = "psycopg2" },
     { name = "pyyaml" },
     { name = "scipy" },
-    { name = "setuptools" },
     { name = "shapely" },
     { name = "sqlalchemy" },
 ]
@@ -1147,7 +1146,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "scipy", specifier = "==1.14.1" },
-    { name = "setuptools", specifier = "<81" },
     { name = "shapely", specifier = "==2.1.2" },
     { name = "sqlalchemy", specifier = "==2.0.43" },
 ]
