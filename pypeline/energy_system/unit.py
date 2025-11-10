@@ -51,6 +51,9 @@ class UnitEnum(Enum):
     KW = "kW"
     MW = "MW"
     GW = "GW"
+    KWH = "kWh"
+    MWH = "MWh"
+    GWH = "GWh"
 
     @property
     def unit(self) -> Unit:
@@ -60,3 +63,9 @@ class UnitEnum(Enum):
             return UnitMW()
         elif self is UnitEnum.GW:
             return UnitGW()
+        elif self is UnitEnum.KWH:
+            raise NotImplementedError("Unit for kWh is not implemented yet.")
+        elif self is UnitEnum.MWH:
+            raise NotImplementedError("Unit for MWh is not implemented yet.")
+        elif self is UnitEnum.GWH:
+            raise NotImplementedError("Unit for GWh is not implemented yet.")

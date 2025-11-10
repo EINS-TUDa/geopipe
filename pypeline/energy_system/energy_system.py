@@ -1,7 +1,6 @@
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.data.datasets import CensusTechnology
 from pypeline.energy_system.region import Region, RegionBuilder
 from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_system.rule_book import RegionRuleBook, EnergySystemRuleBook
@@ -93,27 +92,16 @@ class EnergySystemBuilder:
             Demand(demand_type="residential_heat",
                    commodity_in="residential_heat",
                    cooperation_of_technologies=False,
-                   demand_query_params={"type": "residential_heat"},
-                   profile_query_params={"type": "residential_heat_profile"},
-                   technology_shares_query_params={"type": "residential_heat_technology_shares",
-                                                   "name_mapping": {
-                                                       CensusTechnology.Gas: "ind_gas_boiler",
-                                                       CensusTechnology.Oil: "ind_oil_boiler",
-                                                       CensusTechnology.Wood: "wood",
-                                                       CensusTechnology.Biomass: None,
-                                                       CensusTechnology.Renewable: "ind_heat_pump",
-                                                       CensusTechnology.Electric: None,
-                                                       CensusTechnology.Coal: None,
-                                                       CensusTechnology.District_Heating: "ind_district_heating_connection",
-                                                       CensusTechnology.NoEnergyCarrier: None}
-                                                   },
+                   demand_query_params={"key": "residential_heat_demand"},
+                   profile_query_params={"key": "residential_heat_demand_profile"},
+                   technology_shares_query_params={"key": "heating_shares"},
                    default_supply_technology="ind_oil_boiler"
                    ),
             Demand(demand_type="residential_electricity",
                    commodity_in="electricity",
                    cooperation_of_technologies=True,
-                   demand_query_params={"type": "residential_electricity"},
-                   profile_query_params={"type": "residential_electricity_profile"},
+                   demand_query_params={"key": "residential_electricity_demand"},
+                   profile_query_params={"key": "residential_electricity_demand_profile"},
                    default_supply_technology=None,
                    )]
 
