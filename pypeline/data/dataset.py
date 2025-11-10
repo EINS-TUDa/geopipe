@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional, Callable
 import geopandas as gpd
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from pypeline.data.database_connection import DatabaseConnection
 from pypeline.energy_system.unit import UnitEnum
 
@@ -19,7 +19,6 @@ class Dataset(ABC):
         keys: list[str],
         unit: Optional[UnitEnum] = None,
         priority: int = 10,
-        crs: Optional[str] = None,
         regional_validity: Optional[gpd.GeoDataFrame] = None,
         query_function: Optional[Callable] = None,
     ):
@@ -27,7 +26,6 @@ class Dataset(ABC):
         Args:
             keys: List of data types this dataset can provide
             priority: Priority (higher = preferred), default: 10
-            crs: Coordinate reference system (e.g., "EPSG:25832")
             regional_validity: GeoDataFrame with validity region
             query_function: Optional custom query function
         """
@@ -39,8 +37,10 @@ class Dataset(ABC):
         self.keys: list[str] = keys
         self.unit: Optional[UnitEnum] = unit
         self.priority: int = priority
-        self.crs: Optional[str] = crs
-        self.regional_validity = regional_validity
+        if regional_validity is not None:
+            self.regional_validity = regional_validity.dissolve()  # Ensure single geometry
+        else:
+            self.regional_validity = None
         self._custom_query_function = query_function
 
         self._registration_order: int = 0  # Set by registry
@@ -73,7 +73,9 @@ class Dataset(ABC):
             return True  # Globally valid
 
         region_ = region.to_crs(self.regional_validity.crs)
-        return self.regional_validity.contains(region_)[0]
+        rv_geom = self.regional_validity.geometry.union_all()
+        reg_geom = region_.geometry.union_all()
+        return bool(rv_geom.covers(reg_geom))
 
 
 class SimpleDataset(Dataset):
@@ -86,10 +88,9 @@ class SimpleDataset(Dataset):
         data: any,
         unit: Optional[UnitEnum] = None,
         priority: int = 10,
-        crs: Optional[str] = None,
         regional_validity: Optional[gpd.GeoDataFrame] = None,
     ):
-        super().__init__(keys=keys, unit=unit, priority=priority, crs=crs, regional_validity=regional_validity)
+        super().__init__(keys=keys, unit=unit, priority=priority, regional_validity=regional_validity)
         self.data = data
 
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
@@ -104,24 +105,17 @@ class PostgreSQLDataset(Dataset):
         self,
         keys: list[str],
         db_connection: DatabaseConnection,
+        query_function: Optional[Callable],
         unit: Optional[UnitEnum] = None,
-        schema: Optional[str] = None,
-        table: Optional[str] = None,
-        geometry_column: Optional[str] = None,
         priority: int = 2,
-        crs: Optional[str] = None,
         regional_validity: Optional[gpd.GeoDataFrame] = None,
-        query_function: Optional[Callable] = None,
+
     ):
         """
         Args:
             keys: List of data types this dataset provides
             db_connection: Database connection
-            schema: Database schema name
-            table: Table name
-            geometry_column: Optional, name of geometry column
             priority: Dataset priority (higher = preferred)
-            crs: Optional, CRS string (e.g., "EPSG:25832")
             regional_validity: Optional GeoDataFrame defining validity region
             query_function: Optional custom query function with signature:
                            func(dataset: PostgreSQLTableDataset, query: dict) -> pd.DataFrame | gpd.GeoDataFrame
@@ -130,60 +124,36 @@ class PostgreSQLDataset(Dataset):
             keys=keys,
             unit=unit,
             priority=priority,
-            crs=crs,
             regional_validity=regional_validity,
             query_function=query_function,
         )
-
-        if (schema is None or table is None) and query_function is None:
-            raise ValueError("Either schema and table must be provided, or a query_function must be provided.")
-
         self.db_connection = db_connection
-        self.schema = schema
-        self.table = table
-        self.geometry_column = geometry_column
-
-    def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
-        columns = query.get("columns")
-        filters = query.get("filters")
-        region = query.get("region")
-
-        # Build SQL query
-        cols = ", ".join(f'"{c}"' for c in columns) if columns else "*"
-        sql = f'SELECT {cols} FROM "{self.schema}"."{self.table}"'
-
-        # Build WHERE conditions
-        where_clauses = []
-
-        if filters:
-            for col, value in filters.items():
-                if isinstance(value, str):
-                    where_clauses.append(f'"{col}" = \'{value}\'')
-                else:
-                    where_clauses.append(f'"{col}" = {value}')
-
-        # Spatial filter if region is specified
-        if region is not None and self.geometry_column:
-            region_wkt = region.union_all().wkt
-            region_srid = region.crs.to_epsg() if region.crs else 4326
-            where_clauses.append(
-                f'ST_Intersects("{self.geometry_column}", '
-                f"ST_GeomFromText('{region_wkt}', {region_srid}))"
-            )
-
-        if where_clauses:
-            sql += " WHERE " + " AND ".join(where_clauses)
-
-        # Execute query
-        engine = self.db_connection.get_engine()
-        if self.geometry_column:
-            return gpd.read_postgis(sql, engine, geom_col=self.geometry_column)
-        else:
-            return pd.read_sql(sql, engine)
 
     def is_available(self) -> bool:
         """Checks if the database is accessible."""
         return self.db_connection.is_available()
+
+    def execute_spatial_query(self, query: dict, sql_query: text) -> pd.DataFrame:
+        """
+        Helper method to execute a spatial SQL query with region filtering.
+        Handles common operations: extracting region, transforming to WKT,
+        getting engine, and executing SQL.
+
+        Args:
+            query: Query dict containing 'region' key with GeoDataFrame
+            sql_query: SQLAlchemy text object with placeholders :wkt and :epsg
+
+        Returns:
+            DataFrame with query results
+        """
+        region: gpd.GeoDataFrame = query["region"]
+        region_epsg = region.crs.to_epsg()
+        region_geom_wkt = region.union_all().wkt
+
+        engine = self.db_connection.get_engine()
+        df = pd.read_sql(sql_query, engine, params={"wkt": region_geom_wkt, "epsg": int(region_epsg)})
+
+        return df
 
 
 class FileDataset(Dataset):
@@ -197,23 +167,20 @@ class FileDataset(Dataset):
             file_path: str,
             query_function: Optional[Callable] = None,
             unit: Optional[UnitEnum] = None,
-            pandas_kwargs: Optional[dict[str, Any]] = None,
+            load_data_kwargs: Optional[dict[str, Any]] = None,
             priority: int = 10,
-            crs: Optional[str] = None,
             regional_validity: Optional[gpd.GeoDataFrame] = None,
     ):
         super().__init__(
             keys=keys,
             unit=unit,
             priority=priority,
-            crs=crs,
             regional_validity=regional_validity,
             query_function=query_function
         )
         self.file_path = file_path
-        self.pandas_kwargs = pandas_kwargs or {}
+        self.load_data_kwargs = load_data_kwargs if load_data_kwargs is not None else {}
         self._cached_data: Optional[pd.DataFrame | gpd.GeoDataFrame] = None
-        self._is_loaded = False
 
     def _load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
@@ -222,18 +189,17 @@ class FileDataset(Dataset):
         """
         # Try to detect file type and load accordingly
         if self.file_path.endswith('.geojson') or self.file_path.endswith('.gpkg') or self.file_path.endswith('.shp'):
-            return gpd.read_file(self.file_path, **self.pandas_kwargs)
+            return gpd.read_file(self.file_path, **self.load_data_kwargs)
         else:
-            return pd.read_csv(self.file_path, **self.pandas_kwargs)
+            return pd.read_csv(self.file_path, **self.load_data_kwargs)
 
     def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Returns the loaded data, using lazy loading.
         Data is only loaded once and then cached.
         """
-        if not self._is_loaded:
+        if self._cached_data is None:
             self._cached_data = self._load_data()
-            self._is_loaded = True
         return self._cached_data
 
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
@@ -268,7 +234,7 @@ class CSVDataset(FileDataset):
             file_path=file_path,
             query_function=query_function,
             unit=unit,
-            pandas_kwargs=pandas_kwargs,
+            load_data_kwargs=pandas_kwargs,
             priority=priority,
             regional_validity=regional_validity
         )
@@ -277,7 +243,7 @@ class CSVDataset(FileDataset):
         """
         Load CSV data and return as a Series (raveled DataFrame).
         """
-        df = pd.read_csv(self.file_path, **self.pandas_kwargs)
+        df = pd.read_csv(self.file_path, **self.load_data_kwargs)
         s = pd.Series(df.values.ravel())
         return s
 

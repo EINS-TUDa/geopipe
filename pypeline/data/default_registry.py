@@ -32,13 +32,9 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
     columns = ["heizoel", "biomasse_biogas", "strom", "fernwaerme", "gas",
                "holz_holzpellets", "solar_geothermie_waermepumpen", "kohle", "kein_energietraeger"]
 
-    region: gpd.GeoDataFrame = query["region"]
-    region_epsg = region.crs.to_epsg()
-    region_geom_wkt = region.union_all().wkt
-
     columns_sql = ", ".join([f'COALESCE(SUM("{col}"), 0) AS "{col}"' for col in columns])
 
-    sql_shares = text(f"""
+    sql_text = text(f"""
         SELECT
             {columns_sql}
         FROM clean_census_energietraeger.shares_2_buildings
@@ -50,8 +46,8 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
         )
     """)
 
-    engine = dataset.db_connection.get_engine()
-    df_shares = pd.read_sql(sql_shares, engine, params={"wkt": region_geom_wkt, "epsg": int(region_epsg)})
+    df_shares = dataset.execute_spatial_query(query, sql_text)
+
     total = df_shares[columns].sum(axis=1).iloc[0]
     if total and total != 0:
         df_shares[columns] = df_shares[columns] / total
@@ -67,10 +63,6 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
     if query["key"] != "residential_heat_demand":
         raise ValueError("***REMOVED***_kwp_query only supports 'residential_heat_demand' key")
 
-    region: gpd.GeoDataFrame = query["region"]
-    region_epsg = region.crs.to_epsg()
-    region_geom_wkt = region.union_all().wkt
-
     sql_text = text("""
         SELECT
             COALESCE(SUM(demand_heating), 0) AS total_demand
@@ -84,8 +76,7 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
         )
         """)
 
-    engine = dataset.db_connection.get_engine()
-    df = pd.read_sql(sql_text, engine, params={"wkt": region_geom_wkt, "epsg": int(region_epsg)})
+    df = dataset.execute_spatial_query(query, sql_text)
 
     row = df.iloc[0]
     total_demand = float(row["total_demand"])
@@ -99,7 +90,7 @@ def waermeatlas_hessen_query(dataset: FileDataset, query: dict) -> float:
     region: gpd.GeoDataFrame = query["region"]
     region_epsg = region.crs.to_epsg()
 
-    gdf = gpd.read_file(dataset.file_path, layer="WAH_Punkte")
+    gdf = dataset.get_data()
     gdf = gdf.to_crs(epsg=region_epsg)
     gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
     return gdf_in_region["qnutzwaerme_2020_kwh"].sum()
@@ -142,7 +133,7 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, fl
     else:
         tech_shares = {tech: amount / total for tech, amount in tech_amounts.items()}
 
-    heating_shares = {name_mapping[k]: v for k, v in tech_shares.items() if name_mapping[k] is not None}
+    heating_shares = {name_mapping[k]: float(v) for k, v in tech_shares.items() if name_mapping[k] is not None}
     return heating_shares
 
 
@@ -203,8 +194,8 @@ def _create_default_datasets() -> list:
         query_function=waermeatlas_hessen_query,
         unit=UnitEnum.KWH,
         priority=5,
-        crs="EPSG:25832",
-        regional_validity=get_gdf_from_ags(["06"])
+        regional_validity=get_gdf_from_ags(["06"]),
+        load_data_kwargs={"layer":"WAH_Punkte"}
     )
 
     census_south_hessen_dataset = FileDataset(
@@ -212,7 +203,7 @@ def _create_default_datasets() -> list:
         file_path="data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
         query_function=census_south_hessen_query,
         priority=3,
-        regional_validity=get_gdf_from_ags(["06"])
+        regional_validity=get_gdf_from_ags(["06"]),
     )
 
     return [
@@ -230,7 +221,6 @@ def get_default_data_registry() -> DataRegistry:
     """
     Returns the default DataRegistry instance.
     Uses lazy initialization - the registry is created only on first call.
-    Subsequent calls return the same instance (singleton pattern).
     """
     global _DEFAULT_REGISTRY
 
