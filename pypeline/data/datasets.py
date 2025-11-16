@@ -1,20 +1,13 @@
-from abc import ABC
 from pathlib import Path
 from typing import Any
 from enum import Enum
-import shapely.geometry
-
-import numpy as np
+from shapely.geometry import shape
 
 from pypeline.data.dataset import Dataset, SpatialDataset, TemporalDataset
-from pypeline.data.data_registry import DataRegistry, default_data_registry
+from pypeline.data.data_registry import default_data_registry
 import geopandas as gpd
 import pandas as pd
 import requests
-
-from shapely.geometry import shape
-
-from pypeline.energy_system.technology_registry import DEFAULT_TECHNOLOGY_REGISTRY
 
 
 class CensusTechnology(Enum):
@@ -22,7 +15,7 @@ class CensusTechnology(Enum):
     Oil = "Oil"
     Wood = "Wood"
     Biomass = "Biomass"
-    Renewable = "Renewable" # Solar, Geothermal, Heatpump
+    Renewable = "Renewable"
     Electric = "Electric"
     Coal = "Coal"
     District_Heating = "District Heating"
@@ -67,14 +60,13 @@ class Census2022HeatingType100mGrid(SpatialDataset):
             technology_amounts = {}
             for tech in CensusTechnology:
                 technology_amounts[tech] = gpd_in_region[tech].sum()
-            # Calculate shares
+
             total_amount = sum(technology_amounts.values())
             if total_amount == 0:
-                technology_shares = {tech: 0 for tech in CensusTechnology}  # Avoid division by zero
+                technology_shares = {tech: 0 for tech in CensusTechnology}
             else:
                 technology_shares = {tech: amount / total_amount for tech, amount in technology_amounts.items()}
 
-            # rename keys if given
             if query.get("name_mapping"):
                 technology_shares = {
                     query["name_mapping"].get(tech, tech): share for tech, share in technology_shares.items()

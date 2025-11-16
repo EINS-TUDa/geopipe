@@ -1,45 +1,175 @@
 """Unified CESM plugin consolidating backend adapter, runner CLI, and writer utilities.
 
-Public API (stable):
+Public API:
     - CESMBackend (OptimizationModel adapter)
-    - write_cesm_inputs_minimal_from_om (lightweight generic writer)
-    - write_cesm_inputs_from_data / write_cesm_inputs_multidistrict_from_data (rich writer)
-    - tech_to_cesms_row (utility to convert Technology to CS row dict)
-    - main() (CLI entrypoint similar to previous cesm_runner)
-
-Note:
-    Legacy shim modules (tools.cesm_backend / tools.cesm_writer / tools.cesm_runner) have been removed.
-    Update any remaining imports to use 'tools.cesm_plugin'.
+    - write_cesm_inputs_minimal_from_om 
+    - write_cesm_inputs_from_data / write_cesm_inputs_multidistrict_from_data
+    - tech_to_cesms_row 
 """
 from __future__ import annotations
-
-import argparse
-import json
-import sqlite3
-import subprocess
-import sys
+import argparse, json, math, sqlite3, subprocess, sys, logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-
 import pandas as pd
 import numpy as np
+import geopandas as gpd 
 
-try:
-    import geopandas as gpd  # type: ignore
-except Exception:  # pragma: no cover
-    gpd = None  # type: ignore
-
-# pypeline imports
 from pypeline.optimization.solver import OptimizationModel, Solution
 from pypeline.optimization.om_adapter import OMContext
-from pypeline.energy_system.technology import Technology
-from pypeline.energy_system.technology_registry import TechnologyRegistry
+from pypeline.energy_technology.technology import Technology
+from pypeline.energy_technology.technology_registry import (
+    TechnologyRegistry,
+    get_default_technology_registry,
+)
 
 InputWriter = Callable[[OMContext, Path, str, str, str], None]
 PathLike = Union[str, Path]
 
+logger = logging.getLogger(__name__)
+
+NUMERIC_ERRORS = (TypeError, ValueError)
+
+UNBOUNDED_CAP = 1e9
+UNBOUNDED_ENERGY = 1e12
+
+
+@dataclass
+class _CesmIOPaths:
+    techmap_dir: Path
+    timeseries_dir: Path
+    xlsx_path: Path
+    tss_file: Path
+
+
+def _prepare_io_paths(workdir: Path, model_name: str, tss_name: str) -> _CesmIOPaths:
+    techmap_dir = workdir / "Data" / "Techmap"
+    timeseries_dir = workdir / "Data" / "TimeSeries"
+    techmap_dir.mkdir(parents=True, exist_ok=True)
+    timeseries_dir.mkdir(parents=True, exist_ok=True)
+    xlsx_path = techmap_dir / f"{model_name}.xlsx"
+    tss_file = timeseries_dir / f"{tss_name}.txt"
+    return _CesmIOPaths(techmap_dir=techmap_dir, timeseries_dir=timeseries_dir, xlsx_path=xlsx_path, tss_file=tss_file)
+
+
+def _ensure_tss_indices(tss_file: Path, *, default_hours: int = 224) -> List[int]:
+    if not tss_file.exists():
+        tss_file.write_text("\n".join(str(i) for i in range(1, default_hours + 1)), encoding="utf-8")
+    content = tss_file.read_text(encoding="utf-8").strip()
+    return [int(line) for line in content.splitlines() if line.strip()]
+
+
+def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.ndarray) -> Path:
+    path = timeseries_dir / f"{profile_name}.txt"
+    path.write_text(" ".join(f"{x:.8f}" for x in profile.tolist()), encoding="utf-8")
+    return path
+
+
+def _standard_sheet_frames(
+    *,
+    scenario_name: str,
+    start_year: int,
+    end_year: int,
+    year_gap: int,
+    tss_name: str,
+    discount_rate: float,
+    dt_hours: int,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    units_df = _units_df()
+    scenario_df = _scenario_df(
+        scenario_name=scenario_name,
+        start_year=start_year,
+        end_year=end_year,
+        year_gap=year_gap,
+        tss_name=tss_name,
+        discount_rate=discount_rate,
+    )
+    tss_df = _tss_df(tss_name=tss_name, dt_hours=dt_hours)
+    return units_df, scenario_df, tss_df
+
+
+def _convsubproc_dataframe(rows: List[dict[str, Any]]) -> pd.DataFrame:
+    convsubproc_df = pd.DataFrame(rows)
+    base_cols = list(CONV_SUBPROC_BASE_COLS)
+    param_cols = list(CONV_SUBPROC_PARAM_COLS)
+    for col in base_cols + param_cols:
+        if col not in convsubproc_df.columns:
+            convsubproc_df[col] = np.nan
+    return convsubproc_df[base_cols + param_cols]
+
+
+def _write_techmap_workbook(
+    xlsx: Path,
+    *,
+    units_df: pd.DataFrame,
+    scenario_df: pd.DataFrame,
+    tss_df: pd.DataFrame,
+    commodity_df: pd.DataFrame,
+    convproc_df: pd.DataFrame,
+    convsubproc_df: pd.DataFrame,
+) -> None:
+    with pd.ExcelWriter(xlsx, engine="openpyxl", mode="w") as xw:
+        _write_standard_sheets(
+            xw,
+            units_df=units_df,
+            scenario_df=scenario_df,
+            tss_df=tss_df,
+            commodity_df=commodity_df,
+            convproc_df=convproc_df,
+        )
+        cs_sheet = "ConversionSubProcess"
+        pd.DataFrame(columns=convsubproc_df.columns).to_excel(xw, sheet_name=cs_sheet, index=False)
+        convsubproc_df.to_excel(xw, sheet_name=cs_sheet, index=False, header=False, startrow=3)
+    logger.info("Wrote techmap: %s", xlsx)
+    logger.info(
+        "Techmap sheets: Units, Scenario, TSS, Commodity, ConversionProcess, ConversionSubProcess"
+    )
+
+
+def _log_techmap_stats(*, commodity_count: int, convproc_count: int, convsubproc_rows: int) -> None:
+    logger.info(
+        "Techmap stats: commodities=%d | conversion_processes=%d | conversion_subprocess_rows=%d",
+        commodity_count,
+        convproc_count,
+        convsubproc_rows,
+    )
+
+CONV_SUBPROC_BASE_COLS: tuple[str, ...] = (
+    "conversion_process_name",
+    "commodity_in",
+    "commodity_out",
+    "scenario",
+)
+
+CONV_SUBPROC_PARAM_COLS: tuple[str, ...] = (
+    "spec_co2",
+    "efficiency",
+    "technical_lifetime",
+    "technical_availability",
+    "c_rate",
+    "efficiency_charge",
+    "is_storage",
+    "opex_cost_energy",
+    "opex_cost_power",
+    "capex_cost_power",
+    "capex_cost_base",
+    "cap_active",
+    "max_units",
+    "max_eout",
+    "min_eout",
+    "cap_min",
+    "cap_max",
+    "cap_res_min",
+    "cap_res_max",
+    "out_frac_min",
+    "out_frac_max",
+    "in_frac_min",
+    "in_frac_max",
+    "availability_profile",
+    "output_profile",
+)
+
 # Census heating categories (100 m grid) mapped to existing technology names.
-# Extend as additional technologies become available or more granular data is supplied.
 CENSUS_HEATING_CATEGORY_TO_TECH: Dict[str, Optional[str]] = {
     "Gas": "ind_gas_boiler",
     "Heizoel": "ind_oil_boiler",
@@ -52,6 +182,8 @@ CENSUS_HEATING_CATEGORY_TO_TECH: Dict[str, Optional[str]] = {
     "kein_Energietraeger": None,
 }
 
+HEAT_EXCHANGER_BASE_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
+PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_BASE_NAMES[0]
 
 def census_category_to_tech(category: str) -> Optional[str]:
     """Map a Census 2022 heating carrier label to a technology name used in the registry."""
@@ -62,6 +194,600 @@ def census_category_to_tech(category: str) -> Optional[str]:
         return None
     return CENSUS_HEATING_CATEGORY_TO_TECH.get(key)
 
+
+def _strip_unit_suffix(name: str) -> str:
+    if "_U" not in name:
+        return name
+    base, suffix = name.rsplit("_U", 1)
+    if suffix.isdigit():
+        return base
+    return name
+
+
+def _extract_district_id_from_name(name: str) -> Optional[int]:
+    base = _strip_unit_suffix(name)
+    if "_D" not in base:
+        return None
+    suffix = base.rsplit("_D", 1)[-1]
+    digits = []
+    for ch in suffix:
+        if ch.isdigit():
+            digits.append(ch)
+        else:
+            break
+    if not digits:
+        return None
+    try:
+        return int("".join(digits))
+    except ValueError:
+        return None
+
+
+def _split_base_and_district(name: str) -> tuple[str, Optional[int]]:
+    district = _extract_district_id_from_name(name)
+    if district is None:
+        return _strip_unit_suffix(name), None
+    base = _strip_unit_suffix(name).rsplit("_D", 1)[0]
+    return base, district
+
+
+class _ConversionRowsBuilder:
+    def __init__(
+        self,
+        *,
+        scenario_name: str,
+        scenario_years: List[int],
+        demand_commodity: str,
+        districts: List[int],
+        district_index: dict[int, int],
+        heat_names: List[str],
+        district_heat_out_names: dict[int, str],
+        min_dhn_targets: dict[int, float],
+        min_heat_grid_targets: dict[int, float],
+        district_to_region: dict[int, int],
+        region_metrics: dict[str, Any],
+        total_metrics: dict[str, dict[str, float]],
+        retain_factor: float | None,
+        retain_years_factor: float | None,
+        elec_price_eur_per_mwh: float,
+    ) -> None:
+        self.scenario_name = scenario_name
+        self.scenario_years = scenario_years
+        self.demand_commodity = demand_commodity
+        self.districts = districts
+        self.district_index = district_index
+        self.heat_names = heat_names
+        self.district_heat_out_names = district_heat_out_names
+        self.min_dhn_targets = min_dhn_targets
+        self.min_heat_grid_targets = min_heat_grid_targets
+        self.district_to_region = district_to_region
+        self.region_metrics = region_metrics
+        self.total_metrics = total_metrics
+        self.retain_factor = retain_factor
+        self.retain_years_factor = retain_years_factor
+        self.elec_price_eur_per_mwh = elec_price_eur_per_mwh
+        self._tech_builders = {
+            "ind_heat_pump": self._rows_residential,
+            "ind_gas_boiler": self._rows_residential,
+            "ind_oil_boiler": self._rows_residential,
+            "heat_exchanger": self._rows_heat_exchanger,
+            "ind_district_heating_connection": self._rows_heat_exchanger,
+            "heat_grid": self._rows_default,
+            "cen_heat_pump": self._rows_default,
+            "cen_gas_boiler": self._rows_default,
+            "cen_oil_boiler": self._rows_default,
+            "grid_electricity": self._rows_grid_electricity,
+        }
+
+    # Public API -------------------------------------------------------------
+    def build_rows(self, technologies: List[Technology]) -> List[dict[str, Any]]:
+        rows: List[dict[str, Any]] = []
+        for tech in technologies:
+            rows.extend(self.rows_for_technology(tech))
+        return rows
+
+    def rows_for_technology(self, tech: Technology) -> List[dict[str, Any]]:
+        builder = self._tech_builders.get(tech.name)
+        if builder is None:
+            base_name, _ = _split_base_and_district(tech.name)
+            builder = self._tech_builders.get(base_name)
+        if builder is None:
+            if _canon_co(tech.commodity_out) == _canon_co(self.demand_commodity):
+                builder = self._rows_residential
+            else:
+                builder = self._rows_default
+        return builder(tech)
+
+    # Core helpers -----------------------------------------------------------
+    def _rows_residential(self, tech: Technology) -> List[dict[str, Any]]:
+        rows: List[dict[str, Any]] = []
+        if len(self.districts) == 1:
+            district = self.districts[0]
+            overrides = self._min_eout_override(tech, district)
+            heat_comm = self._heat_comm_for_district(district)
+            rows.append(
+                self._build_cs_row(
+                    cp_name=f"{tech.name}",
+                    cin=tech.commodity_in,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                    district=district,
+                )
+            )
+            return rows
+        for district in self.districts:
+            overrides = self._min_eout_override(tech, district)
+            heat_comm = self._heat_comm_for_district(district, fallback=tech.commodity_out)
+            rows.append(
+                self._build_cs_row(
+                    cp_name=f"{tech.name}_D{district}",
+                    cin=tech.commodity_in,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                    district=district,
+                )
+            )
+        return rows
+
+    def _rows_heat_exchanger(self, tech: Technology) -> List[dict[str, Any]]:
+        rows: List[dict[str, Any]] = []
+        target_district = _extract_district_id_from_name(tech.name)
+
+        def _district_iter() -> List[int]:
+            if target_district is not None:
+                return [target_district]
+            return self.districts if self.districts else [0]
+
+        for district in _district_iter():
+            if district not in self.district_index:
+                continue
+            overrides = self._min_eout_override(tech, district)
+            heat_comm = self._heat_comm_for_district(district, fallback=tech.commodity_out)
+            cin = tech.commodity_in
+            if target_district is not None:
+                cin = self.district_heat_out_names.get(district, tech.commodity_in)
+            cp_name = "HeatExchanger" if len(self.districts) == 1 else f"HeatExchanger_D{district}"
+            rows.append(
+                self._build_cs_row(
+                    cp_name=cp_name,
+                    cin=cin,
+                    cout=heat_comm,
+                    tech=tech,
+                    overrides=overrides,
+                    district=district,
+                )
+            )
+        return rows
+
+    def _rows_default(self, tech: Technology) -> List[dict[str, Any]]:
+        overrides = self._min_eout_override(tech, None)
+        return [
+            self._build_cs_row(
+                cp_name=f"{tech.name}",
+                cin=tech.commodity_in,
+                cout=tech.commodity_out,
+                tech=tech,
+                overrides=overrides,
+                district=None,
+            )
+        ]
+
+    def _rows_grid_electricity(self, tech: Technology) -> List[dict[str, Any]]:
+        overrides: dict[str, Any] = {}
+        min_override = self._min_eout_override(tech, None)
+        if min_override:
+            overrides.update(min_override)
+        overrides.setdefault("opex_cost_energy", float(self.elec_price_eur_per_mwh))
+        return [
+            self._build_cs_row(
+                cp_name=f"{tech.name}",
+                cin=tech.commodity_in,
+                cout=tech.commodity_out,
+                tech=tech,
+                overrides=overrides,
+                district=None,
+            )
+        ]
+
+    # Row construction -------------------------------------------------------
+    def _build_cs_row(
+        self,
+        *,
+        cp_name: str,
+        cin: str,
+        cout: str,
+        tech: Technology,
+        overrides: Optional[dict[str, Any]] = None,
+        district: Optional[int] = None,
+    ) -> dict[str, Any]:
+        row = tech_to_cesms_row(
+            tech,
+            cp_name=cp_name,
+            cin=cin,
+            cout=cout,
+            scenario_name=self.scenario_name,
+        )
+        metrics = self._existing_metrics(tech, district)
+        existing = self._existing_overrides(tech, district, metrics)
+        merged = self._merge_overrides(existing, overrides)
+        if merged:
+            row.update({k: v for k, v in merged.items() if v is not None})
+        existing_cap = self._existing_capacity(metrics)
+        self._ensure_unit_capacity(row, existing_cap)
+        self._limit_first_year_capacity(row, existing_cap, tech)
+        self._clamp_reserves_to_cap_max(row)
+        return row
+
+    # Metric helpers ---------------------------------------------------------
+    def _existing_metrics(self, tech: Technology, district: Optional[int]) -> Optional[dict[str, Any]]:
+        metrics: dict[str, Any] | None = None
+        if district is not None:
+            rid = self.district_to_region.get(district)
+            if rid is not None:
+                region_map = self.region_metrics.get(rid)
+                if isinstance(region_map, dict):
+                    raw = region_map.get(tech.name)
+                    if isinstance(raw, dict):
+                        metrics = raw
+        if metrics is None:
+            raw_total = self.total_metrics.get(tech.name)
+            if isinstance(raw_total, dict):
+                metrics = raw_total
+        return metrics
+
+    @staticmethod
+    def _existing_capacity(metrics: Optional[dict[str, Any]]) -> float:
+        if not isinstance(metrics, dict):
+            return 0.0
+        try:
+            val = float(metrics.get("initial_capacity", 0.0) or 0.0)
+        except NUMERIC_ERRORS:
+            return 0.0
+        if math.isnan(val):
+            return 0.0
+        return max(0.0, val)
+
+    @staticmethod
+    def _ensure_unit_capacity(row: dict[str, Any], existing_capacity: float) -> None:
+        unit_cap = row.get("cap_max")
+        try:
+            unit_cap_val = float(unit_cap)
+        except NUMERIC_ERRORS:
+            return
+        if not math.isfinite(unit_cap_val) or unit_cap_val <= 0.0:
+            return
+        max_units_val = row.get("max_units")
+        try:
+            max_units_int = int(max_units_val)
+        except NUMERIC_ERRORS:
+            max_units_int = 1
+        if max_units_int < 1:
+            max_units_int = 1
+        required_units = 0
+        if existing_capacity and existing_capacity > 0.0:
+            required_units = int(math.ceil(existing_capacity / unit_cap_val))
+        if required_units > max_units_int:
+            max_units_int = required_units
+        row["max_units"] = max_units_int
+
+    def _existing_overrides(
+        self,
+        tech: Technology,
+        district: Optional[int],
+        metrics: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if metrics is None:
+            metrics = self._existing_metrics(tech, district)
+
+        overrides: dict[str, Any] = {}
+        cap = 0.0
+        if isinstance(metrics, dict):
+            try:
+                cap = float(metrics.get("initial_capacity", 0.0) or 0.0)
+            except NUMERIC_ERRORS:
+                cap = 0.0
+            try:
+                output = float(metrics.get("initial_energy_output", 0.0) or 0.0)
+            except NUMERIC_ERRORS:
+                output = 0.0
+
+            lifetime_years = float(getattr(tech, "technical_lifetime", 0.0) or 0.0)
+            window_factor = self.retain_years_factor if self.retain_years_factor is not None else 1.0
+            try:
+                window_factor = float(window_factor)
+            except NUMERIC_ERRORS:
+                window_factor = 1.0
+            if math.isnan(window_factor):
+                window_factor = 1.0
+            window_factor = max(0.0, window_factor)
+            remaining_years = max(0.0, lifetime_years * window_factor)
+
+            if self.scenario_years:
+                if cap > 0.0:
+                    cap_profile = self._format_profile(
+                        [
+                            (year, cap if self._years_since_start(year) <= remaining_years + 1e-9 else 0.0)
+                            for year in self.scenario_years
+                        ]
+                    )
+                    if cap_profile:
+                        overrides["cap_res_min"] = cap_profile
+                        overrides["cap_res_max"] = cap_profile
+                if output > 0.0 and self.retain_factor is not None and self.retain_factor > 0.0:
+                    min_profile = self._format_profile(
+                        [
+                            (
+                                year,
+                                output * self.retain_factor
+                                if self._years_since_start(year) <= remaining_years + 1e-9
+                                else 0.0,
+                            )
+                            for year in self.scenario_years
+                        ]
+                    )
+                    if min_profile:
+                        overrides["min_eout"] = min_profile
+            else:
+                if cap > 0.0:
+                    overrides["cap_res_min"] = cap
+                    overrides["cap_res_max"] = cap
+                if output > 0.0 and self.retain_factor is not None and self.retain_factor > 0.0:
+                    overrides["min_eout"] = output * self.retain_factor
+
+        return overrides
+
+    def _merge_overrides(
+        self,
+        primary: Optional[dict[str, Any]],
+        secondary: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not primary and not secondary:
+            return {}
+        merged: dict[str, Any] = {}
+        for key, value in (primary or {}).items():
+            merged[key] = value
+        for key, value in (secondary or {}).items():
+            if value is None:
+                continue
+            if key == "min_eout" and key in merged:
+                merged_value = self._merge_profile_values(merged[key], value)
+                merged[key] = merged_value if merged_value is not None else value
+                continue
+            merged[key] = value
+        return merged
+
+    def _min_eout_override(self, tech: Technology, district: Optional[int] = None) -> Optional[dict[str, Any]]:
+        base_name, tech_district = _split_base_and_district(tech.name)
+        if district is None and tech_district is not None:
+            district = tech_district
+        if base_name in HEAT_EXCHANGER_BASE_NAMES and district is not None:
+            rid = self.district_to_region.get(district, district)
+            target = max(
+                self.min_dhn_targets.get(rid, 0.0),
+                self.min_heat_grid_targets.get(rid, 0.0),
+            )
+            if target and target > 0:
+                return {"min_eout": float(target)}
+        return None
+
+    # Profile utilities ------------------------------------------------------
+    def _format_profile(self, pairs: List[Tuple[int, float]]) -> str | None:
+        if not pairs:
+            return None
+        segments = []
+        for year, value in pairs:
+            try:
+                year_i = int(year)
+                val_f = float(value)
+            except NUMERIC_ERRORS:
+                continue
+            segments.append(f"{year_i} {val_f:.10g}")
+        if not segments:
+            return None
+        return "[" + " ; ".join(segments) + "]"
+
+    def _profile_to_map(self, value: Any) -> Dict[int, float]:
+        mapping: Dict[int, float] = {}
+        if not self.scenario_years:
+            return mapping
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.startswith("[") and raw.endswith("]"):
+                body = raw[1:-1]
+                for chunk in body.split(";"):
+                    parts = chunk.strip().split()
+                    if len(parts) < 2:
+                        continue
+                    try:
+                        year_i = int(float(parts[0]))
+                        val_f = float(parts[1])
+                    except NUMERIC_ERRORS:
+                        continue
+                    mapping[year_i] = val_f
+                return mapping
+        try:
+            scalar = float(value)
+        except NUMERIC_ERRORS:
+            return mapping
+        for year in self.scenario_years:
+            mapping[year] = scalar
+        return mapping
+
+    def _merge_profile_values(self, primary_value: Any, secondary_value: Any) -> str | None:
+        if not self.scenario_years:
+            return secondary_value if secondary_value is not None else primary_value
+        primary_map = self._profile_to_map(primary_value)
+        secondary_map = self._profile_to_map(secondary_value)
+        if not primary_map and not secondary_map:
+            return None
+        combined: List[Tuple[int, float]] = []
+        for year in self.scenario_years:
+            val_primary = primary_map.get(year, 0.0)
+            val_secondary = secondary_map.get(year, 0.0)
+            combined.append((year, max(val_primary, val_secondary)))
+        return self._format_profile(combined)
+
+    def _profile_peak(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        mapping = self._profile_to_map(value)
+        if mapping:
+            return max(mapping.values())
+        try:
+            scalar = float(value)
+        except NUMERIC_ERRORS:
+            return None
+        if math.isnan(scalar):
+            return None
+        return scalar
+
+    def _clamp_reserves_to_cap_max(self, row: dict[str, Any]) -> None:
+        cap_max_value = row.get("cap_max")
+        cap_max_peak = self._profile_peak(cap_max_value)
+        if cap_max_peak is None:
+            return
+
+        cap_max_map = self._profile_to_map(cap_max_value)
+        if not cap_max_map and self.scenario_years:
+            cap_max_map = {year: cap_max_peak for year in self.scenario_years}
+
+        for key in ("cap_res_min", "cap_res_max"):
+            value = row.get(key)
+            if value is None:
+                continue
+            reserve_map = self._profile_to_map(value)
+            if reserve_map and self.scenario_years:
+                clamped: List[Tuple[int, float]] = []
+                for year in self.scenario_years:
+                    reserve_val = reserve_map.get(year)
+                    if reserve_val is None:
+                        continue
+                    limit = cap_max_map.get(year, cap_max_peak)
+                    clamped.append((year, min(reserve_val, limit)))
+                formatted = self._format_profile(clamped)
+                if formatted:
+                    row[key] = formatted
+                continue
+            reserve_peak = self._profile_peak(value)
+            if reserve_peak is None:
+                continue
+            row[key] = min(reserve_peak, cap_max_peak)
+
+    # Capacity limiting ------------------------------------------------------
+    def _limit_first_year_capacity(
+        self,
+        row: dict[str, Any],
+        existing_capacity: float,
+        tech: Technology,
+    ) -> None:
+        if not self.scenario_years:
+            return
+        skip_names = {"grid_electricity"}
+        if tech.name in skip_names:
+            return
+
+        skip_prefixes = ("HeatDemand", "Dummy")
+        for prefix in skip_prefixes:
+            if tech.name.startswith(prefix):
+                return
+
+        name_lower = tech.name.lower()
+
+        def _has_h2(value: Any) -> bool:
+            return isinstance(value, str) and "hydrogen" in value.lower()
+
+        cin = getattr(tech, "commodity_in", None)
+        cout = getattr(tech, "commodity_out", None)
+        hydrogen_related = "hydrogen" in name_lower or _has_h2(cin) or _has_h2(cout)
+
+        cap_limit = max(0.0, float(existing_capacity or 0.0))
+        if cap_limit == 0.0 and not hydrogen_related and all(not row.get(col) for col in ("cap_min", "cap_max")):
+            return
+
+        first_year = self.scenario_years[0]
+        hydrogen_start_year = 2030
+
+        def _coerce_default(value: Any) -> Optional[float]:
+            if value is None:
+                return None
+            try:
+                val = float(value)
+            except NUMERIC_ERRORS:
+                return None
+            if math.isnan(val):
+                return None
+            return val
+
+        def _update_column(
+            col: str,
+            adjust: Callable[[int, Optional[float]], Optional[float]],
+        ) -> None:
+            value = row.get(col)
+            base_map = self._profile_to_map(value)
+            default = _coerce_default(value)
+            changed = False
+            pairs: List[Tuple[int, float]] = []
+            for year in self.scenario_years:
+                base_raw = base_map.get(year, default)
+                base_val = _coerce_default(base_raw)
+                adjusted = adjust(year, base_val)
+                if adjusted is None:
+                    if base_val is None:
+                        continue
+                    adjusted = base_val
+                try:
+                    adjusted_f = float(adjusted)
+                except NUMERIC_ERRORS:
+                    continue
+                if base_val is None or abs(adjusted_f - (base_val if base_val is not None else adjusted_f)) > 1e-9:
+                    changed = True
+                pairs.append((year, adjusted_f))
+            if changed and pairs:
+                formatted = self._format_profile(pairs)
+                if formatted:
+                    row[col] = formatted
+
+        def _adjust_cap_max(year: int, base: Optional[float]) -> Optional[float]:
+            if hydrogen_related:
+                if year < hydrogen_start_year:
+                    return 0.0
+                if base is None:
+                    return UNBOUNDED_CAP
+            if cap_limit <= 0.0:
+                return base
+            if year != first_year:
+                return base
+            if base is None:
+                return cap_limit
+            return min(base, cap_limit)
+
+        def _adjust_cap_min(year: int, base: Optional[float]) -> Optional[float]:
+            base_val = base if base is not None else 0.0
+            if hydrogen_related and year < hydrogen_start_year:
+                return 0.0
+            if cap_limit <= 0.0:
+                return base_val if hydrogen_related else min(base_val, cap_limit)
+            if year == first_year:
+                return min(base_val, cap_limit)
+            return base_val
+
+        if cap_limit > 0.0 or hydrogen_related:
+            _update_column("cap_max", _adjust_cap_max)
+        _update_column("cap_min", _adjust_cap_min)
+
+    # Misc helpers -----------------------------------------------------------
+    def _years_since_start(self, year: int) -> float:
+        if not self.scenario_years:
+            return 0.0
+        return float(year - self.scenario_years[0])
+
+    def _heat_comm_for_district(self, district: int, fallback: Optional[str] = None) -> str:
+        heat_idx = self.district_index.get(district)
+        if heat_idx is None or heat_idx >= len(self.heat_names):
+            return fallback or ""
+        return self.heat_names[heat_idx]
 # ====================================================================================
 # Backend adapter
 # ====================================================================================
@@ -108,6 +834,7 @@ class CESMBackend(OptimizationModel):
                 f"Check logs: {self.workdir / 'cesm_stdout.log'}, {self.workdir / 'cesm_stderr.log'} "
                 f"and command {self.workdir / 'cesm_cmd.txt'}"
             )
+        self._backfill_missing_commodity_timeseries(db_path)
         results = self._parse_outputs(db_path)
         sol = Solution()
         sol.results = results
@@ -143,6 +870,58 @@ class CESMBackend(OptimizationModel):
         if cp.returncode != 0:
             raise RuntimeError(f"CESM failed (exit {cp.returncode}). See logs in workdir")
 
+    def _backfill_missing_commodity_timeseries(self, db_path: Path) -> None:
+        try:
+            with sqlite3.connect(db_path) as con:
+                cur = con.cursor()
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = {row[0] for row in cur.fetchall()}
+                required = {"output_cs_y_t", "conversion_subprocess", "output_co_y_t"}
+                if not required.issubset(tables):
+                    return
+                cur.execute(
+                    """
+                    WITH per_kind AS (
+                        SELECT cs.cout_id AS co_id, o.y_id, o.t_id,
+                               SUM(COALESCE(o.eouttime, 0.0)) AS value,
+                               1 AS is_gen
+                        FROM output_cs_y_t AS o
+                        JOIN conversion_subprocess AS cs ON cs.id = o.cs_id
+                        GROUP BY cs.cout_id, o.y_id, o.t_id
+                        HAVING ABS(SUM(COALESCE(o.eouttime, 0.0))) > 1e-9
+                        UNION ALL
+                        SELECT cs.cin_id AS co_id, o.y_id, o.t_id,
+                               SUM(COALESCE(o.eintime, 0.0)) AS value,
+                               0 AS is_gen
+                        FROM output_cs_y_t AS o
+                        JOIN conversion_subprocess AS cs ON cs.id = o.cs_id
+                        GROUP BY cs.cin_id, o.y_id, o.t_id
+                        HAVING ABS(SUM(COALESCE(o.eintime, 0.0))) > 1e-9
+                    ),
+                    aggregated AS (
+                        SELECT co_id, y_id, t_id,
+                               SUM(CASE WHEN is_gen = 1 THEN value ELSE 0 END) AS gen,
+                               SUM(CASE WHEN is_gen = 0 THEN value ELSE 0 END) AS cons
+                        FROM per_kind
+                        GROUP BY co_id, y_id, t_id
+                    ),
+                    missing AS (
+                        SELECT a.*
+                        FROM aggregated AS a
+                        LEFT JOIN output_co_y_t AS existing
+                              ON existing.co_id = a.co_id
+                             AND existing.y_id = a.y_id
+                             AND existing.t_id = a.t_id
+                        WHERE existing.co_id IS NULL
+                    )
+                    INSERT INTO output_co_y_t (co_id, y_id, t_id, enetgen, enetcons)
+                    SELECT co_id, y_id, t_id, gen, cons FROM missing
+                    """
+                )
+                con.commit()
+        except sqlite3.Error as exc:
+            logger.warning("Failed to backfill commodity timeseries for %s: %s", db_path, exc)
+
     def _parse_outputs(self, db_path: Path) -> Dict[str, Any]:
         out: Dict[str, Any] = {"status": "ok", "db": str(db_path)}
         with sqlite3.connect(db_path) as con:
@@ -160,7 +939,7 @@ class CESMBackend(OptimizationModel):
                 try:
                     cur.execute(f"SELECT COUNT(*) FROM {t}")
                     row_counts[t] = int(cur.fetchone()[0])
-                except Exception:
+                except sqlite3.Error:
                     row_counts[t] = -1
             out["columns"] = columns
             out["row_counts"] = row_counts
@@ -251,11 +1030,6 @@ class CESMBackend(OptimizationModel):
             out["kpis"] = kpis
         return out
 
-
-# ====================================================================================
-# Minimal writer (from cesm_backend)
-# ====================================================================================
-
 def write_cesm_inputs_minimal_from_om(
     om: OMContext,
     cesm_root: Path,
@@ -313,31 +1087,8 @@ def write_cesm_inputs_minimal_from_om(
         else pd.DataFrame(columns=["conversion_process_name", "order", "color"])
     )
     cs = list(getattr(om, "conversion_sub_processes", []) or [])
-    base_cols = ["conversion_process_name", "commodity_in", "commodity_out", "scenario"]
-    param_cols = [
-        "spec_co2",
-        "efficiency",
-        "technical_lifetime",
-        "technical_availability",
-        "c_rate",
-        "efficiency_charge",
-        "is_storage",
-        "opex_cost_energy",
-        "opex_cost_power",
-        "capex_cost_power",
-        "max_eout",
-        "min_eout",
-        "cap_min",
-        "cap_max",
-        "cap_res_max",
-        "cap_res_min",
-        "out_frac_min",
-        "out_frac_max",
-        "in_frac_min",
-        "in_frac_max",
-        "availability_profile",
-        "output_profile",
-    ]
+    base_cols = list(CONV_SUBPROC_BASE_COLS)
+    param_cols = list(CONV_SUBPROC_PARAM_COLS)
     rows = []
     for x in cs:
         row = {
@@ -356,17 +1107,36 @@ def write_cesm_inputs_minimal_from_om(
     )
     xlsx = tm_dir / f"{model_name}.xlsx"
     with pd.ExcelWriter(xlsx, engine="openpyxl", mode="w") as xw:
-        df_units.to_excel(xw, sheet_name="Units", index=False)
-        df_scenario.to_excel(xw, sheet_name="Scenario", index=False)
-        df_tss.to_excel(xw, sheet_name="TSS", index=False)
-        df_co.to_excel(xw, sheet_name="Commodity", index=False)
-        df_cp.to_excel(xw, sheet_name="ConversionProcess", index=False)
+        _write_standard_sheets(
+            xw,
+            units_df=df_units,
+            scenario_df=df_scenario,
+            tss_df=df_tss,
+            commodity_df=df_co,
+            convproc_df=df_cp,
+        )
         df_cs.to_excel(xw, sheet_name="ConversionSubProcess", index=False)
 
 
 # ====================================================================================
-# Rich writer utilities (from cesm_writer + consolidated copy in runner)
+# writer utilities 
 # ====================================================================================
+
+def _write_standard_sheets(
+    writer: pd.ExcelWriter,
+    *,
+    units_df: pd.DataFrame,
+    scenario_df: pd.DataFrame,
+    tss_df: pd.DataFrame,
+    commodity_df: pd.DataFrame,
+    convproc_df: pd.DataFrame,
+) -> None:
+    """Write the common workbook sheets shared across CESM exporters."""
+    units_df.to_excel(writer, sheet_name="Units", index=False)
+    scenario_df.to_excel(writer, sheet_name="Scenario", index=False)
+    tss_df.to_excel(writer, sheet_name="TSS", index=False)
+    commodity_df.to_excel(writer, sheet_name="Commodity", index=False)
+    convproc_df.to_excel(writer, sheet_name="ConversionProcess", index=False)
 
 def _canon_co(name: str) -> str:
     if name is None:
@@ -390,6 +1160,13 @@ def tech_to_cesms_row(
     **overrides: Any,
 ) -> Dict[str, Any]:
     """Utility used by tests to convert a Technology into a ConversionSubProcess row dict."""
+    cap_min_attr = getattr(tech, "cap_min", None)
+    cap_max_attr = getattr(tech, "cap_max", None)
+    max_units = getattr(tech, "max_units", 1)
+    cap_max_value = np.nan
+    if cap_max_attr is not None:
+        cap_max_value = float(cap_max_attr)
+
     row: Dict[str, Any] = {
         "conversion_process_name": cp_name,
         "commodity_in": _canon_co(cin),
@@ -401,6 +1178,11 @@ def tech_to_cesms_row(
         "opex_cost_energy": float(tech.opex_cost_energy) if tech.opex_cost_energy is not None else np.nan,
         "opex_cost_power": float(tech.opex_cost_power) if tech.opex_cost_power is not None else np.nan,
         "capex_cost_power": float(tech.capex_cost_power) if tech.capex_cost_power is not None else np.nan,
+        "capex_cost_base": float(getattr(tech, "capex_cost_base", 0.0)) if getattr(tech, "capex_cost_base", None) is not None else 0.0,
+        "cap_min": float(cap_min_attr) if cap_min_attr is not None else np.nan,
+        "cap_max": cap_max_value,
+        "cap_active": np.nan,
+    "max_units": int(max_units) if max_units is not None else np.nan,
     }
     row.update(overrides)
     return row
@@ -425,22 +1207,25 @@ def write_cesm_inputs_from_data(
     heat_commodity_base: str = "Heat",
     elec_price_eur_per_mwh: float = 100.0,
     export_price_eur_per_mwh: float = -10.0,
-    pipe_loss_fraction: float = 0.05,
-    pipe_cap_max_mw: float = 1e9,
-    pipe_opex_eur_per_mwh: float = 1.0,
-    pipe_capex_eur_per_mw: float = 1_000.0,
-    pipe_lifetime_years: int = 30,
+    pipe_loss_fraction: float | None = None,
+    pipe_cap_max_mw: float | None = None,
+    pipe_opex_eur_per_mwh: float | None = None,
+    pipe_capex_eur_per_mw: float | None = None,
+    pipe_lifetime_years: int | None = None,
     edge_strategy: str = "mst",
     min_shared_border_m: float = 0.0,
     max_pipes_per_district: Optional[int] = None,
     neighbor_distance_m: Optional[float] = None,
     selected_techs: list[Technology] | TechnologyRegistry | None = None,
+    retain_existing_output_factor: float | None = 1.0,
+    retain_existing_output_years_factor: float | None = 1.0,
+    technology_registry: TechnologyRegistry | None = None,
+    pipe_technology_name: str = "heat_pipe",
 ) -> None:
     workdir = Path(workdir)
-    techmap_dir = workdir / "Data" / "Techmap"
-    ts_dir = workdir / "Data" / "TimeSeries"
-    techmap_dir.mkdir(parents=True, exist_ok=True)
-    ts_dir.mkdir(parents=True, exist_ok=True)
+    paths = _prepare_io_paths(workdir, model_name, tss_name)
+    techmap_dir = paths.techmap_dir
+    ts_dir = paths.timeseries_dir
     om_scenario = getattr(om, "scenario", None)
     if om_scenario is not None:
         start_year = getattr(om_scenario, "start_year", start_year)
@@ -448,6 +1233,27 @@ def write_cesm_inputs_from_data(
         year_gap = getattr(om_scenario, "year_gap", year_gap)
     data_dir = Path(data_dir) if data_dir is not None else Path("data")
     om_regions = list(getattr(om, "regions", []))
+
+    scenario_years: List[int] = []
+    try:
+        start_year_int = int(start_year)
+        end_year_int = int(end_year)
+    except NUMERIC_ERRORS:
+        start_year_int = None
+        end_year_int = None
+    try:
+        year_step_int = int(year_gap) if year_gap is not None else 1
+    except NUMERIC_ERRORS:
+        year_step_int = 1
+    if year_step_int <= 0:
+        year_step_int = 1
+    if start_year_int is not None and end_year_int is not None:
+        scenario_years = list(range(start_year_int, end_year_int + 1, year_step_int))
+        if not scenario_years:
+            scenario_years = [start_year_int]
+    elif start_year_int is not None:
+        scenario_years = [start_year_int]
+    scenario_years = sorted(set(scenario_years))
 
     profile_full = None
     try:
@@ -460,7 +1266,7 @@ def write_cesm_inputs_from_data(
                 prof_sum = float(profile_arr.sum())
                 if prof_sum > 0:
                     profile_full = profile_arr / prof_sum
-    except Exception:
+    except NUMERIC_ERRORS:
         profile_full = None
     if profile_full is None:
         profile_full = _load_numeric_txt(data_dir / elec_profile_file)
@@ -468,17 +1274,30 @@ def write_cesm_inputs_from_data(
         if prof_sum <= 0:
             raise ValueError(f"Electricity profile {elec_profile_file} sums to zero; cannot normalize.")
         profile_full = profile_full / prof_sum
-    tss_file = ts_dir / f"{tss_name}.txt"
-    if not tss_file.exists():
-        tss_file.write_text("\n".join(str(i) for i in range(1, 225)), encoding="utf-8")
-    tss_vals = [int(x) for x in tss_file.read_text(encoding="utf-8").strip().splitlines() if x]
+    tss_vals = _ensure_tss_indices(paths.tss_file)
     max_idx = max(tss_vals) if tss_vals else 0
     if max_idx >= len(profile_full):
         raise ValueError(f"TSS requires index {max_idx} but profile length is {len(profile_full)}.")
+    if tss_vals:
+        idx_arr = np.asarray(tss_vals, dtype=int) - 1
+        selected_sum = float(profile_full[idx_arr].sum())
+        if selected_sum <= 0.0:
+            raise ValueError("Electricity profile assigns zero weight to selected TSS hours; cannot normalize.")
+        if not np.isclose(selected_sum, 1.0):
+            profile_full = profile_full / selected_sum
+        from decimal import Decimal, ROUND_HALF_UP, getcontext
+        getcontext().prec = 28
+        quantum = Decimal("0.00000001")
+        rounded: list[Decimal] = []
+        for pos in idx_arr:
+            rounded.append(Decimal(profile_full[pos]).quantize(quantum, rounding=ROUND_HALF_UP))
+        correction = Decimal("1.0") - sum(rounded)
+        if correction != 0:
+            rounded[-1] = (rounded[-1] + correction).quantize(quantum, rounding=ROUND_HALF_UP)
+        for pos, dec_val in zip(idx_arr, rounded):
+            profile_full[pos] = float(dec_val)
     demand_profile_name = "HeatDemandProfile"
-    (ts_dir / f"{demand_profile_name}.txt").write_text(
-        " ".join(f"{x:.8f}" for x in profile_full.tolist()), encoding="utf-8"
-    )
+    _write_demand_profile(ts_dir, demand_profile_name, profile_full)
     districts: List[int]
     heat_names: List[str]
     directed_edges: List[Tuple[int, int]] = []
@@ -505,7 +1324,7 @@ def write_cesm_inputs_from_data(
         try:
             if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
                 gdf = gdf.to_crs(3035)
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             pass
         n = int(len(gdf))
         if n < 1:
@@ -538,6 +1357,9 @@ def write_cesm_inputs_from_data(
     else:
         grid_hub_name = f"{base_heat_name}_GridHub"
         grid_names = [f"{base_heat_name}_Grid_D{d}" for d in districts]
+
+    district_heat_in_names = {d: f"district_heat_in_D{d}" for d in districts}
+    district_heat_out_names = {d: f"district_heat_out_D{d}" for d in districts}
 
     def _annual_demands_from_om() -> List[float]:
         if not om_regions:
@@ -583,7 +1405,7 @@ def write_cesm_inputs_from_data(
     else:
         if len(annual_heat_by_d) != len(districts):
             annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
-    xlsx = techmap_dir / f"{model_name}.xlsx"
+    xlsx = paths.xlsx_path
     units_df = _units_df()
     scenario_df = _scenario_df(
         scenario_name=scenario_name,
@@ -595,7 +1417,8 @@ def write_cesm_inputs_from_data(
     )
     tss_df = _tss_df(tss_name=tss_name, dt_hours=dt_hours)
     base = ["Electricity", "External", "Dummy"]
-    commodity_list = base + [grid_hub_name] + grid_names + heat_names
+    district_heat_names = [district_heat_in_names[d] for d in districts] + [district_heat_out_names[d] for d in districts]
+    commodity_list = base + [grid_hub_name] + grid_names + heat_names + district_heat_names
     commodity_list = list(dict.fromkeys(commodity_list))
     sel_list: list[Technology] = []
     if isinstance(selected_techs, TechnologyRegistry):
@@ -614,23 +1437,95 @@ def write_cesm_inputs_from_data(
             filtered.append(tech)
     sel_list = filtered
 
+    registry_for_specs = technology_registry
+    if registry_for_specs is None and isinstance(selected_techs, TechnologyRegistry):
+        registry_for_specs = selected_techs
+
+    pipe_tech: Technology | None = None
+    if registry_for_specs and registry_for_specs.has_technology(pipe_technology_name):
+        pipe_tech = registry_for_specs.get_by_name(pipe_technology_name)
+    else:
+        default_registry = get_default_technology_registry()
+        if default_registry.has_technology(pipe_technology_name):
+            pipe_tech = default_registry.get_by_name(pipe_technology_name)
+
+    DEFAULT_PIPE_LOSS = 0.02
+    DEFAULT_PIPE_CAPEX = 100.0
+    DEFAULT_PIPE_OPEX = 0.0
+    DEFAULT_PIPE_LIFETIME = 30
+    DEFAULT_PIPE_CAP_MAX = UNBOUNDED_ENERGY
+
+    def _pick(value_override, spec_value, fallback):
+        if value_override is not None:
+            return value_override
+        if spec_value is not None:
+            return spec_value
+        return fallback
+
+    spec_efficiency: float | None = None
+    if pipe_tech and getattr(pipe_tech, "efficiency", None) is not None:
+        try:
+            spec_efficiency = float(pipe_tech.efficiency)
+        except NUMERIC_ERRORS:
+            spec_efficiency = None
+    if spec_efficiency is not None:
+        spec_efficiency = max(0.0, min(1.0, spec_efficiency))
+    spec_loss = None if spec_efficiency is None else max(0.0, 1.0 - spec_efficiency)
+
+    spec_capex = None
+    if pipe_tech and getattr(pipe_tech, "capex_cost_power", None) is not None:
+        try:
+            spec_capex = float(pipe_tech.capex_cost_power)
+        except NUMERIC_ERRORS:
+            spec_capex = None
+
+    spec_opex = None
+    if pipe_tech and getattr(pipe_tech, "opex_cost_energy", None) is not None:
+        try:
+            spec_opex = float(pipe_tech.opex_cost_energy)
+        except NUMERIC_ERRORS:
+            spec_opex = None
+
+    spec_lifetime = None
+    if pipe_tech and getattr(pipe_tech, "technical_lifetime", None) is not None:
+        try:
+            spec_lifetime = int(pipe_tech.technical_lifetime)
+        except NUMERIC_ERRORS:
+            spec_lifetime = None
+
+    spec_cap_max = None
+    if pipe_tech and getattr(pipe_tech, "cap_max", None) is not None:
+        try:
+            spec_cap_max = float(pipe_tech.cap_max)
+        except NUMERIC_ERRORS:
+            spec_cap_max = None
+
+    resolved_loss = _pick(pipe_loss_fraction, spec_loss, DEFAULT_PIPE_LOSS)
+    pipe_eff = max(0.0, 1.0 - float(resolved_loss))
+    pipe_capex_value = _pick(pipe_capex_eur_per_mw, spec_capex, DEFAULT_PIPE_CAPEX)
+    pipe_opex_value = _pick(pipe_opex_eur_per_mwh, spec_opex, DEFAULT_PIPE_OPEX)
+    pipe_lifetime_value = int(_pick(pipe_lifetime_years, spec_lifetime, DEFAULT_PIPE_LIFETIME))
+    pipe_cap_max_value = float(_pick(pipe_cap_max_mw, spec_cap_max, DEFAULT_PIPE_CAP_MAX))
+
     def _to_int_id(raw: Any, fallback: int) -> int:
         if hasattr(raw, "iloc"):
             try:
                 raw = raw.iloc[0]
-            except Exception:
+            except (IndexError, KeyError, TypeError, AttributeError):
                 pass
         if isinstance(raw, np.generic):
             raw = raw.item()
         try:
             return int(raw)
-        except Exception:
+        except NUMERIC_ERRORS:
             try:
                 return int(float(raw))
-            except Exception:
+            except NUMERIC_ERRORS:
                 return int(fallback)
 
     constraints_raw = getattr(om, "constraints", {}) or {}
+    demand_commodity = getattr(om, "commodity", None) or "residential_heat"
+
     min_dhn_targets_raw = (
         constraints_raw.get("min_dhn_throughput_mwh", {}) if isinstance(constraints_raw, dict) else {}
     )
@@ -639,14 +1534,30 @@ def write_cesm_inputs_from_data(
         for key, value in min_dhn_targets_raw.items():
             try:
                 rid = _to_int_id(key, 0)
-            except Exception:
+            except (TypeError, ValueError):
                 continue
             try:
                 val = float(value)
-            except Exception:
+            except NUMERIC_ERRORS:
                 continue
             if val > 0:
                 min_dhn_targets[rid] = float(val)
+
+    min_heat_grid_key = f"min_heat_grid_{demand_commodity}"
+    min_heat_grid_raw = constraints_raw.get(min_heat_grid_key, {}) if isinstance(constraints_raw, dict) else {}
+    min_heat_grid_targets: dict[int, float] = {}
+    if isinstance(min_heat_grid_raw, dict):
+        for key, value in min_heat_grid_raw.items():
+            try:
+                rid = _to_int_id(key, 0)
+            except (TypeError, ValueError):
+                continue
+            try:
+                val = float(value)
+            except NUMERIC_ERRORS:
+                continue
+            if val > 0:
+                min_heat_grid_targets[rid] = float(val)
 
     om_region_ids = list(getattr(om, "regions", []))
     district_to_region: dict[int, int] = {}
@@ -654,9 +1565,44 @@ def write_cesm_inputs_from_data(
         raw_rid = om_region_ids[idx] if idx < len(om_region_ids) else district_id
         district_to_region[district_id] = _to_int_id(raw_rid, district_id)
 
-    total_min_dhn = float(sum(min_dhn_targets.values())) if min_dhn_targets else 0.0
+    region_metrics = getattr(om, "region_technology_metrics", {}) or {}
+    total_metrics: dict[str, dict[str, float]] = {}
+    if isinstance(region_metrics, dict):
+        for rid, tech_map in region_metrics.items():
+            if not isinstance(tech_map, dict):
+                continue
+            for tech_name, metrics in tech_map.items():
+                if not isinstance(metrics, dict):
+                    continue
+                agg = total_metrics.setdefault(
+                    tech_name,
+                    {"initial_energy_output": 0.0, "initial_capacity": 0.0},
+                )
+                try:
+                    agg["initial_energy_output"] += float(metrics.get("initial_energy_output", 0.0) or 0.0)
+                except NUMERIC_ERRORS:
+                    pass
+                try:
+                    agg["initial_capacity"] += float(metrics.get("initial_capacity", 0.0) or 0.0)
+                except NUMERIC_ERRORS:
+                    pass
 
-    demand_commodity = getattr(om, "commodity", None) or "residential_heat"
+    if retain_existing_output_factor is None:
+        retain_factor: float | None = None
+    else:
+        try:
+            retain_factor = max(0.0, float(retain_existing_output_factor))
+        except NUMERIC_ERRORS:
+            retain_factor = None
+    
+    logger.debug(
+        "retain_existing_output_factor=%s -> retain_factor=%s",
+        retain_existing_output_factor,
+        retain_factor,
+    )
+
+    total_min_dhn = float(sum(min_dhn_targets.values())) if min_dhn_targets else 0.0
+    total_min_heat_grid = float(sum(min_heat_grid_targets.values())) if min_heat_grid_targets else 0.0
 
     for tech in sel_list:
         cin = _canon_co(tech.commodity_in)
@@ -687,13 +1633,15 @@ def write_cesm_inputs_from_data(
         conv_procs += [f"HeatDemand_D{i}" for i in districts]
         conv_procs += [f"Pipe_D{i}_D{j}" for (i, j) in directed_edges]
     for tech in sel_list:
-        if tech.name == "ind_district_heating_connection":
+        base_name, tech_district = _split_base_and_district(tech.name)
+        if base_name in HEAT_EXCHANGER_BASE_NAMES:
             if len(districts) == 1:
                 name = "HeatExchanger"
                 if name not in conv_procs:
                     conv_procs.append(name)
             else:
-                for d in districts:
+                target_ds = [tech_district] if tech_district is not None else list(districts)
+                for d in target_ds:
                     name = f"HeatExchanger_D{d}"
                     if name not in conv_procs:
                         conv_procs.append(name)
@@ -709,7 +1657,12 @@ def write_cesm_inputs_from_data(
                     conv_procs.append(name)
 
     extra_supply_rows: List[dict[str, Any]] = []
-    supply_price_defaults = {"gas": 60.0, "oil": 90.0}
+    # Prices are specified in €/MWh; entries reflect 0.10/0.15/0.25 €/kWh for gas, oil, and hydrogen respectively.
+    supply_price_defaults = {
+        "gas": 100.0,
+        "oil": 150.0,
+        "hydrogen": 250.0,
+    }
     for commodity in supply_candidates:
         if commodity not in commodity_list:
             commodity_list.append(commodity)
@@ -725,8 +1678,8 @@ def write_cesm_inputs_from_data(
                 "scenario": scenario_name,
                 "efficiency": 1.0,
                 "technical_availability": 1.0,
-                "max_eout": 1e12,
-                "cap_max": 1e9,
+                "max_eout": UNBOUNDED_ENERGY,
+                "cap_max": UNBOUNDED_CAP,
                 "opex_cost_energy": price,
             }
         )
@@ -748,8 +1701,8 @@ def write_cesm_inputs_from_data(
             "scenario": scenario_name,
             "efficiency": 1.0,
             "technical_availability": 1.0,
-            "max_eout": 1e12,
-            "cap_max": 1e9,
+            "max_eout": UNBOUNDED_ENERGY,
+            "cap_max": UNBOUNDED_CAP,
             "opex_cost_energy": float(export_price_eur_per_mwh),
         }
     )
@@ -771,168 +1724,60 @@ def write_cesm_inputs_from_data(
             }
         )
 
-    pipe_eff = max(0.0, 1.0 - float(pipe_loss_fraction))
     for (i, j) in directed_edges:
-        src_idx = district_index.get(i, i if 0 <= i < len(grid_names) else 0)
-        dst_idx = district_index.get(j, j if 0 <= j < len(grid_names) else 0)
+        src_idx = district_index.get(i, i if 0 <= i < len(districts) else 0)
+        dst_idx = district_index.get(j, j if 0 <= j < len(districts) else 0)
+        src_comm = district_heat_out_names.get(districts[src_idx], f"district_heat_out_D{districts[src_idx]}")
+        dst_comm = district_heat_in_names.get(districts[dst_idx], f"district_heat_in_D{districts[dst_idx]}")
         cs_rows.append(
             {
                 "conversion_process_name": f"Pipe_D{i}_D{j}",
-                "commodity_in": grid_names[src_idx],
-                "commodity_out": grid_names[dst_idx],
+                "commodity_in": src_comm,
+                "commodity_out": dst_comm,
                 "scenario": scenario_name,
                 "efficiency": pipe_eff,
                 "technical_availability": 1.0,
-                "technical_lifetime": int(pipe_lifetime_years),
-                "cap_max": float(pipe_cap_max_mw),
-                "max_eout": 1e12,
-                "opex_cost_energy": float(pipe_opex_eur_per_mwh),
-                "capex_cost_power": float(pipe_capex_eur_per_mw),
+                "technical_lifetime": int(pipe_lifetime_value),
+                "cap_max": float(pipe_cap_max_value),
+                "max_eout": UNBOUNDED_ENERGY,
+                "opex_cost_energy": float(pipe_opex_value),
+                "capex_cost_power": float(pipe_capex_value),
             }
         )
 
-    def _min_eout_override(tech: Technology, district: Optional[int] = None) -> Optional[dict[str, float]]:
-        cout = _canon_co(tech.commodity_out)
-        if tech.name == "ind_district_heating_connection" and district is not None:
-            rid = district_to_region.get(district, district)
-            target = min_dhn_targets.get(rid)
-            if target and target > 0:
-                return {"min_eout": float(target)}
-        if total_min_dhn > 0 and cout in {"district_heat_in", "district_heat_out"}:
-            return {"min_eout": float(total_min_dhn)}
-        return None
+    builder = _ConversionRowsBuilder(
+        scenario_name=scenario_name,
+        scenario_years=scenario_years,
+        demand_commodity=demand_commodity,
+        districts=districts,
+        district_index=district_index,
+        heat_names=heat_names,
+        district_heat_out_names=district_heat_out_names,
+        min_dhn_targets=min_dhn_targets,
+        min_heat_grid_targets=min_heat_grid_targets,
+        district_to_region=district_to_region,
+        region_metrics=region_metrics,
+        total_metrics=total_metrics,
+        retain_factor=retain_factor,
+        retain_years_factor=retain_existing_output_years_factor,
+        elec_price_eur_per_mwh=elec_price_eur_per_mwh,
+    )
 
-    def _build_cs_row(
-        cp_name: str,
-        cin: str,
-        cout: str,
-        tech: Technology,
-        overrides: Optional[dict[str, float]] = None,
-    ) -> dict[str, Any]:
-        row = tech_to_cesms_row(
-            tech,
-            cp_name=cp_name,
-            cin=cin,
-            cout=cout,
-            scenario_name=scenario_name,
-        )
-        if overrides:
-            row.update(overrides)
-        return row
-
-    def _rows_residential(tech: Technology) -> List[dict[str, Any]]:
-        rows: List[dict[str, Any]] = []
-        if len(districts) == 1:
-            district = districts[0]
-            overrides = _min_eout_override(tech, district)
-            heat_comm = heat_names[district_index.get(district, 0)] if heat_names else tech.commodity_out
-            rows.append(
-                _build_cs_row(
-                    cp_name=f"{tech.name}",
-                    cin=tech.commodity_in,
-                    cout=heat_comm,
-                    tech=tech,
-                    overrides=overrides,
-                )
-            )
-            return rows
-        for district in districts:
-            overrides = _min_eout_override(tech, district)
-            heat_idx = district_index.get(district)
-            heat_comm = heat_names[heat_idx] if heat_idx is not None and heat_idx < len(heat_names) else tech.commodity_out
-            rows.append(
-                _build_cs_row(
-                    cp_name=f"{tech.name}_D{district}",
-                    cin=tech.commodity_in,
-                    cout=heat_comm,
-                    tech=tech,
-                    overrides=overrides,
-                )
-            )
-        return rows
-
-    def _rows_heat_exchanger(tech: Technology) -> List[dict[str, Any]]:
-        rows: List[dict[str, Any]] = []
-        if len(districts) == 1:
-            district = districts[0]
-            overrides = _min_eout_override(tech, district)
-            heat_idx = district_index.get(district, 0)
-            heat_comm = heat_names[heat_idx] if heat_names else tech.commodity_out
-            rows.append(
-                _build_cs_row(
-                    cp_name="HeatExchanger",
-                    cin=tech.commodity_in,
-                    cout=heat_comm,
-                    tech=tech,
-                    overrides=overrides,
-                )
-            )
-            return rows
-        for district in districts:
-            overrides = _min_eout_override(tech, district)
-            heat_idx = district_index.get(district)
-            heat_comm = heat_names[heat_idx] if heat_idx is not None and heat_idx < len(heat_names) else tech.commodity_out
-            rows.append(
-                _build_cs_row(
-                    cp_name=f"HeatExchanger_D{district}",
-                    cin=tech.commodity_in,
-                    cout=heat_comm,
-                    tech=tech,
-                    overrides=overrides,
-                )
-            )
-        return rows
-
-    def _rows_default(tech: Technology) -> List[dict[str, Any]]:
-        overrides = _min_eout_override(tech, None)
-        return [
-            _build_cs_row(
-                cp_name=f"{tech.name}",
-                cin=tech.commodity_in,
-                cout=tech.commodity_out,
-                tech=tech,
-                overrides=overrides,
-            )
-        ]
-
-    technology_to_cs: Dict[str, Callable[[Technology], List[dict[str, Any]]]] = {
-        "ind_heat_pump": _rows_residential,
-        "ind_gas_boiler": _rows_residential,
-        "ind_oil_boiler": _rows_residential,
-        "ind_district_heating_connection": _rows_heat_exchanger,
-        "heat_grid": _rows_default,
-        "cen_heat_pump": _rows_default,
-        "grid_electricity": _rows_default,
-    }
-
-    for tech in sel_list:
-        builder = technology_to_cs.get(tech.name)
-        if builder is None:
-            if _canon_co(tech.commodity_out) == _canon_co(demand_commodity):
-                builder = _rows_residential
-            else:
-                builder = _rows_default
-        cs_rows.extend(builder(tech))
-    base_cols = ["conversion_process_name", "commodity_in", "commodity_out", "scenario"]
-    param_cols = _param_cols()
-    convsubproc_df = pd.DataFrame(cs_rows)
-    for col in base_cols + param_cols:
-        if col not in convsubproc_df.columns:
-            convsubproc_df[col] = np.nan
-    convsubproc_df = convsubproc_df[base_cols + param_cols]
-    with pd.ExcelWriter(xlsx, engine="openpyxl", mode="w") as xw:
-        units_df.to_excel(xw, sheet_name="Units", index=False)
-        scenario_df.to_excel(xw, sheet_name="Scenario", index=False)
-        tss_df.to_excel(xw, sheet_name="TSS", index=False)
-        commodity_df.to_excel(xw, sheet_name="Commodity", index=False)
-        convproc_df.to_excel(xw, sheet_name="ConversionProcess", index=False)
-        cs_sheet = "ConversionSubProcess"
-        pd.DataFrame(columns=convsubproc_df.columns).to_excel(xw, sheet_name=cs_sheet, index=False)
-        convsubproc_df.to_excel(xw, sheet_name=cs_sheet, index=False, header=False, startrow=3)
-    print(f"[writer] Wrote techmap: {xlsx}")
-    print("[writer] Sheets: Units, Scenario, TSS, Commodity, ConversionProcess, ConversionSubProcess")
-    print(
-        f"[writer] Commodities={len(commodity_list)} | CPs={len(conv_procs)} | CS rows={len(convsubproc_df)}"
+    cs_rows.extend(builder.build_rows(sel_list))
+    convsubproc_df = _convsubproc_dataframe(cs_rows)
+    _write_techmap_workbook(
+        xlsx,
+        units_df=units_df,
+        scenario_df=scenario_df,
+        tss_df=tss_df,
+        commodity_df=commodity_df,
+        convproc_df=convproc_df,
+        convsubproc_df=convsubproc_df,
+    )
+    _log_techmap_stats(
+        commodity_count=len(commodity_list),
+        convproc_count=len(conv_procs),
+        convsubproc_rows=len(convsubproc_df),
     )
 
 def write_cesm_inputs_multidistrict_from_data(**kwargs) -> None:
@@ -1087,44 +1932,36 @@ def _tss_df(*, tss_name: str, dt_hours: int) -> pd.DataFrame:
     return pd.DataFrame([{"TSS_name": tss_name, "dt": int(dt_hours)}], columns=["TSS_name", "dt"])
 
 def _param_cols() -> list[str]:
-    return [
-        "spec_co2",
-        "efficiency",
-        "technical_lifetime",
-        "technical_availability",
-        "c_rate",
-        "efficiency_charge",
-        "is_storage",
-        "opex_cost_energy",
-        "opex_cost_power",
-        "capex_cost_power",
-        "max_eout",
-        "min_eout",
-        "cap_min",
-        "cap_max",
-        "cap_res_min",
-        "cap_res_max",
-        "out_frac_min",
-        "out_frac_max",
-        "in_frac_min",
-        "in_frac_max",
-        "availability_profile",
-        "output_profile",
+    return list(CONV_SUBPROC_PARAM_COLS)
+
+# ====================================================================================
+# Runner CLI
+# ====================================================================================
+
+def _validate_cesm_paths(cesm_dir: Path, model_name: str) -> tuple[Path, Path, Path]:
+    data_dir = cesm_dir / "Data"
+    techmap_dir = data_dir / "Techmap"
+    ts_dir = data_dir / "TimeSeries"
+    runs_dir = cesm_dir / "Runs"
+    workbook = techmap_dir / f"{model_name}.xlsx"
+    required = [
+        ("CESM folder", cesm_dir),
+        ("CESM core folder", cesm_dir / "core"),
+        ("CESM Data directory", data_dir),
+        ("Techmap directory", techmap_dir),
     ]
+    missing: list[tuple[str, Path]] = [(desc, path) for desc, path in required if not path.exists()]
+    if not workbook.exists():
+        missing.append(("Techmap workbook", workbook))
+    if missing:
+        for desc, path in missing:
+            logger.error("Missing %s: %s", desc, path)
+        raise FileNotFoundError("Missing CESM resources")
+    return techmap_dir, ts_dir, runs_dir
 
-# ====================================================================================
-# Runner CLI (from cesm_runner main)
-# ====================================================================================
-
-def must_exist(p: Path, what: str) -> None:
-    if not p.exists():  # pragma: no cover
-        print(f"ERROR: Missing {what}: {p}", file=sys.stderr)
-        sys.exit(2)
-
-def main() -> int:  # pragma: no cover - CLI wrapper
+def main() -> int: 
     import sys as _sys
     cwd = Path.cwd().resolve()
-    # Determine CESM root: either current dir has core/, or a CESM/ subfolder does
     if (cwd / "core").exists():
         cesm_root = cwd
     elif (cwd / "CESM" / "core").exists():
@@ -1136,13 +1973,10 @@ def main() -> int:  # pragma: no cover - CLI wrapper
         for p in list(paths_to_add):
             if p not in _sys.path:
                 _sys.path.insert(0, p)
-    # Prefer direct core imports to avoid dependency on top-level cesm module resolution.
-    try:
-        from core.input_parser import Parser  # type: ignore
-        from core.model import Model  # type: ignore
-    except ModuleNotFoundError:
-        # Last resort: try legacy cesm module
-        from cesm import Parser, Model  # type: ignore
+  
+    from core.input_parser import Parser  # type: ignore
+    from core.model import Model  # type: ignore
+
     ap = argparse.ArgumentParser(description="Invoke CESM run using unified plugin.")
     ap.add_argument("--workdir", default=".", help="Project root that contains the CESM/ folder (default: .)")
     ap.add_argument("-m", "--model", required=True, help="Techmap XLSX name (without .xlsx)")
@@ -1150,21 +1984,15 @@ def main() -> int:  # pragma: no cover - CLI wrapper
     args = ap.parse_args()
     root = Path(args.workdir).resolve()
     cesm_dir = root / "CESM" if (root / "CESM" / "core").exists() else root
-    core_dir = cesm_dir / "core"
-    if not core_dir.exists():
-        print(f"ERROR: Missing CESM folder: {cesm_dir}")
-        return 2
-    data_dir = cesm_dir / "Data"
-    techmap_dir = data_dir / "Techmap"
-    ts_dir = data_dir / "TimeSeries"
-    runs_dir = cesm_dir / "Runs"
     model_name = args.model
     scenario_name = args.scenario
     run_name = f"{model_name}-{scenario_name}"
+    try:
+        techmap_dir, ts_dir, runs_dir = _validate_cesm_paths(cesm_dir, model_name)
+    except FileNotFoundError:
+        return 2
     db_dir = runs_dir / run_name
     db_path = db_dir / "db.sqlite"
-    must_exist(cesm_dir, "CESM folder")
-    must_exist(techmap_dir / f"{model_name}.xlsx", "Techmap workbook")
     ts_dir.mkdir(parents=True, exist_ok=True)
     runs_dir.mkdir(exist_ok=True)
     db_dir.mkdir(exist_ok=True)
@@ -1172,26 +2000,16 @@ def main() -> int:  # pragma: no cover - CLI wrapper
     parser = Parser(model_name, techmap_dir_path=techmap_dir, ts_dir_path=ts_dir, db_conn=conn, scenario=scenario_name)
     parser.parse()
     model = Model(conn=conn)
-    try:
-        model.solve()
-    except Exception as e:  # pragma: no cover
-        print("Model failed to solve.")
-        print(e)
-        raise
-    try:
-        model.save_output()
-    except Exception as e:  # pragma: no cover
-        print("Model didn’t return a feasible solution.")
-        print(e)
-        raise
+    model.solve()
+    model.save_output()
     if db_path.exists():
         db_path.unlink()
-        print(f"Deleted previous DB: {db_path}")
+        logger.info("Deleted previous DB: %s", db_path)
     disk = sqlite3.connect(str(db_path))
     conn.backup(disk)
     disk.close()
     conn.close()
-    print(f"DB written: {db_path}")
+    logger.info("DB written: %s", db_path)
     return 0
 
 if __name__ == "__main__":  # pragma: no cover

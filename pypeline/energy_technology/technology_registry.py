@@ -1,8 +1,6 @@
-from collections import defaultdict
 from typing import Type
-
-from pypeline.energy_system.technology import Technology
-from pypeline.energy_system.technology_stage import TechnologyStage, TechnologyCategory
+from .technology import Technology
+from .technology_stage import TechnologyStage, TechnologyCategory
 
 
 class TechnologyNotFoundError(Exception):
@@ -60,9 +58,12 @@ class TechnologyRegistry:
         """
         Load technologies from the global registry, filtering by allowed classes if specified.
         """
-        if not DEFAULT_TECHNOLOGY_REGISTRY.get_all():
-            raise ValueError("No technologies registered in the default technology registry.")
-        for tech in DEFAULT_TECHNOLOGY_REGISTRY.get_all():
+        registry = get_default_technology_registry()
+        if not registry.get_all():
+            from pypeline.energy_technology.configs import register_default_technologies
+
+            register_default_technologies(registry)
+        for tech in registry.get_all():
             self.register(tech)
 
     def remove(self, name: str):
@@ -109,7 +110,25 @@ class TechnologyRegistry:
         raise ValueError("return_type must be 'name' or 'instance'")
 
 
-DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()
+_DEFAULT_TECHNOLOGY_REGISTRY: TechnologyRegistry | None = None
+
+
+def get_default_technology_registry() -> TechnologyRegistry:
+    """Return the shared default TechnologyRegistry singleton."""
+    global _DEFAULT_TECHNOLOGY_REGISTRY
+    if _DEFAULT_TECHNOLOGY_REGISTRY is None:
+        _DEFAULT_TECHNOLOGY_REGISTRY = TechnologyRegistry()
+    return _DEFAULT_TECHNOLOGY_REGISTRY
+
+
+__all__ = [
+    "TechnologyNotFoundError",
+    "TechnologyRegistry",
+    "get_default_technology_registry",
+]
+
+
+
 
 
 

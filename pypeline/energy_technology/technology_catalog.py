@@ -1,31 +1,22 @@
-"""Composable catalog for loading and analysing technology specifications.
-
-The catalog coordinates one or more specification providers, validates their
-output, and produces runtime Technology instances ready for registration.
-It also offers lightweight analytic helpers so callers can understand how the
-specs relate to commodities, categories, and stages before wiring them into the
-energy system.
-"""
 from __future__ import annotations
-
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Protocol
 
-from pypeline.energy_system.tech_loader import (
+from .tech_loader import (
     instantiate_all,
     load_specs_from_package,
 )
-from pypeline.energy_system.technology_registry import (
-    DEFAULT_TECHNOLOGY_REGISTRY,
+from .technology_registry import (
     TechnologyRegistry,
+    get_default_technology_registry,
 )
-from pypeline.energy_system.technology_spec import (
+from .technology_spec import (
     TechnologySpec,
     validate_specs,
 )
-from pypeline.energy_system.technology_stage import TechnologyCategory, TechnologyStage
+from .technology_stage import TechnologyCategory, TechnologyStage
 
 
 class SpecProvider(Protocol):
@@ -97,7 +88,7 @@ class TechnologyCatalog:
 
     def register_defaults(self, registry: TechnologyRegistry | None = None) -> int:
         """Instantiate catalog specs and register them into the provided registry."""
-        registry = registry or DEFAULT_TECHNOLOGY_REGISTRY
+        registry = registry or get_default_technology_registry()
         count = 0
         for tech in instantiate_all(self.all_specs()):
             if registry.has_technology(tech.name):
@@ -114,8 +105,6 @@ class TechnologyCatalog:
         by_input: Dict[str, List[TechnologySpec]] = defaultdict(list)
         by_output: Dict[str, List[TechnologySpec]] = defaultdict(list)
         stage_edges: Dict[TechnologyStage, set[TechnologyStage]] = defaultdict(set)
-
-        specs_by_input: Dict[str, List[TechnologySpec]] = defaultdict(list)
         for spec in specs:
             stage = self._coerce_stage(spec.stage)
             category = self._coerce_category(spec.category)
@@ -123,13 +112,12 @@ class TechnologyCatalog:
             by_category[category].append(spec)
             by_input[spec.commodity_in].append(spec)
             by_output[spec.commodity_out].append(spec)
-            specs_by_input[spec.commodity_in].append(spec)
 
         # infer stage connections: if an output commodity feeds another spec's input,
         # connect the stages to hint at potential dependency wiring
         for spec in specs:
             src_stage = self._coerce_stage(spec.stage)
-            downstream_specs = specs_by_input.get(spec.commodity_out, [])
+            downstream_specs = by_input.get(spec.commodity_out, [])
             for downstream in downstream_specs:
                 dst_stage = self._coerce_stage(downstream.stage)
                 stage_edges[src_stage].add(dst_stage)

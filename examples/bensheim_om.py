@@ -8,6 +8,7 @@ import sqlite3
 from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
+from pypeline.energy_technology.configs import register_default_technologies
 from pypeline.optimization.om_adapter import build_om_from_es
 from tools.cesm_plugin import CESMBackend, write_cesm_inputs_from_data
 
@@ -16,7 +17,8 @@ def must_exist(p: Path, what: str) -> None:
         raise FileNotFoundError(f"Missing {what}: {p.resolve()}")
 
 def main():
-    tech_reg = TechnologyRegistry(); tech_reg.load_from_default()
+    tech_reg = TechnologyRegistry()
+    register_default_technologies(tech_reg)
     data_reg = DataRegistry();       data_reg.load_from_default()
     polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
     polygons = gpd.read_file(Path(polygons_path))
@@ -27,6 +29,12 @@ def main():
     esb.set_demands(default=True)
     esb.set_technology_registry(tech_reg)
     esb.set_data_registry(data_reg)
+
+    esb.set_default_region_builder_config()
+    esb.region_builder_config.update({
+        "min_heat_grid_share": 0.20,
+        "heat_grid_names": ("heat_exchanger",),
+    })
 
     rulebook = EnergySystemRuleBook()
     rulebook.add_rule(MinimumDHNThroughputRule(demand_name="residential_heat", min_share=0.20))
@@ -52,22 +60,20 @@ def main():
     electricity_file = "corrected_eletricity_demand_2016.txt"
 
     write_cesm_inputs_from_data(
-    om,
-    workdir=workdir,
-    model_name=model_name,
-    scenario_name=scenario_name,
-    tss_name=tss_name,
-    polygons_path=polygons_path,
-    data_dir=Path("data"),
-    heat_file=heat_file,
-    heat_unit="MWH",
-    elec_profile_file=electricity_file,
-    heat_commodity_base="Heat",
-    # Pipes
-    pipe_loss_fraction=0.01,
-    pipe_capex_eur_per_mw=50000,
-    pipe_opex_eur_per_mwh=0.0,
-    pipe_cap_max_mw=10.0,
+        om,
+        workdir=workdir,
+        model_name=model_name,
+        scenario_name=scenario_name,
+        tss_name=tss_name,
+        polygons_path=polygons_path,
+        data_dir=Path("data"),
+        heat_file=heat_file,
+        heat_unit="MWH",
+        elec_profile_file=electricity_file,
+        heat_commodity_base="Heat",
+        retain_existing_output_factor=0.2, # existing tech output retained at 20%
+        retain_existing_output_years_factor=0.5, # retention for techs lifespan
+        technology_registry=tech_reg,
     )
 
     xlsx = techmap_dir / f"{model_name}.xlsx"
@@ -115,14 +121,11 @@ def main():
 
             sankey_fig = plotter.plot_sankey(year=2020)
             sankey_fig.show()
+            sankey_fig2 = plotter.plot_sankey(year=2030)
+            sankey_fig2.show()
 
             # plotter.plot_timeseries(
             #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-            #     year=2020,
-            #     commodity="Electricity",
-            # )
-            # plotter.plot_timeseries(
-            #     timeseries_type=PlotType.TimeSeries.POWER_PRODUCTION,
             #     year=2020,
             #     commodity="Electricity",
             # )

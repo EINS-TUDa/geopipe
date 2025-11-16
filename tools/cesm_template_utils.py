@@ -3,23 +3,131 @@ from pathlib import Path
 import json
 from typing import Any, Dict, Optional, Union
 
-def get_cesm_templates_dir() -> Path:
-    """Get the CESM templates directory."""
-    return Path(__file__).parent / 'cesm_templates'
+BUILTIN_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "cesm_run_config_template.json": {
+        "cesm_params": {
+            "start_year": 2020,
+            "end_year": 2030,
+            "year_gap": 5,
+            "discount_rate": 0.05,
+            "dt_hours": 1,
+        },
+        "commodity_config": {
+            "heat_commodity_base": "Heat",
+            "electricity": {
+                "price_eur_per_mwh": 100.0,
+                "export_price_eur_per_mwh": -10.0,
+            },
+        },
+        "data_files": {
+            "heat_file": "D_Heat_Household_J.txt",
+            "heat_unit": "MWH",
+            "elec_profile_file": "corrected_eletricity_demand_2016.txt",
+        },
+        "pipe_config": {
+            "loss_fraction": 0.01,
+            "cap_max_mw": 10.0,
+            "lifetime_years": 30,
+            "opex_eur_per_mwh": 1.0,
+            "capex_eur_per_mw": 1000.0,
+        },
+        "network": {
+            "edge_strategy": "mst",
+            "min_shared_border_m": 0.0,
+            "max_pipes_per_district": None,
+            "neighbor_distance_m": None,
+        },
+    },
+    "bensheim_config.json": {
+        "cesm_params": {
+            "start_year": 2020,
+            "end_year": 2030,
+            "year_gap": 5,
+            "discount_rate": 0.05,
+            "dt_hours": 1,
+        },
+        "commodity_config": {
+            "heat_commodity_base": "Heat",
+            "electricity": {
+                "price_eur_per_mwh": 100.0,
+                "export_price_eur_per_mwh": -10.0,
+            },
+        },
+        "data_files": {
+            "heat_file": "D_Heat_Household_J.txt",
+            "heat_unit": "MWH",
+            "elec_profile_file": "corrected_eletricity_demand_2016.txt",
+        },
+        "pipe_config": {
+            "loss_fraction": 0.01,
+            "cap_max_mw": 10.0,
+            "lifetime_years": 30,
+            "opex_eur_per_mwh": 0.0,
+            "capex_eur_per_mw": 50000.0,
+        },
+        "boiler_config": {
+            "small_scale": {
+                "eta": 0.95,
+                "capex_eur_per_mw": 11000.0,
+                "opex_eur_per_mw": 0.0,
+                "opex_eur_per_mwh": 0.0,
+                "cap_max_mw": 0.1,
+                "lifetime_years": 30,
+            },
+            "large_scale": {
+                "eta": 0.96,
+                "capex_eur_per_mw": 10000.0,
+                "opex_eur_per_mw": 0.0,
+                "opex_eur_per_mwh": 0.0,
+                "out_frac_min": 0.5,
+                "cap_min_mw": 0.04,
+                "cap_max_mw": 0.85,
+                "lifetime_years": 30,
+            },
+        },
+        "network": {
+            "edge_strategy": "mst",
+            "min_shared_border_m": 0.0,
+            "max_pipes_per_district": None,
+            "neighbor_distance_m": None,
+        },
+    },
+    "eb_template.json": {
+        "conversion_process_name": "ElectricBoiler",
+        "commodity_in": "Electricity",
+        "commodity_out": "Heat",
+        "efficiency": 0.95,
+        "technical_availability": 1.0,
+        "technical_lifetime": 30,
+        "cap_min": 0.0,
+        "cap_max": 100.0,
+        "max_eout": 1_000_000.0,
+        "capex_cost_power": 1_200_000.0,
+        "opex_cost_power": 15_000.0,
+        "opex_cost_energy": 0.5,
+    },
+    "pipe_template.json": {
+        "conversion_process_name": "Pipe",
+        "commodity_in": "Heat",
+        "commodity_out": "Heat",
+        "efficiency": 0.99,
+        "technical_availability": 1.0,
+        "technical_lifetime": 30,
+        "cap_max": 1_000_000_000.0,
+        "max_eout": 1_000_000_000_000.0,
+        "opex_cost_energy": 1.0,
+        "capex_cost_power": 1000.0,
+    },
+}
+
 
 def load_cesm_template(name: str) -> Optional[Dict[str, Any]]:
-    """Load a CESM template by name.
-    
-    Args:
-        name: Template file name (with .json extension)
-        
-    Returns:
-        Template dict if found, None otherwise
-    """
-    template_path = get_cesm_templates_dir() / name
+    """Return a template by name, preferring the file system but falling back to built-ins."""
+    template_path = Path(__file__).parent / name
     if template_path.exists():
-        return json.loads(template_path.read_text(encoding='utf-8'))
-    return None
+        return json.loads(template_path.read_text(encoding="utf-8"))
+    return BUILTIN_TEMPLATES.get(name)
+
 
 def merge_with_template(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
     """Deep merge a template with override values.

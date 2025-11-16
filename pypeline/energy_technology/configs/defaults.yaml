@@ -1,0 +1,23 @@
+defaults:
+  efficiency: 1.0
+  technical_lifetime: 30
+  opex_cost_energy: 0.0
+  opex_cost_power: 0.0
+  capex_cost_power: 0.0
+
+categories:
+  grid:
+    efficiency: 1.0
+    technical_lifetime: 30
+    opex_cost_energy: 0.0
+    opex_cost_power: 0.0
+    capex_cost_power: 0.0
+
+# this is needed since cesm does not have the tools to decide how many units it actually needs 
+# and otherwise by default uses aggregates.
+# there is a base cost o every unit, the optimal choce depends on that cost per unit.
+stages:
+  stage1:
+    max_units: 20
+  stage3:
+    max_units: 10
