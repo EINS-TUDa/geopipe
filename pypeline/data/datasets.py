@@ -3,8 +3,9 @@ from typing import Any
 from enum import Enum
 from shapely.geometry import shape
 
-from pypeline.data.dataset import Dataset, SpatialDataset, TemporalDataset
+from pypeline.data.dataset import Dataset, SpatialDataset, TemporalDataset, SimpleDataset
 from pypeline.data.data_registry import default_data_registry
+from pypeline.energy_system.unit import UnitEnum
 import geopandas as gpd
 import pandas as pd
 import requests
@@ -140,17 +141,13 @@ class ResidentialHeatDemandProfile(TemporalDataset):
             return self.data.iloc[:, 0]
 
 @default_data_registry
-class ResidentialElectricityDemand(Dataset):
-    def __init__(self, path: str = None):
+class ResidentialElectricityDemand(SimpleDataset):
+    def __init__(self):
         super().__init__(
-            types=["residential_electricity"],
-            path=path)
-
-    def load_data(self) -> pd.Series:
-        return None
-
-    def query(self, query: dict) -> float:
-        return 10000
+            keys=["residential_electricity"],
+            data=10000,
+            unit=UnitEnum.KWH,
+        )
 
 @default_data_registry
 class ResidentialElectricityDemandProfile(TemporalDataset):

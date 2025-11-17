@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Optional, Callable
 import geopandas as gpd
 import pandas as pd
@@ -178,11 +179,18 @@ class FileDataset(Dataset):
             regional_validity=regional_validity,
             query_function=query_function
         )
-        self.file_path = file_path
+        resolved_path = Path(file_path)
+        self.file_path = str(resolved_path)
+        self.path = resolved_path
         self.load_data_kwargs = load_data_kwargs if load_data_kwargs is not None else {}
         self._cached_data: Optional[pd.DataFrame | gpd.GeoDataFrame] = None
 
-    def _load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
+    @property
+    def data(self) -> pd.DataFrame | gpd.GeoDataFrame:
+        """Expose cached data via attribute-style access used by legacy datasets."""
+        return self.get_data()
+
+    def load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Load data from file. Override this method in subclasses
         for specific file format handling.
@@ -199,7 +207,7 @@ class FileDataset(Dataset):
         Data is only loaded once and then cached.
         """
         if self._cached_data is None:
-            self._cached_data = self._load_data()
+            self._cached_data = self.load_data()
         return self._cached_data
 
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
@@ -212,6 +220,65 @@ class FileDataset(Dataset):
     def is_available(self) -> bool:
         import os
         return os.path.exists(self.file_path)
+
+
+class SpatialDataset(FileDataset):
+    """Typed dataset helper for geospatial sources with CRS tracking."""
+
+    def __init__(
+        self,
+        types: list[str],
+        path: str,
+        crs: Optional[str] = None,
+        unit: Optional[UnitEnum] = None,
+        priority: int = 10,
+        regional_validity: Optional[gpd.GeoDataFrame] = None,
+        query_function: Optional[Callable] = None,
+    ):
+        super().__init__(
+            keys=types,
+            file_path=path,
+            query_function=query_function,
+            unit=unit,
+            priority=priority,
+            regional_validity=regional_validity,
+        )
+        self.types = types
+        self.crs = crs
+
+    def is_type(self, type_: str) -> bool:
+        return type_ in self.types
+
+    def check(self, type_: str, region: Optional[gpd.GeoDataFrame] = None) -> None:
+        if not self.is_type(type_):
+            raise ValueError(f"Unsupported type '{type_}' for {self.__class__.__name__}")
+        if region is not None and self.crs and region.crs is None:
+            raise ValueError("Region GeoDataFrame must define a CRS for spatial datasets")
+
+
+class TemporalDataset(FileDataset):
+    """Typed dataset helper for timeseries sources."""
+
+    def __init__(
+        self,
+        types: list[str],
+        path: str,
+        unit: Optional[UnitEnum] = None,
+        priority: int = 10,
+        query_function: Optional[Callable] = None,
+    ):
+        super().__init__(
+            keys=types,
+            file_path=path,
+            query_function=query_function,
+            unit=unit,
+            priority=priority,
+        )
+        self.types = types
+
+    def check(self, type_: str) -> None:
+        if type_ not in self.types:
+            raise ValueError(f"Unsupported type '{type_}' for {self.__class__.__name__}")
 
 
 class CSVDataset(FileDataset):
@@ -239,7 +306,7 @@ class CSVDataset(FileDataset):
             regional_validity=regional_validity
         )
 
-    def _load_data(self) -> pd.Series:
+    def load_data(self) -> pd.Series:
         """
         Load CSV data and return as a Series (raveled DataFrame).
         """

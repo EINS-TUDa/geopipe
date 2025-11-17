@@ -11,6 +11,7 @@ from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_technology.configs import register_default_technologies
 from pypeline.optimization.om_adapter import build_om_from_es
 from tools.cesm_plugin import CESMBackend, write_cesm_inputs_from_data
+from pypeline.data.default_registry import get_default_data_registry
 
 def must_exist(p: Path, what: str) -> None:
     if not p.exists():
@@ -19,7 +20,7 @@ def must_exist(p: Path, what: str) -> None:
 def main():
     tech_reg = TechnologyRegistry()
     register_default_technologies(tech_reg)
-    data_reg = DataRegistry();       data_reg.load_from_default()
+    data_reg = get_default_data_registry()
     polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
     polygons = gpd.read_file(Path(polygons_path))
 

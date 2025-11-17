@@ -14,6 +14,15 @@ import importlib
 from pypeline.data.dataset import Dataset
 
 
+def default_data_registry(cls):
+    """Class decorator that auto-registers datasets with the default registry."""
+    from pypeline.data.default_registry import get_default_data_registry
+
+    registry = get_default_data_registry()
+    registry.register(cls())
+    return cls
+
+
 class DataRegistry:
     """
     Central registry for all Datasets.
@@ -88,7 +97,7 @@ class DataRegistry:
         Returns:
             Query result from the best available dataset
         """
-        key = query.get("key")
+        key = query.get("key") or query.get("type")
         if not key:
             raise ValueError("'key' must be specified in the query.")
 
