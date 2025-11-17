@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from shapely.geometry import Point
 import matplotlib.cm as cm
+import contextily as ctx
 
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.optimization.solver import Results
@@ -10,7 +11,7 @@ class EnergySystemPlotter:
     def __init__(self, energy_system: EnergySystem):
         self.energy_system = energy_system
 
-    def plot(self, demand_name: str | None = None, kind: str = "energy"):
+    def plot(self, demand_name: str | None = "residential_heat", kind: str = "energy"):
         if kind not in ["energy", "power"]:
             raise ValueError("kind must be either 'energy' or 'power'")
 
@@ -24,8 +25,8 @@ class EnergySystemPlotter:
 
         # Plot each region's polygon
         for region in self.energy_system.regions:
-            region.polygon.boundary.plot(ax=ax, edgecolor="black", zorder=1)
-            region.polygon.plot(ax=ax, alpha=0.3, color="grey")
+            region.polygon.boundary.plot(ax=ax, edgecolor="black", linewidth=2, zorder=2)
+            region.polygon.plot(ax=ax, alpha=0.5, color="grey", zorder=1)
 
             # If demand_name is provided, process the demand data
             if demand_name:
@@ -81,7 +82,7 @@ class EnergySystemPlotter:
                             wedgeprops={"width": pie_radius / 1.5, 'linewidth': 2, 'edgecolor': 'white'}
                         )
 
-                        [w.set_zorder(2) for w in wedge]
+                        [w.set_zorder(3) for w in wedge]
 
                         # Add the demand value as text below the pie chart
                         if kind == "energy":
@@ -90,7 +91,7 @@ class EnergySystemPlotter:
                                 f"Demand: {demand_value / 1000:.0f} MWh",
                                 ha="center",
                                 fontsize=10,
-                                zorder=3
+                                zorder=4
                             )
                         elif kind == "power":
                             ax.text(
@@ -98,8 +99,14 @@ class EnergySystemPlotter:
                                 f"Demand: {demand_value:.2f} kW",
                                 ha="center",
                                 fontsize=10,
-                                zorder=3
+                                zorder=4
                             )
+
+        # Add OpenStreetMap basemap
+        try:
+            ctx.add_basemap(ax, crs=self.energy_system.regions[0].polygon.crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7, zorder=0)
+        except Exception as e:
+            print(f"Warning: Could not add basemap: {e}")
 
         # Add a legend for the technologies
         legend_elements = [Patch(facecolor=color, label=tech) for tech, color in color_map.items()]

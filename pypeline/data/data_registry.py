@@ -1,67 +1,106 @@
+"""
+DataRegistry - Central management of all Datasets.
+
+The Registry manages all available Datasets and routes queries
+to the appropriate Dataset (based on type, region, and priority).
+"""
+
 from collections import defaultdict
+from typing import Optional
+import geopandas as gpd
+import yaml
+import importlib
 
 from pypeline.data.dataset import Dataset
-import geopandas as gpd
 
 
 class DataRegistry:
+    """
+    Central registry for all Datasets.
+
+    The Registry:
+    - Manages all registered Datasets
+    - Sorts by priority and registration order
+    - Routes queries to the best available Dataset
+    """
+
     def __init__(self):
         self._type_to_datasets: dict[str, list[Dataset]] = defaultdict(list)
+        self._registration_counter: int = 0
 
-    def register(self, dataset: Dataset):
+    def register(self, dataset: Dataset) -> None:
+        """
+        Registers a Dataset.
+        """
         if not isinstance(dataset, Dataset):
             raise TypeError(f"{dataset} is not an instance of Dataset")
-        if not isinstance(dataset.types, list):
-            raise TypeError("Dataset types must be a list of strings.")
-        for type_ in dataset.types:
+
+        # Store registration order
+        dataset._registration_order = self._registration_counter
+        self._registration_counter += 1
+
+        # Add to all types
+        for type_ in dataset.keys:
             self._type_to_datasets[type_].append(dataset)
 
-    def get_datasets(self, type_: str, region: gpd.GeoDataFrame = None) -> list[Dataset]:
-        candidates = self._type_to_datasets.get(type_, [])
+        # Sort by priority (higher first) and registration order
+        self._sort_datasets()
+
+    def _sort_datasets(self) -> None:
+        """Sorts all datasets by priority (higher first) and registration order."""
+        for datasets in self._type_to_datasets.values():
+            datasets.sort(key=lambda ds: (-ds.priority, ds._registration_order))
+
+    def get_datasets(
+        self,
+        key: Optional[str] = None,
+        region: Optional[gpd.GeoDataFrame] = None
+        ) -> list[Dataset]:
+        """
+        Returns all datasets for a type (optionally filtered by region and key).
+
+        Args:
+            key: The requested data type
+            region: Optional query region
+
+        Returns:
+            List of datasets, sorted by priority
+        """
+        if key is None:
+            # all datasets
+            candidates = [ds for datasets in self._type_to_datasets.values() for ds in datasets]
+        else:
+            candidates = self._type_to_datasets[key]
+
         if region is None:
             return candidates
-        # Filter datasets applicable in the query region
+
+        # Only return datasets that are valid in the region
         return [ds for ds in candidates if ds.is_in_region(region)]
 
     def query(self, query: dict):
         """
-        query dict keys:
-          - 'type': str
-          - 'region': GeoDataFrame
-          - ...other params
+        Executes a query and returns the result from the best dataset.
+
+        Args:
+            query: Dictionary with at least 'key', optionally 'region' and other parameters
+
+        Returns:
+            Query result from the best available dataset
         """
-        type_ = query.get("type")
+        key = query.get("key")
+        if not key:
+            raise ValueError("'key' must be specified in the query.")
+
         region = query.get("region")
-        if not type_ :
-            raise ValueError("'type' must be specified in the query.")
+        datasets = self.get_datasets(key, region)
 
-        datasets = self.get_datasets(query["type"], region)
         if not datasets:
-            raise LookupError(f"No datasets found for type '{type_}' in region '{region}'.")
+            region_info = f" in region '{region}'" if region is not None else ""
+            raise LookupError(f"No datasets found for key '{key}'{region_info}.")
 
-        # return the first dataset's query result:
+        # The first dataset has the highest priority
         return datasets[0].query(query)
 
-    def load_from_default(self, allowed_types: list[str] = None):
-        for cls in DEFAULT_DATA_REGISTRY.get_all():
-            instance = cls()
-            if allowed_types is None or any(t in allowed_types for t in instance.types):
-                self.register(instance)
 
 
-class DefaultDataRegistry:
-    # stores classes while DataRegistry stores instances so that data is only loaded if needed
-    def __init__(self):
-        self._registry: list[type[Dataset]] = []
-
-    def register(self, dataset_cls: type[Dataset]):
-        self._registry.append(dataset_cls)
-
-    def get_all(self) -> list[type[Dataset]]:
-        return self._registry
-
-DEFAULT_DATA_REGISTRY = DefaultDataRegistry()
-
-def default_data_registry(cls):
-    DEFAULT_DATA_REGISTRY.register(cls)
-    return cls

@@ -11,28 +11,13 @@ PYthon-based data piPELINe for Energy system modeling
     ```
     cd data_pipeline_esm
     ```
-3. Initialize and update submodules
+3. Initialize and update submodules (make sure to be on correct branch which contains the submodule)
     ``` 
     git submodule update --init --recursive
     ```
-4. Create an environment
-    ```
-    python -m venv .venv
-    ```
-5. Activate the environment
-    ```
-    .venv/Scripts/activate
-    ```
-6. Install the package
-    ```
-    pip install -e . 
-    ```
-    For development, use:
-    ```
-    pip install -e .[dev]
-7. Install the submodule
-    ```
-    pip install -e ./cesm
+4. Setup environment using uv (recommended). Make sure uv is installed (https://docs.astral.sh/uv/getting-started/installation/).
+    ``` 
+    uv sync
     ```
 8. (temperory solution) Replace files in /CESM/core with files from /patch_CESM_core (drag and drop).
 

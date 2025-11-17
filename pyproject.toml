@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools", "wheel"]
+requires = ["setuptools<81", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -51,3 +51,6 @@ dev = [
 where = ["."]
 include = ["pypeline*", "tools*"]
 exclude = ["CESM*", "data*", "examples*", "tests*", "docs*"]
+
+[tool.uv.sources]
+cesm = { path = "CESM", editable = true }
