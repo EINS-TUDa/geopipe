@@ -5,7 +5,7 @@ import sys
 import geopandas as gpd
 import sqlite3
 
-from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry
+from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_technology.configs import register_default_technologies
@@ -138,8 +138,4 @@ def main():
         print(f"Plotting failed: {e}")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(e)
-        sys.exit(1)
+    main()

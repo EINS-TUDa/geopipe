@@ -482,70 +482,72 @@ class RegionBuilder:
         localized_map = {base: _localized_name(base, district_id) for base in regional_base_names}
         # Technologies which supply demands
         for r_demand in r_demands:
-            if r_demand.demand.technology_shares_query_params is not None:
-                technologies_supplying = registry.get_by_output_commodity(
-                    commodity=r_demand.demand.commodity_in,
-                    return_type="name",
-                )
-                localized_suppliers = []
-                for tech_name in technologies_supplying:
-                    canonical_name = _canonical_regional_name(tech_name)
-                    if _is_other_district_clone(canonical_name, district_id):
-                        continue
-                    base_name = canonical_name.rsplit("_D", 1)[0] if "_D" in canonical_name else canonical_name
-                    if base_name in regional_base_set and canonical_name == base_name:
-                        localized_suppliers.append(localized_map[base_name])
-                    else:
-                        localized_suppliers.append(canonical_name)
-                technologies_supplying_this_demand = localized_suppliers
-
-                base_query = {"region": polygon, "base_crs": self.base_crs}
-                technology_shares_data = self.data_registry.query(
-                    r_demand.demand.technology_shares_query_params | base_query)
-
-                model_tech_shares = {}
-                for tech_name, share in technology_shares_data.items():
-                    if not tech_name:
-                        continue
-                    canonical_name = _canonical_regional_name(tech_name)
-                    if _is_other_district_clone(canonical_name, district_id):
-                        continue
-                    base_name = canonical_name.rsplit("_D", 1)[0] if "_D" in canonical_name else canonical_name
-                    if base_name in regional_base_set and canonical_name == base_name:
-                        mapped = localized_map[base_name]
-                    else:
-                        mapped = canonical_name
-                    if mapped in technologies_supplying_this_demand:
-                        model_tech_shares[mapped] = share
-
-                total_share = sum(model_tech_shares.values())
-
-                if total_share > 0:
-                    normalized_shares = {tech: share / total_share for tech, share in model_tech_shares.items()}
+            if r_demand.demand.technology_shares_query_params is None:
+                continue
+            # if r_demand.demand.technology_shares_query_params:
+            technologies_supplying = registry.get_by_output_commodity(
+                commodity=r_demand.demand.commodity_in,
+                return_type="name",
+            )
+            localized_suppliers = []
+            for tech_name in technologies_supplying:
+                canonical_name = _canonical_regional_name(tech_name)
+                if _is_other_district_clone(canonical_name, district_id):
+                    continue
+                base_name = canonical_name.rsplit("_D", 1)[0] if "_D" in canonical_name else canonical_name
+                if base_name in regional_base_set and canonical_name == base_name:
+                    localized_suppliers.append(localized_map[base_name])
                 else:
-                    normalized_shares = {tech: 0.0 for tech in model_tech_shares}
-                    if r_demand.demand.default_supply_technology:
-                        default_tech = r_demand.demand.default_supply_technology
-                        canonical_default = _canonical_regional_base(default_tech)
-                        if canonical_default in regional_base_set:
-                            default_tech = localized_map[canonical_default]
-                        if default_tech not in normalized_shares.keys():
-                            raise ValueError(
-                                f"Default supply technology {r_demand.demand.default_supply_technology} not found in "
-                                f"the technology shares for demand {r_demand.demand.demand_type}."
-                            )
-                        normalized_shares[default_tech] = 1.0
+                    localized_suppliers.append(canonical_name)
+            technologies_supplying_this_demand = localized_suppliers
 
-                for tech, share in normalized_shares.items():
-                    initial_energy_output = r_demand.value * share
-                    region_technology = RegionTechnology(
-                        technology=self.technology_registry.get_by_name(tech),
-                        initial_energy_output=initial_energy_output,
-                        initial_capacity= max(r_demand.profile)*initial_energy_output * self.config["cap_factor_ind_technologies"],
-                        output_profile=r_demand.profile,
-                    )
-                    collection.append(region_technology)
-                    technologies_with_shares.add(tech)
+            base_query = {"region": polygon, "base_crs": self.base_crs}
+            technology_shares_data = self.data_registry.query(
+                r_demand.demand.technology_shares_query_params | base_query)
+
+            model_tech_shares = {}
+            for tech_name, share in technology_shares_data.items():
+                if not tech_name:
+                    continue
+                canonical_name = _canonical_regional_name(tech_name)
+                if _is_other_district_clone(canonical_name, district_id):
+                    continue
+                base_name = canonical_name.rsplit("_D", 1)[0] if "_D" in canonical_name else canonical_name
+                if base_name in regional_base_set and canonical_name == base_name:
+                    mapped = localized_map[base_name]
+                else:
+                    mapped = canonical_name
+                if mapped in technologies_supplying_this_demand:
+                    model_tech_shares[mapped] = share
+
+            total_share = sum(model_tech_shares.values())
+
+            if total_share > 0:
+                normalized_shares = {tech: share / total_share for tech, share in model_tech_shares.items()}
+            else:
+                normalized_shares = {tech: 0.0 for tech in model_tech_shares}
+                if r_demand.demand.default_supply_technology:
+                    default_tech = r_demand.demand.default_supply_technology
+                    canonical_default = _canonical_regional_base(default_tech)
+                    if canonical_default in regional_base_set:
+                        default_tech = localized_map[canonical_default]
+                    if default_tech not in normalized_shares.keys():
+                        raise ValueError(
+                            f"Default supply technology {r_demand.demand.default_supply_technology} not found in "
+                            f"the technology shares for demand {r_demand.demand.demand_type}."
+                        )
+                    normalized_shares[default_tech] = 1.0
+
+            for tech, share in normalized_shares.items():
+                initial_energy_output = r_demand.value * share
+                region_technology = RegionTechnology(
+                    technology=self.technology_registry.get_by_name(tech),
+                    initial_energy_output=initial_energy_output,
+                    initial_capacity= max(r_demand.profile)*initial_energy_output * self.config["cap_factor_ind_technologies"],
+                    output_profile=r_demand.profile,
+                )
+                collection.append(region_technology)
+                technologies_with_shares.add(tech)
 
         # Add technologies that do not have shares defined in the data registry
         other_technologies = set(all_technologies) - technologies_with_shares

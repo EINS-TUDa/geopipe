@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Callable
 import geopandas as gpd
@@ -7,6 +8,16 @@ from sqlalchemy import text
 from pypeline.data.database_connection import DatabaseConnection
 from pypeline.energy_system.unit import UnitEnum
 
+class CensusTechnology(Enum):
+    Gas = "Gas"
+    Oil = "Oil"
+    Wood = "Wood"
+    Biomass = "Biomass"
+    Renewable = "Renewable" # Solar, Geothermal, Heatpump
+    Electric = "Electric"
+    Coal = "Coal"
+    District_Heating = "District Heating"
+    NoEnergyCarrier = "No Energy Carrier"
 
 class Dataset(ABC):
     """
@@ -179,9 +190,7 @@ class FileDataset(Dataset):
             regional_validity=regional_validity,
             query_function=query_function
         )
-        resolved_path = Path(file_path)
-        self.file_path = str(resolved_path)
-        self.path = resolved_path
+        self.file_path = Path(file_path)
         self.load_data_kwargs = load_data_kwargs if load_data_kwargs is not None else {}
         self._cached_data: Optional[pd.DataFrame | gpd.GeoDataFrame] = None
 
@@ -190,13 +199,17 @@ class FileDataset(Dataset):
         """Expose cached data via attribute-style access used by legacy datasets."""
         return self.get_data()
 
-    def load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
+    @property
+    def file_path_str(self) -> str:
+        return str(self.file_path)
+
+    def _load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Load data from file. Override this method in subclasses
         for specific file format handling.
         """
         # Try to detect file type and load accordingly
-        if self.file_path.endswith('.geojson') or self.file_path.endswith('.gpkg') or self.file_path.endswith('.shp'):
+        if self.file_path_str.endswith('.geojson') or self.file_path_str.endswith('.gpkg') or self.file_path_str.endswith('.shp'):
             return gpd.read_file(self.file_path, **self.load_data_kwargs)
         else:
             return pd.read_csv(self.file_path, **self.load_data_kwargs)
@@ -207,7 +220,7 @@ class FileDataset(Dataset):
         Data is only loaded once and then cached.
         """
         if self._cached_data is None:
-            self._cached_data = self.load_data()
+            self._cached_data = self._load_data()
         return self._cached_data
 
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
@@ -220,66 +233,6 @@ class FileDataset(Dataset):
     def is_available(self) -> bool:
         import os
         return os.path.exists(self.file_path)
-
-
-class SpatialDataset(FileDataset):
-    """Typed dataset helper for geospatial sources with CRS tracking."""
-
-    def __init__(
-        self,
-        types: list[str],
-        path: str,
-        crs: Optional[str] = None,
-        unit: Optional[UnitEnum] = None,
-        priority: int = 10,
-        regional_validity: Optional[gpd.GeoDataFrame] = None,
-        query_function: Optional[Callable] = None,
-    ):
-        super().__init__(
-            keys=types,
-            file_path=path,
-            query_function=query_function,
-            unit=unit,
-            priority=priority,
-            regional_validity=regional_validity,
-        )
-        self.types = types
-        self.crs = crs
-
-    def is_type(self, type_: str) -> bool:
-        return type_ in self.types
-
-    def check(self, type_: str, region: Optional[gpd.GeoDataFrame] = None) -> None:
-        if not self.is_type(type_):
-            raise ValueError(f"Unsupported type '{type_}' for {self.__class__.__name__}")
-        if region is not None and self.crs and region.crs is None:
-            raise ValueError("Region GeoDataFrame must define a CRS for spatial datasets")
-
-
-class TemporalDataset(FileDataset):
-    """Typed dataset helper for timeseries sources."""
-
-    def __init__(
-        self,
-        types: list[str],
-        path: str,
-        unit: Optional[UnitEnum] = None,
-        priority: int = 10,
-        query_function: Optional[Callable] = None,
-    ):
-        super().__init__(
-            keys=types,
-            file_path=path,
-            query_function=query_function,
-            unit=unit,
-            priority=priority,
-        )
-        self.types = types
-
-    def check(self, type_: str) -> None:
-        if type_ not in self.types:
-            raise ValueError(f"Unsupported type '{type_}' for {self.__class__.__name__}")
-
 
 class CSVDataset(FileDataset):
     """
@@ -306,7 +259,7 @@ class CSVDataset(FileDataset):
             regional_validity=regional_validity
         )
 
-    def load_data(self) -> pd.Series:
+    def _load_data(self) -> pd.Series:
         """
         Load CSV data and return as a Series (raveled DataFrame).
         """

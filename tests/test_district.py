@@ -15,7 +15,7 @@ def test_district_from_bounding_box():
     shares = {
         tech: float(value)
         for tech, value in cen.query(
-            {"region": region, "type": "residential_heat_technology_shares"}
+            {"region": region, "key": "residential_heat_technology_shares"}
         ).items()
     }
 
@@ -41,7 +41,7 @@ def test_district_from_bounding_box():
 def test_residential_yearly_heat_demand():
     region = gpd.read_file(Path("data") / "baublock_bensheim_epsg25832.geojson")
     wh = WaermeatlasHessen()
-    total_heat_demand = wh.query({"region": region, "type": "residential_heat"})
+    total_heat_demand = wh.query({"region": region, "key": "residential_heat"})
     total_heat_demand = round(total_heat_demand, 2)
     correct_heat_demand = 226487.95
     assert total_heat_demand == correct_heat_demand, f"Expected {correct_heat_demand}, got {total_heat_demand}"

@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from pypeline.data.data_registry import DataRegistry
-from pypeline.data.datasets import CensusTechnology
 from pypeline.energy_technology.technology import Technology
 
 
@@ -411,7 +410,7 @@ class HeatExchangerCostAdjustmentRule(RegionRule):
             return region
 
         try:
-            shares = self.data_registry.query({"type": self.dataset_type, "region": polygon})
+            shares = self.data_registry.query({"key": self.dataset_type, "region": polygon})
         except Exception:
             return region
 
