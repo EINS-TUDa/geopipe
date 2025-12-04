@@ -10,7 +10,10 @@ PYthon-based data piPELINe for Energy system modeling
    ```
    git clone https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/
    ```
-2. Change into the directorya_pipeline_esm
+2. Change into the directory 
+    ```
+    cd data_pipeline_esm
+    ```
 3. Initialize and update submodules (make sure to be on correct branch which contains the submodule)
    ```
    git submodule update --init --recursive
