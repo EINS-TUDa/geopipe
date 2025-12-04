@@ -8,7 +8,7 @@ from pypeline.data import (
 from sqlalchemy import text
 
 from pypeline.data.data_utils import get_gdf_from_ags
-from pypeline.data.dataset import SimpleDataset, FileDataset
+from pypeline.data.dataset import SimpleDataset, FileDataset, CensusTechnology
 from pypeline.energy_system.unit import UnitEnum
 
 # Module-level variable for singleton instance
@@ -19,20 +19,17 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
     if query["key"] != "heating_shares":
         raise ValueError("census_grid_query only supports 'heating_types' key")
 
-    name_mapping = {   "gas": "ind_gas_boiler",
-                       "heizoel": "ind_oil_boiler",
-                       "holz_holzpellets": "wood",
-                       "biomasse_biogas": None,
-                       "solar_geothermie_waermepumpen": "ind_heat_pump",
-                       "strom": None,
-                       "kohle": None,
-                       "fernwaerme": "ind_district_heating_connection",
-                       "kein_energietraeger": None}
+    census_names = {"gas": CensusTechnology.Gas,
+                    "heizoel": CensusTechnology.Oil,
+                    "holz_holzpellets": CensusTechnology.Wood,
+                    "biomasse_biogas": CensusTechnology.Biomass,
+                    "solar_geothermie_waermepumpen": CensusTechnology.Renewable,
+                    "strom": CensusTechnology.Electric,
+                    "kohle": CensusTechnology.Coal,
+                    "fernwaerme": CensusTechnology.District_Heating,
+                    "kein_energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    columns = ["heizoel", "biomasse_biogas", "strom", "fernwaerme", "gas",
-               "holz_holzpellets", "solar_geothermie_waermepumpen", "kohle", "kein_energietraeger"]
-
-    columns_sql = ", ".join([f'COALESCE(SUM("{col}"), 0) AS "{col}"' for col in columns])
+    columns_sql = ", ".join([f'COALESCE(SUM("{tech}"), 0) AS "{tech}"' for tech in list(census_names.keys())])
 
     sql_text = text(f"""
         SELECT
@@ -47,16 +44,29 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
     """)
 
     df_shares = dataset.execute_spatial_query(query, sql_text)
+    df_shares = df_shares.rename(columns=census_names)
+    technologies = list(census_names.values())
 
-    total = df_shares[columns].sum(axis=1).iloc[0]
+    total = df_shares[technologies].sum(axis=1).iloc[0]
     if total and total != 0:
-        df_shares[columns] = df_shares[columns] / total
+        df_shares[technologies] = df_shares[technologies] / total
     else:
-        df_shares[columns] = 0
-    heating_shares = df_shares.iloc[0].to_dict()
-    heating_shares = {name_mapping[k]: v for k, v in heating_shares.items() if name_mapping[k] is not None}
+        df_shares[technologies] = 0
+    tech_shares = df_shares.iloc[0].to_dict()
 
-    return heating_shares
+    name_mapping = query.get("name_mapping", {})
+    if query["name_mapping"]:
+        mapped_shares = {v: tech_shares[k] for k,v in name_mapping.items() if v is not None}
+        # ensure values sum to 1
+        total_mapped = sum(mapped_shares.values())
+        if total_mapped > 0:
+            mapped_shares = {k: v / total_mapped for k, v in mapped_shares.items()}
+        else:
+            mapped_shares = {k: 0.0 for k in mapped_shares.keys()}
+
+        tech_shares = mapped_shares
+
+    return tech_shares
 
 
 def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
@@ -95,19 +105,19 @@ def waermeatlas_hessen_query(dataset: FileDataset, query: dict) -> float:
     gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
     return gdf_in_region["qnutzwaerme_2020_kwh"].sum()
 
-def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, float]:
+def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusTechnology, float]:
     if query["key"] != "heating_shares":
         raise ValueError("census_south_hessen_query only supports 'heating_shares' key")
 
-    name_mapping = {   "Gas": "ind_gas_boiler",
-                       "Heizoel": "ind_oil_boiler",
-                       "Holz_Holzpellets": "wood",
-                       "Biomasse_Biogas": None,
-                       "Solar_Geothermie_Waermepumpen": "ind_heat_pump",
-                       "Strom": None,
-                       "Kohle": None,
-                       "Fernwaerme": "ind_district_heating_connection",
-                       "kein_Energietraeger": None}
+    census_names = {   "Gas": CensusTechnology.Gas,
+                       "Heizoel": CensusTechnology.Oil,
+                       "Holz_Holzpellets": CensusTechnology.Wood,
+                       "Biomasse_Biogas": CensusTechnology.Biomass,
+                       "Solar_Geothermie_Waermepumpen": CensusTechnology.Renewable,
+                       "Strom": CensusTechnology.Electric,
+                       "Kohle": CensusTechnology.Coal,
+                       "Fernwaerme": CensusTechnology.District_Heating,
+                       "kein_Energietraeger": CensusTechnology.NoEnergyCarrier}
 
     region: gpd.GeoDataFrame = query["region"]
     region_epsg = region.crs.to_epsg()
@@ -116,10 +126,10 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, fl
     if gdf.crs.to_epsg() != region_epsg:
         gdf = gdf.to_crs(epsg=region_epsg)
 
-    technologies = ["Heizoel", "Biomasse_Biogas", "Strom", "Fernwaerme", "Gas",
-                    "Holz_Holzpellets", "Solar_Geothermie_Waermepumpen", "Kohle", "kein_Energietraeger"]
-
     gdf_in_region = gpd.sjoin(gdf, region, predicate="intersects", how="inner")
+    gdf_in_region = gdf_in_region.rename(columns=census_names)
+
+    technologies = list(census_names.values())
 
     for tech in technologies:
         gdf_in_region[tech] = pd.to_numeric(gdf_in_region[tech], errors='coerce').fillna(0)
@@ -128,13 +138,27 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[str, fl
     for tech in technologies:
         tech_amounts[tech] = gdf_in_region[tech].sum()
     total = sum(tech_amounts.values())
+
     if total == 0:
         tech_shares = {tech: 0.0 for tech in technologies}
     else:
         tech_shares = {tech: amount / total for tech, amount in tech_amounts.items()}
 
-    heating_shares = {name_mapping[k]: float(v) for k, v in tech_shares.items() if name_mapping[k] is not None}
-    return heating_shares
+    tech_shares = {k: float(v) for k, v in tech_shares.items()}
+
+    name_mapping = query.get("name_mapping", {})
+    if query["name_mapping"]:
+        mapped_shares = {v: tech_shares[k] for k,v in name_mapping.items() if v is not None}
+        # ensure values sum to 1
+        total_mapped = sum(mapped_shares.values())
+        if total_mapped > 0:
+            mapped_shares = {k: v / total_mapped for k, v in mapped_shares.items()}
+        else:
+            mapped_shares = {k: 0.0 for k in mapped_shares.keys()}
+
+        tech_shares = mapped_shares
+
+    return tech_shares
 
 
 def _create_default_datasets() -> list:

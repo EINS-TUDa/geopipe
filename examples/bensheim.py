@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry, EnergySystemRuleBook
+from pypeline.energy_technology.configs import register_default_technologies
 import geopandas as gpd
 
 
 technology_registry = TechnologyRegistry()
-technology_registry.load_from_default()
+register_default_technologies(technology_registry)
 
 data_registry = DataRegistry()
 data_registry.load_from_default()

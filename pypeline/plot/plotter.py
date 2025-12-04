@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.patches import Patch
 from shapely.geometry import Point
 import matplotlib.cm as cm
@@ -21,7 +22,9 @@ class EnergySystemPlotter:
         all_technologies = {r_tech.technology.name for region in self.energy_system.regions for r_tech in region.region_technologies}
         # sort alphabetically by key
         all_technologies = sorted(all_technologies)
-        color_map = {tech: color for tech, color in zip(all_technologies, cm.Set2.colors)}
+        cmap = cm.get_cmap('tab20')  # hat 20 Farben
+        colors = [cmap(i) for i in np.linspace(0, 1, len(all_technologies))]
+        color_map = dict(zip(all_technologies, colors))
 
         # Plot each region's polygon
         for region in self.energy_system.regions:

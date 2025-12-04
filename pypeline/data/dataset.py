@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from enum import Enum
+from pathlib import Path
 from typing import Any, Optional, Callable
 import geopandas as gpd
 import pandas as pd
@@ -6,6 +8,16 @@ from sqlalchemy import text
 from pypeline.data.database_connection import DatabaseConnection
 from pypeline.energy_system.unit import UnitEnum
 
+class CensusTechnology(Enum):
+    Gas = "Gas"
+    Oil = "Oil"
+    Wood = "Wood"
+    Biomass = "Biomass"
+    Renewable = "Renewable" # Solar, Geothermal, Heatpump
+    Electric = "Electric"
+    Coal = "Coal"
+    District_Heating = "District Heating"
+    NoEnergyCarrier = "No Energy Carrier"
 
 class Dataset(ABC):
     """
@@ -178,9 +190,18 @@ class FileDataset(Dataset):
             regional_validity=regional_validity,
             query_function=query_function
         )
-        self.file_path = file_path
+        self.file_path = Path(file_path)
         self.load_data_kwargs = load_data_kwargs if load_data_kwargs is not None else {}
         self._cached_data: Optional[pd.DataFrame | gpd.GeoDataFrame] = None
+
+    @property
+    def data(self) -> pd.DataFrame | gpd.GeoDataFrame:
+        """Expose cached data via attribute-style access used by legacy datasets."""
+        return self.get_data()
+
+    @property
+    def file_path_str(self) -> str:
+        return str(self.file_path)
 
     def _load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
@@ -188,7 +209,7 @@ class FileDataset(Dataset):
         for specific file format handling.
         """
         # Try to detect file type and load accordingly
-        if self.file_path.endswith('.geojson') or self.file_path.endswith('.gpkg') or self.file_path.endswith('.shp'):
+        if self.file_path_str.endswith('.geojson') or self.file_path_str.endswith('.gpkg') or self.file_path_str.endswith('.shp'):
             return gpd.read_file(self.file_path, **self.load_data_kwargs)
         else:
             return pd.read_csv(self.file_path, **self.load_data_kwargs)
@@ -212,7 +233,6 @@ class FileDataset(Dataset):
     def is_available(self) -> bool:
         import os
         return os.path.exists(self.file_path)
-
 
 class CSVDataset(FileDataset):
     """

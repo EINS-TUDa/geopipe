@@ -39,3 +39,7 @@ class RegionDemand:
             self.profile = self.profile / self.profile.sum()
         else:
             f"Time series profile for Demand {self.demand.demand_type} is empty or None. "
+
+    def annual_value(self) -> float:
+        """Return the annual energy requirement in MWh, defaulting to 0 when unset."""
+        return float(self.value) if self.value is not None else 0.0

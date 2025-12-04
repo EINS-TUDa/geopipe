@@ -1,11 +1,168 @@
+from __future__ import annotations
+
 from pypeline.data.data_registry import DataRegistry
 from pypeline.energy_system.demand import Demand, RegionDemand
 from pypeline.energy_system.rule_book import RegionRuleBook
 import geopandas as gpd
 
-from pypeline.energy_system.technology import Technology, RegionTechnology, TechnologyDependencyManager, \
-    TechnologyRequirement
-from pypeline.energy_system.technology_registry import TechnologyRegistry
+from pypeline.energy_technology.technology import (
+    Technology,
+    RegionTechnology,
+    TechnologyDependencyManager,
+    TechnologyRequirement,
+)
+from pypeline.energy_technology.technology_registry import (
+    TechnologyRegistry,
+    TechnologyNotFoundError,
+)
+
+
+HEAT_EXCHANGER_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
+PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
+REGIONAL_TECH_ALIAS_MAP: dict[str, tuple[str, ...]] = {PRIMARY_HEAT_EXCHANGER: HEAT_EXCHANGER_NAMES[1:]}
+
+CENTRAL_TECH_PREFIX = "cen_"
+
+
+def _is_central_base(name: str) -> bool:
+    return name.startswith(CENTRAL_TECH_PREFIX)
+
+
+def _dedupe_preserve_order(names: list[str]) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        ordered.append(name)
+    return tuple(ordered)
+
+
+def _central_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for name in registry.get_all(return_type="name"):
+        if "_D" in name or "_U" in name:
+            continue
+        canonical = _canonical_regional_base(name)
+        if _is_central_base(canonical) and registry.has_technology(canonical):
+            candidates.append(canonical)
+    return _dedupe_preserve_order(candidates)
+
+
+def _regional_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
+    base_names: list[str] = list(_central_base_names(registry))
+    for static_name in ("heat_grid", PRIMARY_HEAT_EXCHANGER):
+        if registry.has_technology(static_name):
+            base_names.append(static_name)
+    return _dedupe_preserve_order(base_names)
+
+
+def _all_regional_base_tokens(registry: TechnologyRegistry) -> tuple[str, ...]:
+    tokens: list[str] = list(_regional_base_names(registry))
+    for aliases in REGIONAL_TECH_ALIAS_MAP.values():
+        tokens.extend(aliases)
+    return _dedupe_preserve_order(tokens)
+
+
+def _split_unit_suffix(name: str) -> tuple[str, str | None]:
+    if "_U" not in name:
+        return name, None
+    base, suffix = name.rsplit("_U", 1)
+    if suffix.isdigit():
+        return base, suffix
+    return name, None
+
+
+def _strip_unit_suffix(name: str) -> str:
+    base, _ = _split_unit_suffix(name)
+    return base
+
+
+def _unit_suffix(idx: int) -> str:
+    if idx <= 0:
+        return ""
+    return f"_U{idx}"
+
+
+def _district_suffix(district_id: int) -> str:
+    return f"_D{district_id}"
+
+
+def _split_district_suffix(name: str) -> tuple[str, str | None]:
+    if "_D" not in name:
+        return name, None
+    base, suffix = name.rsplit("_D", 1)
+    if suffix.isdigit():
+        return base, suffix
+    return name, None
+
+
+def _localized_name(base_name: str, district_id: int) -> str:
+    return f"{base_name}{_district_suffix(district_id)}"
+
+
+def _canonical_regional_base(name: str) -> str:
+    for canonical, aliases in REGIONAL_TECH_ALIAS_MAP.items():
+        if name == canonical or name in aliases:
+            return canonical
+    return name
+
+
+def _canonical_regional_name(name: str) -> str:
+    base_no_unit, unit_suffix = _split_unit_suffix(name)
+    if "_D" not in base_no_unit:
+        canonical_base = _canonical_regional_base(base_no_unit)
+        result = canonical_base
+    else:
+        base, suffix = base_no_unit.rsplit("_D", 1)
+        canonical_base = _canonical_regional_base(base)
+        if canonical_base == base:
+            result = base_no_unit
+        else:
+            result = f"{canonical_base}_D{suffix}"
+    if unit_suffix is not None:
+        return f"{result}_U{unit_suffix}"
+    return result
+
+
+def _is_regional_clone(name: str) -> bool:
+    base_no_unit = _strip_unit_suffix(name)
+    base, district_suffix = _split_district_suffix(base_no_unit)
+    if district_suffix is None:
+        return False
+    canonical_base = _canonical_regional_base(base)
+    if _is_central_base(canonical_base):
+        return True
+    return canonical_base in {"heat_grid", PRIMARY_HEAT_EXCHANGER}
+
+
+def _is_other_district_clone(name: str, district_id: int) -> bool:
+    canonical = _canonical_regional_name(name)
+    base_no_unit = _strip_unit_suffix(canonical)
+    base, district_suffix = _split_district_suffix(base_no_unit)
+    if district_suffix is None:
+        return False
+    canonical_base = _canonical_regional_base(base)
+    if not (_is_central_base(canonical_base) or canonical_base in {"heat_grid", PRIMARY_HEAT_EXCHANGER}):
+        return False
+    expected = _localized_name(canonical_base, district_id)
+    return base_no_unit != expected
+
+
+def _safe_int(raw, fallback: int = 0) -> int:
+    if hasattr(raw, "iloc"):
+        try:
+            raw = raw.iloc[0]
+        except Exception:
+            pass
+    try:
+        return int(raw)
+    except Exception:
+        try:
+            return int(float(raw))
+        except Exception:
+            return fallback
 
 
 class Region:
@@ -83,53 +240,317 @@ class RegionBuilder:
             collection.append(region_demand)
         return collection
 
-    def build_technologies(self, polygon: gpd.GeoDataFrame, r_demands: list[RegionDemand]) -> list[RegionTechnology]:
-        collection = []
-        technologies_with_shares = []
-        all_technologies = self.technology_registry.get_all(return_type="name")
+    def _ensure_regional_assets(self, district_id: int) -> None:
+        suffix = _district_suffix(district_id)
+        registry = self.technology_registry
+        regional_base_names = _regional_base_names(registry)
+        regional_base_set = set(regional_base_names)
+
+        # Create localized clones for regional technologies
+        localized: dict[str, str] = {
+            base: _localized_name(base, district_id) for base in regional_base_names
+        }
+
+        for base_name, localized_base in localized.items():
+            if not registry.has_technology(base_name):
+                continue
+            base_tech = registry.get_by_name(base_name)
+            max_units_attr = base_tech.max_units
+            unlimited = False
+            units = 1
+            if max_units_attr is None:
+                unlimited = True
+            else:
+                try:
+                    units = max(1, int(max_units_attr))
+                except Exception:
+                    unlimited = True
+                    units = 1
+
+            existing_names = self._clone_names(localized_base)
+
+            for extra_name in existing_names[1:]:
+                try:
+                    registry.remove(extra_name)
+                except TechnologyNotFoundError:
+                    continue
+            for alias in REGIONAL_TECH_ALIAS_MAP.get(base_name, ()):
+                alias_base = _localized_name(alias, district_id)
+                alias_names = self._clone_names(alias_base)
+                for extra_name in alias_names[1:]:
+                    try:
+                        registry.remove(extra_name)
+                    except TechnologyNotFoundError:
+                        continue
+
+            if unlimited:
+                self._ensure_clone(
+                    base_name=base_name,
+                    base_tech=base_tech,
+                    district_id=district_id,
+                    unit_idx=0,
+                    suffix=suffix,
+                    unlimited=True,
+                    total_units=None,
+                )
+                continue
+
+            self._ensure_clone(
+                base_name=base_name,
+                base_tech=base_tech,
+                district_id=district_id,
+                unit_idx=0,
+                suffix=suffix,
+                unlimited=False,
+                total_units=units,
+            )
+
+        if not self.technology_dependency_manager:
+            return
+
+        deps = self.technology_dependency_manager.dependencies
+        for base_name, localized_name in localized.items():
+            if localized_name in deps:
+                continue
+            base_requirements = deps.get(base_name, [])
+            if not base_requirements:
+                continue
+            mapped: list[TechnologyRequirement] = []
+            for requirement in base_requirements:
+                target_name = _canonical_regional_name(requirement.technology_name)
+                if base_name == "heat_grid" and target_name == "cen_heat_pump":
+                    # Allow heat grids to draw from shared central plants via pipes instead of
+                    # enforcing a local central heat pump clone per district.
+                    continue
+                base_target = target_name.rsplit("_D", 1)[0]
+                if base_target in regional_base_set and target_name == base_target:
+                    target_name = _localized_name(base_target, district_id)
+                elif _is_regional_clone(target_name):
+                    if _is_other_district_clone(target_name, district_id):
+                        continue
+                mapped.append(
+                    TechnologyRequirement(
+                        technology_name=target_name,
+                        capacity_factor=requirement.capacity_factor,
+                        share=requirement.share,
+                    )
+                )
+            if mapped:
+                deps[localized_name] = mapped
+
+    def _clone_names(self, localized_base: str) -> list[str]:
+        registry = self.technology_registry
+        names: list[str] = []
+        idx = 0
+        while True:
+            name = f"{localized_base}{_unit_suffix(idx)}"
+            if not registry.has_technology(name):
+                break
+            names.append(name)
+            idx += 1
+        return names
+
+    def _ensure_clone(
+        self,
+        base_name: str,
+        base_tech: Technology,
+        district_id: int,
+        unit_idx: int,
+        suffix: str,
+        unlimited: bool,
+        total_units: int | None,
+    ) -> None:
+        registry = self.technology_registry
+        localized_base = _localized_name(base_name, district_id)
+        suffix_unit = _unit_suffix(unit_idx)
+        localized_name = f"{localized_base}{suffix_unit}"
+
+        commodity_in = base_tech.commodity_in
+        commodity_out = base_tech.commodity_out
+
+        if base_name == "heat_grid":
+            commodity_in = f"district_heat_in{suffix}"
+            commodity_out = f"district_heat_out{suffix}"
+        elif _is_central_base(base_name):
+            commodity_out = f"district_heat_in{suffix}"
+        elif base_name == PRIMARY_HEAT_EXCHANGER:
+            commodity_in = f"district_heat_out{suffix}"
+
+        cap_max_value = None if unlimited else base_tech.cap_max
+        max_units_value = None if unlimited else total_units
+        cap_min_value = base_tech.cap_min
+        availability = base_tech.availability_profile
+        capex_base = base_tech.capex_cost_base
+
+        if registry.has_technology(localized_name):
+            clone = registry.get_by_name(localized_name)
+            clone.commodity_in = commodity_in
+            clone.commodity_out = commodity_out
+            clone.efficiency = base_tech.efficiency
+            clone.technical_lifetime = base_tech.technical_lifetime
+            clone.opex_cost_energy = base_tech.opex_cost_energy
+            clone.opex_cost_power = base_tech.opex_cost_power
+            clone.capex_cost_power = base_tech.capex_cost_power
+            clone.capex_cost_base = capex_base
+            clone.cap_min = cap_min_value
+            clone.cap_max = cap_max_value
+            clone.max_units = max_units_value
+            clone.availability_profile = availability
+            clone.stage = base_tech.stage
+            clone.category = base_tech.category
+        else:
+            clone = Technology(
+                name=localized_name,
+                commodity_in=commodity_in,
+                commodity_out=commodity_out,
+                efficiency=base_tech.efficiency,
+                technical_lifetime=base_tech.technical_lifetime,
+                opex_cost_energy=base_tech.opex_cost_energy,
+                opex_cost_power=base_tech.opex_cost_power,
+                capex_cost_power=base_tech.capex_cost_power,
+                capex_cost_base=capex_base,
+                cap_min=cap_min_value,
+                cap_max=cap_max_value,
+                max_units=max_units_value,
+                availability_profile=availability,
+                stage=base_tech.stage,
+                category=base_tech.category,
+            )
+            registry.register(clone)
+
+        for alias in REGIONAL_TECH_ALIAS_MAP.get(base_name, ()):  # legacy aliases for compatibility
+            alias_base = _localized_name(alias, district_id)
+            alias_name = f"{alias_base}{suffix_unit}"
+            if registry.has_technology(alias_name):
+                alias_clone = registry.get_by_name(alias_name)
+                alias_clone.commodity_in = clone.commodity_in
+                alias_clone.commodity_out = clone.commodity_out
+                alias_clone.efficiency = clone.efficiency
+                alias_clone.technical_lifetime = clone.technical_lifetime
+                alias_clone.opex_cost_energy = clone.opex_cost_energy
+                alias_clone.opex_cost_power = clone.opex_cost_power
+                alias_clone.capex_cost_power = clone.capex_cost_power
+                alias_clone.capex_cost_base = clone.capex_cost_base
+                alias_clone.cap_min = clone.cap_min
+                alias_clone.cap_max = clone.cap_max
+                alias_clone.max_units = clone.max_units
+                alias_clone.availability_profile = clone.availability_profile
+                alias_clone.stage = clone.stage
+                alias_clone.category = clone.category
+            else:
+                alias_clone = Technology(
+                    name=alias_name,
+                    commodity_in=clone.commodity_in,
+                    commodity_out=clone.commodity_out,
+                    efficiency=clone.efficiency,
+                    technical_lifetime=clone.technical_lifetime,
+                    opex_cost_energy=clone.opex_cost_energy,
+                    opex_cost_power=clone.opex_cost_power,
+                    capex_cost_power=clone.capex_cost_power,
+                    capex_cost_base=clone.capex_cost_base,
+                    cap_min=clone.cap_min,
+                    cap_max=clone.cap_max,
+                    max_units=clone.max_units,
+                    availability_profile=clone.availability_profile,
+                    stage=clone.stage,
+                    category=clone.category,
+                )
+                registry.register(alias_clone)
+
+    def build_technologies(self, polygon: gpd.GeoDataFrame, r_demands: list[RegionDemand], district_id: int) -> list[RegionTechnology]:
+        collection: list[RegionTechnology] = []
+        technologies_with_shares: set[str] = set()
+        suffix = _district_suffix(district_id)
+        registry = self.technology_registry
+        raw_names = registry.get_all(return_type="name")
+        all_regional_tokens = set(_all_regional_base_tokens(registry))
+        regional_base_names = _regional_base_names(registry)
+        regional_base_set = set(regional_base_names)
+        all_technologies: list[str] = []
+        seen_names: set[str] = set()
+        for name in raw_names:
+            if name in all_regional_tokens:
+                continue
+            if _is_other_district_clone(name, district_id):
+                continue
+            canonical_name = _canonical_regional_name(name)
+            lookup_name = canonical_name if registry.has_technology(canonical_name) else name
+            if lookup_name in seen_names:
+                continue
+            seen_names.add(lookup_name)
+            all_technologies.append(lookup_name)
+        localized_map = {base: _localized_name(base, district_id) for base in regional_base_names}
         # Technologies which supply demands
         for r_demand in r_demands:
-            if r_demand.demand.technology_shares_query_params is not None:
-                technologies_supplying_this_demand = (self.technology_registry.
-                                                      get_by_output_commodity(commodity=r_demand.demand.commodity_in,
-                                                                              return_type="name"))
-                technologies_with_shares.extend(technologies_supplying_this_demand)
-
-                base_query = {"region": polygon, "base_crs": self.base_crs}
-                technology_shares_data = self.data_registry.query(
-                    r_demand.demand.technology_shares_query_params | base_query)
-
-                model_tech_shares = {
-                    tech_name: share for tech_name, share in technology_shares_data.items()
-                    if tech_name and tech_name in technologies_supplying_this_demand
-                }
-
-                total_share = sum(model_tech_shares.values())
-
-                if total_share > 0:
-                    normalized_shares = {tech: share / total_share for tech, share in model_tech_shares.items()}
+            if r_demand.demand.technology_shares_query_params is None:
+                continue
+            # if r_demand.demand.technology_shares_query_params:
+            technologies_supplying = registry.get_by_output_commodity(
+                commodity=r_demand.demand.commodity_in,
+                return_type="name",
+            )
+            localized_suppliers = []
+            for tech_name in technologies_supplying:
+                canonical_name = _canonical_regional_name(tech_name)
+                if _is_other_district_clone(canonical_name, district_id):
+                    continue
+                base_name = canonical_name.rsplit("_D", 1)[0] if "_D" in canonical_name else canonical_name
+                if base_name in regional_base_set and canonical_name == base_name:
+                    localized_suppliers.append(localized_map[base_name])
                 else:
-                    normalized_shares = {tech: 0.0 for tech in model_tech_shares}
-                    if r_demand.demand.default_supply_technology:
-                        if r_demand.demand.default_supply_technology not in normalized_shares.keys():
-                            raise ValueError(
-                                f"Default supply technology {r_demand.demand.default_supply_technology} not found in "
-                                f"the technology shares for demand {r_demand.demand.demand_type}."
-                            )
-                        normalized_shares[r_demand.demand.default_supply_technology] = 1.0
+                    localized_suppliers.append(canonical_name)
+            technologies_supplying_this_demand = localized_suppliers
 
-                for tech, share in normalized_shares.items():
-                    initial_energy_output = r_demand.value * share
-                    region_technology = RegionTechnology(
-                        technology=self.technology_registry.get_by_name(tech),
-                        initial_energy_output=initial_energy_output,
-                        initial_capacity= max(r_demand.profile)*initial_energy_output * self.config["cap_factor_ind_technologies"],
-                        output_profile=r_demand.profile,
-                    )
-                    collection.append(region_technology)
+            base_query = {"region": polygon, "base_crs": self.base_crs}
+            technology_shares_data = self.data_registry.query(
+                r_demand.demand.technology_shares_query_params | base_query)
+
+            model_tech_shares = {}
+            for tech_name, share in technology_shares_data.items():
+                if not tech_name:
+                    continue
+                canonical_name = _canonical_regional_name(tech_name)
+                if _is_other_district_clone(canonical_name, district_id):
+                    continue
+                base_name = canonical_name.rsplit("_D", 1)[0] if "_D" in canonical_name else canonical_name
+                if base_name in regional_base_set and canonical_name == base_name:
+                    mapped = localized_map[base_name]
+                else:
+                    mapped = canonical_name
+                if mapped in technologies_supplying_this_demand:
+                    model_tech_shares[mapped] = share
+
+            total_share = sum(model_tech_shares.values())
+
+            if total_share > 0:
+                normalized_shares = {tech: share / total_share for tech, share in model_tech_shares.items()}
+            else:
+                normalized_shares = {tech: 0.0 for tech in model_tech_shares}
+                if r_demand.demand.default_supply_technology:
+                    default_tech = r_demand.demand.default_supply_technology
+                    canonical_default = _canonical_regional_base(default_tech)
+                    if canonical_default in regional_base_set:
+                        default_tech = localized_map[canonical_default]
+                    if default_tech not in normalized_shares.keys():
+                        raise ValueError(
+                            f"Default supply technology {r_demand.demand.default_supply_technology} not found in "
+                            f"the technology shares for demand {r_demand.demand.demand_type}."
+                        )
+                    normalized_shares[default_tech] = 1.0
+
+            for tech, share in normalized_shares.items():
+                initial_energy_output = r_demand.value * share
+                region_technology = RegionTechnology(
+                    technology=self.technology_registry.get_by_name(tech),
+                    initial_energy_output=initial_energy_output,
+                    initial_capacity= max(r_demand.profile)*initial_energy_output * self.config["cap_factor_ind_technologies"],
+                    output_profile=r_demand.profile,
+                )
+                collection.append(region_technology)
+                technologies_with_shares.add(tech)
 
         # Add technologies that do not have shares defined in the data registry
-        other_technologies = set(all_technologies) - set(technologies_with_shares)
+        other_technologies = set(all_technologies) - technologies_with_shares
         for tech_name in other_technologies:
             tech = self.technology_registry.get_by_name(tech_name)
             initial_output = 0.0
@@ -152,8 +573,8 @@ class RegionBuilder:
 
                 for req in requirements:
                     required_capacity = tech_capacities[tech_name] * req.capacity_factor * req.share
-                    tech_capacities[
-                        req.technology_name] += required_capacity
+                    tech_capacities.setdefault(req.technology_name, 0.0)
+                    tech_capacities[req.technology_name] += required_capacity
 
             # Update the collection with the new capacities
             for r_tech in collection:
@@ -164,11 +585,13 @@ class RegionBuilder:
         return collection
 
     def build(self, polygon) -> Region:
+        district_id = _safe_int(polygon.get("id"), 0)
         demands = self.build_demands(polygon)
-        technologies = self.build_technologies(polygon, demands)
+        self._ensure_regional_assets(district_id)
+        technologies = self.build_technologies(polygon, demands, district_id)
 
         region = Region(
-            id_=polygon["id"],
+            id_=district_id,
             polygon=polygon,
             region_technologies=technologies,
             region_demands=demands

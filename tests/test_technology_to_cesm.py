@@ -1,6 +1,6 @@
 import math
 
-from pypeline.energy_system.technology import Technology
+from pypeline.energy_technology.technology import Technology
 from tools.cesm_plugin import tech_to_cesms_row
 
 
@@ -33,10 +33,18 @@ def test_to_cesms_row_defaults():
     assert int(row["technical_lifetime"]) == 25
     assert math.isclose(row["opex_cost_energy"], 1.5)
     assert math.isclose(row["capex_cost_power"], 1000.0)
+    assert math.isclose(row["capex_cost_base"], 0.0)
+    assert math.isnan(row["cap_active"])
 
 
 def test_to_cesms_row_overrides():
-    tech = DummyTech(name="Pipe", commodity_in="Heat_D0", commodity_out="Heat_D1", efficiency=0.99)
+    tech = DummyTech(
+        name="Pipe",
+        commodity_in="Heat_D0",
+        commodity_out="Heat_D1",
+        efficiency=0.99,
+        capex_cost_base=2500.0,
+    )
     row = tech_to_cesms_row(
         tech,
         cp_name="Pipe_D0_D1",
@@ -49,3 +57,5 @@ def test_to_cesms_row_overrides():
     assert row["conversion_process_name"] == "Pipe_D0_D1"
     assert row["cap_max"] == 10.0
     assert row["capex_cost_power"] == 50000.0
+    assert math.isclose(row["capex_cost_base"], 2500.0)
+    assert math.isnan(row["cap_active"])
