@@ -10,6 +10,7 @@ from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThr
 from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_technology.configs import register_default_technologies
 from pypeline.optimization.om_adapter import build_om_from_es
+from pypeline.plot.plotter import EnergySystemPlotter
 from tools.cesm_plugin import CESMBackend, write_cesm_inputs_from_data
 from pypeline.data.default_registry import get_default_data_registry
 
@@ -42,6 +43,8 @@ def main():
     esb.set_energy_system_rule_book(rulebook)
 
     es = esb.build()
+    es_plotter = EnergySystemPlotter(es)
+    es_plotter.plot()
     print("Constraints:", getattr(es, "constraints", {}))
 
     model_name    = "Bensheim"
@@ -109,33 +112,26 @@ def main():
     print("Using DB:", solution.results.get("db"))
     print(solution.results)
 
-    try:
-        sys.path.insert(0, str(Path("CESM")))
-        from core.plotter import Plotter, PlotType
-        from core.data_access import DAO
+    from cesm.core.plotter import Plotter, PlotType
+    from cesm.core.data_access import DAO
+    db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
+    conn = sqlite3.connect(str(db_path))
+    dao = DAO(conn)
+    plotter = Plotter(dao)
 
-        db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
-        conn = sqlite3.connect(str(db_path))
-        try:
-            dao = DAO(conn)
-            plotter = Plotter(dao)
+    sankey_fig = plotter.plot_sankey(year=2020)
+    sankey_fig.show()
+    sankey_fig2 = plotter.plot_sankey(year=2030)
+    sankey_fig2.show()
 
-            sankey_fig = plotter.plot_sankey(year=2020)
-            sankey_fig.show()
-            sankey_fig2 = plotter.plot_sankey(year=2030)
-            sankey_fig2.show()
+    # plotter.plot_timeseries(
+    #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
+    #     year=2020,
+    #     commodity="Electricity",
+    # )
 
-            # plotter.plot_timeseries(
-            #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-            #     year=2020,
-            #     commodity="Electricity",
-            # )
-        finally:
-            conn.close()
-    except ModuleNotFoundError:
-        print("Plotting skipped - CESM core is not on PYTHONPATH")
-    except Exception as e:
-        print(f"Plotting failed: {e}")
+    conn.close()
+
 
 if __name__ == "__main__":
     main()

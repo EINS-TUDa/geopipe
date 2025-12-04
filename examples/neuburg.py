@@ -6,7 +6,7 @@ import sqlite3
 
 from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.data.default_registry import get_default_data_registry
-from pypeline.energy_system.catalog import register_default_technologies
+from pypeline.energy_technology.configs import register_default_technologies
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
 from pypeline.optimization.om_adapter import build_om_from_es
@@ -70,21 +70,6 @@ def main():
     elec_profile_file=electricity_file,
     heat_commodity_base="Heat",
 
-    # EB tiers
-    eb_small_eta=0.95,
-    eb_small_capex_eur_per_mw=11000.0,
-    eb_small_opex_eur_per_mw=0.0,
-    eb_small_opex_eur_per_mwh=0.0,
-    eb_small_cap_max_mw=0.1,
-
-    eb_large_eta=0.96,
-    eb_large_capex_eur_per_mw=10000.0,
-    eb_large_opex_eur_per_mw=0.0,
-    eb_large_opex_eur_per_mwh=0.0,
-    eb_large_out_frac_min=0.5,
-    eb_large_cap_min_mw=0.04,
-    eb_large_cap_max_mw=0.85,
-
     # Pipes
     pipe_loss_fraction=0.01,
     pipe_capex_eur_per_mw=50000,
@@ -117,31 +102,25 @@ def main():
 
     solution = backend.optimize(om)
 
-    # Try normal cesm module first (if installed / shimmed), else fall back to local CESM/core paths.
-    try:
-        from cesm import Plotter, PlotType  # type: ignore
-        from cesm import DAO  # type: ignore
-    except ImportError:
-        cesm_root = Path("CESM").resolve()
-        core_dir = cesm_root / "core"
-        for p in (cesm_root, core_dir):
-            sp = str(p)
-            if sp not in sys.path:
-                sys.path.insert(0, sp)
-        from core.plotter import Plotter, PlotType  # type: ignore
-        from core.data_access import DAO  # type: ignore
-
+    from cesm.core.plotter import Plotter, PlotType
+    from cesm.core.data_access import DAO
     db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
     conn = sqlite3.connect(str(db_path))
-    try:
-        dao = DAO(conn)
-        plotter = Plotter(dao)
+    dao = DAO(conn)
+    plotter = Plotter(dao)
 
-        sankey_fig = plotter.plot_sankey(year=2020)
-        sankey_fig.show()
+    sankey_fig = plotter.plot_sankey(year=2020)
+    sankey_fig.show()
+    sankey_fig2 = plotter.plot_sankey(year=2030)
+    sankey_fig2.show()
 
-    finally:
-        conn.close()
+    # plotter.plot_timeseries(
+    #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
+    #     year=2020,
+    #     commodity="Electricity",
+    # )
+
+    conn.close()
 
 if __name__ == "__main__":
     main()

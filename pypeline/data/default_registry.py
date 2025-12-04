@@ -29,9 +29,7 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
                     "fernwaerme": CensusTechnology.District_Heating,
                     "kein_energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    technologies = list(census_names.keys())
-
-    columns_sql = ", ".join([f'COALESCE(SUM("{tech}"), 0) AS "{tech}"' for tech in technologies])
+    columns_sql = ", ".join([f'COALESCE(SUM("{tech}"), 0) AS "{tech}"' for tech in list(census_names.keys())])
 
     sql_text = text(f"""
         SELECT
@@ -46,6 +44,8 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
     """)
 
     df_shares = dataset.execute_spatial_query(query, sql_text)
+    df_shares = df_shares.rename(columns=census_names)
+    technologies = list(census_names.values())
 
     total = df_shares[technologies].sum(axis=1).iloc[0]
     if total and total != 0:

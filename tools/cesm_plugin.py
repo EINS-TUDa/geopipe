@@ -1974,8 +1974,8 @@ def main() -> int:
             if p not in _sys.path:
                 _sys.path.insert(0, p)
   
-    from core.input_parser import Parser  # type: ignore
-    from core.model import Model  # type: ignore
+    from cesm.core.input_parser import Parser  # type: ignore
+    from cesm.core.model import Model  # type: ignore
 
     ap = argparse.ArgumentParser(description="Invoke CESM run using unified plugin.")
     ap.add_argument("--workdir", default=".", help="Project root that contains the CESM/ folder (default: .)")

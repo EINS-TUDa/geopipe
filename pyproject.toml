@@ -13,6 +13,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "cesm",
     "certifi>=2025.4.26",
     "charset-normalizer>=3.4.2",
     "colorama>=0.4.6",
@@ -40,6 +41,11 @@ dependencies = [
     "six>=1.17.0",
     "tzdata>=2025.2",
     "urllib3>=2.4.0",
+    "sqlalchemy>=2.0.44",
+    "osm2geojson>=0.3.1",
+    "psycopg2>=2.9.11",
+    "gurobipy<13.0",
+    "contextily>=1.7.0",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +56,7 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pypeline*", "tools*"]
-exclude = ["CESM*", "data*", "examples*", "tests*", "docs*"]
+exclude = ["data*", "examples*", "tests*", "docs*"]
 
 [tool.uv.sources]
 cesm = { path = "CESM", editable = true }
