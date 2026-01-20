@@ -1,18 +1,17 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry, EnergySystemRuleBook
-from pypeline.energy_technology.configs import register_default_technologies
 import geopandas as gpd
 
 
 technology_registry = TechnologyRegistry()
-register_default_technologies(technology_registry)
+technology_registry.load_from_default()
 
 data_registry = DataRegistry()
 data_registry.load_from_default()
 
-polygons = gpd.read_file(Path("data") / "wah_bensheim_4_districts.geojson")
-#polygons = gpd.read_file(Path("data") / "wah_1_polygon_without_census.geojson")
+polygons = gpd.read_file(Path("data/projects/bensheim/wah_bensheim_4_districts.geojson"))
+#polygons = gpd.read_file(Path("data/projects/bensheim/wah_1_polygon_without_census.geojson"))
 
 esb = EnergySystemBuilder()
 esb.set_polygons(polygons)

@@ -1,13 +1,13 @@
 """Unified CESM plugin consolidating backend adapter, runner CLI, and writer utilities.
 
 Public API:
-    - CESMBackend (OptimizationModel adapter)
-    - write_cesm_inputs_minimal_from_om 
-    - write_cesm_inputs_from_data / write_cesm_inputs_multidistrict_from_data
-    - tech_to_cesms_row 
+    - CESMBackend (Optimization Model adapter)
+    - write_cesm_inputs_minimal_from_om
+    - write_cesm_inputs_from_energy_system
+    - tech_to_cesms_row
 """
 from __future__ import annotations
-import argparse, json, math, sqlite3, subprocess, sys, logging
+import argparse, json, math, sqlite3, subprocess, sys, logging, yaml
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -16,14 +16,14 @@ import numpy as np
 import geopandas as gpd 
 
 from pypeline.optimization.solver import OptimizationModel, Solution
-from pypeline.optimization.om_adapter import OMContext
+from pypeline.optimization.om_adapter import OMContext, build_om_from_es
+from pypeline.energy_system.energy_system import EnergySystem
+from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import (
     TechnologyRegistry,
     get_default_technology_registry,
 )
-
-InputWriter = Callable[[OMContext, Path, str, str, str], None]
 PathLike = Union[str, Path]
 
 logger = logging.getLogger(__name__)
@@ -32,8 +32,6 @@ NUMERIC_ERRORS = (TypeError, ValueError)
 
 UNBOUNDED_CAP = 1e9
 UNBOUNDED_ENERGY = 1e12
-
-
 @dataclass
 class _CesmIOPaths:
     techmap_dir: Path
@@ -52,6 +50,56 @@ def _prepare_io_paths(workdir: Path, model_name: str, tss_name: str) -> _CesmIOP
     return _CesmIOPaths(techmap_dir=techmap_dir, timeseries_dir=timeseries_dir, xlsx_path=xlsx_path, tss_file=tss_file)
 
 
+def _load_commodity_prices(
+    config_path: Path | None,
+) -> tuple[dict[str, float], dict[str, float]]:
+    if config_path is None:
+        raise ValueError("commodities_config is required but was None")
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Commodity price config not found: {path}")
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Commodity price config must be a mapping; got {type(cfg)!r} from {path}")
+    grid_cfg = cfg.get("grid_prices")
+    supply_cfg = cfg.get("supply_prices_eur_per_mwh")
+    if not isinstance(grid_cfg, dict) or not isinstance(supply_cfg, dict):
+        raise ValueError(f"Commodity price config requires grid_prices and supply_prices_eur_per_mwh mappings in {path}")
+    try:
+        grid_prices = {str(k): float(v) for k, v in grid_cfg.items()}
+        supply_prices = {str(k).lower(): float(v) for k, v in supply_cfg.items()}
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Non-numeric commodity price in {path}") from exc
+    return grid_prices, supply_prices
+
+
+def _load_edge_settings(config_path: Path | None) -> dict[str, Any]:
+    if config_path is None:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(cfg, dict):
+        return {}
+    edges_cfg = cfg.get("edge_defaults", {})
+    return edges_cfg if isinstance(edges_cfg, dict) else {}
+
+
+def _resolve_commodities_config(path_like: PathLike | None) -> Path | None:
+    if path_like is not None:
+        return Path(path_like)
+    root = Path(__file__).resolve().parents[1]
+    candidates = [
+        root / "pypeline" / "energy_technology" / "configs" / "commodities.yaml",
+        root / "configs" / "commodities.yaml",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def _ensure_tss_indices(tss_file: Path, *, default_hours: int = 224) -> List[int]:
     if not tss_file.exists():
         tss_file.write_text("\n".join(str(i) for i in range(1, default_hours + 1)), encoding="utf-8")
@@ -59,33 +107,44 @@ def _ensure_tss_indices(tss_file: Path, *, default_hours: int = 224) -> List[int
     return [int(line) for line in content.splitlines() if line.strip()]
 
 
+def _normalize_profile(profile_full: np.ndarray, tss_vals: List[int]) -> np.ndarray:
+    """Normalize a profile and optionally rescale to TSS indices."""
+    prof_sum = float(profile_full.sum())
+    if prof_sum <= 0:
+        raise ValueError("Electricity profile sums to zero; cannot normalize.")
+    profile_full = profile_full / prof_sum
+    if not tss_vals:
+        return profile_full
+
+    max_idx = max(tss_vals)
+    if max_idx >= len(profile_full):
+        raise ValueError(f"TSS requires index {max_idx} but profile length is {len(profile_full)}.")
+
+    idx_arr = np.asarray(tss_vals, dtype=int) - 1
+    selected_sum = float(profile_full[idx_arr].sum())
+    if selected_sum <= 0.0:
+        raise ValueError("Electricity profile assigns zero weight to selected TSS hours; cannot normalize.")
+    if not np.isclose(selected_sum, 1.0):
+        profile_full = profile_full / selected_sum
+    from decimal import Decimal, ROUND_HALF_UP, getcontext
+
+    getcontext().prec = 28
+    quantum = Decimal("0.00000001")
+    rounded: list[Decimal] = []
+    for pos in idx_arr:
+        rounded.append(Decimal(profile_full[pos]).quantize(quantum, rounding=ROUND_HALF_UP))
+    correction = Decimal("1.0") - sum(rounded)
+    if correction != 0:
+        rounded[-1] = (rounded[-1] + correction).quantize(quantum, rounding=ROUND_HALF_UP)
+    for pos, dec_val in zip(idx_arr, rounded):
+        profile_full[pos] = float(dec_val)
+    return profile_full
+
+
 def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.ndarray) -> Path:
     path = timeseries_dir / f"{profile_name}.txt"
     path.write_text(" ".join(f"{x:.8f}" for x in profile.tolist()), encoding="utf-8")
     return path
-
-
-def _standard_sheet_frames(
-    *,
-    scenario_name: str,
-    start_year: int,
-    end_year: int,
-    year_gap: int,
-    tss_name: str,
-    discount_rate: float,
-    dt_hours: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    units_df = _units_df()
-    scenario_df = _scenario_df(
-        scenario_name=scenario_name,
-        start_year=start_year,
-        end_year=end_year,
-        year_gap=year_gap,
-        tss_name=tss_name,
-        discount_rate=discount_rate,
-    )
-    tss_df = _tss_df(tss_name=tss_name, dt_hours=dt_hours)
-    return units_df, scenario_df, tss_df
 
 
 def _convsubproc_dataframe(rows: List[dict[str, Any]]) -> pd.DataFrame:
@@ -301,27 +360,25 @@ class _ConversionRowsBuilder:
     # Core helpers -----------------------------------------------------------
     def _rows_residential(self, tech: Technology) -> List[dict[str, Any]]:
         rows: List[dict[str, Any]] = []
-        if len(self.districts) == 1:
-            district = self.districts[0]
-            overrides = self._min_eout_override(tech, district)
-            heat_comm = self._heat_comm_for_district(district)
-            rows.append(
-                self._build_cs_row(
-                    cp_name=f"{tech.name}",
-                    cin=tech.commodity_in,
-                    cout=heat_comm,
-                    tech=tech,
-                    overrides=overrides,
-                    district=district,
-                )
-            )
+        tech_district = _extract_district_id_from_name(tech.name)
+        if tech_district is not None and tech_district not in self.districts:
             return rows
-        for district in self.districts:
+
+        target_districts: List[int]
+        if tech_district is not None:
+            target_districts = [tech_district]
+        elif len(self.districts) == 1:
+            target_districts = [self.districts[0]]
+        else:
+            target_districts = list(self.districts)
+
+        for district in target_districts:
             overrides = self._min_eout_override(tech, district)
             heat_comm = self._heat_comm_for_district(district, fallback=tech.commodity_out)
+            cp_name = tech.name if tech_district is not None or len(self.districts) == 1 else f"{tech.name}_D{district}"
             rows.append(
                 self._build_cs_row(
-                    cp_name=f"{tech.name}_D{district}",
+                    cp_name=cp_name,
                     cin=tech.commodity_in,
                     cout=heat_comm,
                     tech=tech,
@@ -801,11 +858,12 @@ class CESMBackend(OptimizationModel):
         run_args: Optional[List[str]] = None,
         run_subdir: Optional[str] = None,
         results_db_name: str = "db.sqlite",
-        input_writer: Optional[Callable[[OMContext, Path, str, str, str], None]] = None,
         model_name: Optional[str] = None,
         scenario_name: Optional[str] = None,
         tss_name: Optional[str] = None,
         write_inputs: bool = True,
+        scenario: Scenario | None = None,
+        demand_name: str = "residential_heat",
     ):
         super().__init__(conversion_sub_processes=None, conversion_processes=None, commodities=None, tss=None)
         self.workdir = Path(workdir)
@@ -820,12 +878,21 @@ class CESMBackend(OptimizationModel):
         self.run_subdir = run_subdir or (f"{self.model_name}-{self.scenario_name}" if self.model_name and self.scenario_name else None)
         self.results_db_name = results_db_name
 
-        self.input_writer = input_writer
         self.write_inputs = write_inputs
+        self.scenario = scenario
+        self.demand_name = demand_name
 
     # OptimizationModel API ---------------------------------------------------
-    def optimize(self, model: OMContext) -> Solution:
-        self._materialize_inputs(model)
+    def optimize(self, model: EnergySystem, *, scenario: Scenario | None = None, demand_name: str | None = None) -> Solution:
+        if not isinstance(model, EnergySystem):
+            raise TypeError("CESMBackend.optimize expects an EnergySystem")
+
+        scenario_obj = scenario or self.scenario
+        if scenario_obj is None:
+            raise ValueError("scenario is required to write CESM inputs")
+        demand = demand_name or self.demand_name or "residential_heat"
+
+        self._materialize_inputs_from_energy_system(model, scenario_obj, demand)
         self._run_cli()
         db_path = self._expected_run_db()
         if not db_path.exists():
@@ -846,12 +913,21 @@ class CESMBackend(OptimizationModel):
             raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
         return self.workdir / "Runs" / self.run_subdir / self.results_db_name
 
-    def _materialize_inputs(self, ctx: OMContext) -> None:
+    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario, demand_name: str) -> None:
         if not self.write_inputs:
             return
-        if not (self.input_writer and self.model_name and self.scenario_name and self.tss_name):
-            return
-        self.input_writer(ctx, self.workdir, self.model_name, self.scenario_name, self.tss_name)
+        if not (self.model_name and self.scenario_name and self.tss_name):
+            raise ValueError("model_name, scenario_name, and tss_name must be set to write CESM inputs")
+
+        write_cesm_inputs_from_energy_system(
+            energy_system,
+            scenario,
+            workdir=self.workdir,
+            model_name=self.model_name,
+            scenario_name=self.scenario_name,
+            tss_name=self.tss_name,
+            demand_name=demand_name,
+        )
 
     def _run_cli(self) -> None:
         exe = self.cli[0]
@@ -1187,7 +1263,7 @@ def tech_to_cesms_row(
     row.update(overrides)
     return row
 
-def write_cesm_inputs_from_data(
+def _write_cesm_inputs_from_om(
     om,
     *,
     workdir: PathLike,
@@ -1195,25 +1271,25 @@ def write_cesm_inputs_from_data(
     scenario_name: str,
     tss_name: str,
     polygons_path: Optional[PathLike] = None,
+    polygons_gdf: Optional[gpd.GeoDataFrame] = None,
     data_dir: Optional[PathLike] = None,
-    start_year: int = 2020,
-    end_year: int = 2030,
-    year_gap: int = 5,
-    discount_rate: float = 0.05,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    year_gap: int | None = None,
+    discount_rate: float | None = None,
     dt_hours: int = 1,
-    heat_file: str = "D_Heat_Household_J.txt",
-    heat_unit: str = "MWH",
     elec_profile_file: str = "corrected_eletricity_demand_2016.txt",
     heat_commodity_base: str = "Heat",
-    elec_price_eur_per_mwh: float = 100.0,
-    export_price_eur_per_mwh: float = -10.0,
+    elec_price_eur_per_mwh: float | None = None,
+    export_price_eur_per_mwh: float | None = None,
+    commodities_config: PathLike | None = None,
     pipe_loss_fraction: float | None = None,
     pipe_cap_max_mw: float | None = None,
     pipe_opex_eur_per_mwh: float | None = None,
     pipe_capex_eur_per_mw: float | None = None,
     pipe_lifetime_years: int | None = None,
-    edge_strategy: str = "mst",
-    min_shared_border_m: float = 0.0,
+    edge_strategy: str | None = None,
+    min_shared_border_m: float | None = None,
     max_pipes_per_district: Optional[int] = None,
     neighbor_distance_m: Optional[float] = None,
     selected_techs: list[Technology] | TechnologyRegistry | None = None,
@@ -1224,15 +1300,46 @@ def write_cesm_inputs_from_data(
 ) -> None:
     workdir = Path(workdir)
     paths = _prepare_io_paths(workdir, model_name, tss_name)
-    techmap_dir = paths.techmap_dir
     ts_dir = paths.timeseries_dir
     om_scenario = getattr(om, "scenario", None)
-    if om_scenario is not None:
-        start_year = getattr(om_scenario, "start_year", start_year)
-        end_year = getattr(om_scenario, "end_year", end_year)
-        year_gap = getattr(om_scenario, "year_gap", year_gap)
+    start_year = start_year if start_year is not None else getattr(om_scenario, "start_year", None)
+    end_year = end_year if end_year is not None else getattr(om_scenario, "end_year", None)
+    year_gap = year_gap if year_gap is not None else getattr(om_scenario, "year_gap", None)
+    discount_rate = discount_rate if discount_rate is not None else getattr(om_scenario, "discount_rate", None)
+
+    if start_year is None or end_year is None or year_gap is None:
+        raise ValueError("start_year, end_year, and year_gap must be provided via scenario or arguments")
+    if discount_rate is None:
+        raise ValueError("discount_rate must be provided via scenario or arguments")
+
     data_dir = Path(data_dir) if data_dir is not None else Path("data")
     om_regions = list(getattr(om, "regions", []))
+
+    config_path = _resolve_commodities_config(commodities_config)
+    grid_prices, supply_prices = _load_commodity_prices(config_path)
+    if elec_price_eur_per_mwh is None:
+        try:
+            elec_price_eur_per_mwh = float(grid_prices["electricity"])
+        except KeyError as exc:
+            raise ValueError(f"Missing electricity grid price in {config_path}") from exc
+        except NUMERIC_ERRORS as exc:
+            raise ValueError(f"Non-numeric electricity grid price in {config_path}") from exc
+
+    if export_price_eur_per_mwh is None:
+        try:
+            export_price_eur_per_mwh = float(grid_prices["export"])
+        except KeyError as exc:
+            raise ValueError(f"Missing export grid price in {config_path}") from exc
+        except NUMERIC_ERRORS as exc:
+            raise ValueError(f"Non-numeric export grid price in {config_path}") from exc
+
+    edge_defaults = _load_edge_settings(config_path)
+    edge_strategy = edge_strategy or edge_defaults.get("edge_strategy", "mst")
+    min_shared_border_m = (
+        float(edge_defaults.get("min_shared_border_m", 0.0)) if min_shared_border_m is None else min_shared_border_m
+    )
+    max_pipes_per_district = edge_defaults.get("max_pipes_per_district") if max_pipes_per_district is None else max_pipes_per_district
+    neighbor_distance_m = edge_defaults.get("neighbor_distance_m") if neighbor_distance_m is None else neighbor_distance_m
 
     scenario_years: List[int] = []
     try:
@@ -1263,46 +1370,23 @@ def write_cesm_inputs_from_data(
                 om_profile = om_profile.values
             profile_arr = np.asarray(list(om_profile), dtype=float)
             if profile_arr.size == 8760:
-                prof_sum = float(profile_arr.sum())
-                if prof_sum > 0:
-                    profile_full = profile_arr / prof_sum
+                profile_full = profile_arr
     except NUMERIC_ERRORS:
         profile_full = None
     if profile_full is None:
         profile_full = _load_numeric_txt(data_dir / elec_profile_file)
-        prof_sum = float(profile_full.sum())
-        if prof_sum <= 0:
-            raise ValueError(f"Electricity profile {elec_profile_file} sums to zero; cannot normalize.")
-        profile_full = profile_full / prof_sum
     tss_vals = _ensure_tss_indices(paths.tss_file)
-    max_idx = max(tss_vals) if tss_vals else 0
-    if max_idx >= len(profile_full):
-        raise ValueError(f"TSS requires index {max_idx} but profile length is {len(profile_full)}.")
-    if tss_vals:
-        idx_arr = np.asarray(tss_vals, dtype=int) - 1
-        selected_sum = float(profile_full[idx_arr].sum())
-        if selected_sum <= 0.0:
-            raise ValueError("Electricity profile assigns zero weight to selected TSS hours; cannot normalize.")
-        if not np.isclose(selected_sum, 1.0):
-            profile_full = profile_full / selected_sum
-        from decimal import Decimal, ROUND_HALF_UP, getcontext
-        getcontext().prec = 28
-        quantum = Decimal("0.00000001")
-        rounded: list[Decimal] = []
-        for pos in idx_arr:
-            rounded.append(Decimal(profile_full[pos]).quantize(quantum, rounding=ROUND_HALF_UP))
-        correction = Decimal("1.0") - sum(rounded)
-        if correction != 0:
-            rounded[-1] = (rounded[-1] + correction).quantize(quantum, rounding=ROUND_HALF_UP)
-        for pos, dec_val in zip(idx_arr, rounded):
-            profile_full[pos] = float(dec_val)
+    profile_full = _normalize_profile(profile_full, tss_vals)
     demand_profile_name = "HeatDemandProfile"
     _write_demand_profile(ts_dir, demand_profile_name, profile_full)
     districts: List[int]
     heat_names: List[str]
     directed_edges: List[Tuple[int, int]] = []
     base_heat_name = heat_commodity_base
-    if polygons_path is None:
+    gdf: Optional[gpd.GeoDataFrame] = None
+    if polygons_gdf is not None:
+        gdf = polygons_gdf.copy()
+    if polygons_path is None and gdf is None:
         count = len(om_regions) if om_regions else 1
         if count <= 0:
             count = 1
@@ -1315,12 +1399,13 @@ def write_cesm_inputs_from_data(
         else:
             heat_names = [f"{base_heat_name}_D{i}" for i in districts]
     else:
-        if gpd is None:
-            raise RuntimeError("geopandas required for polygons_path.")
-        poly_path = Path(polygons_path)
-        if not poly_path.exists():
-            raise FileNotFoundError(f"polygons not found: {poly_path}")
-        gdf = gpd.read_file(poly_path)
+        if gdf is None:
+            if gpd is None:
+                raise RuntimeError("geopandas required for polygons_path.")
+            poly_path = Path(polygons_path)
+            if not poly_path.exists():
+                raise FileNotFoundError(f"polygons not found: {poly_path}")
+            gdf = gpd.read_file(poly_path)
         try:
             if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
                 gdf = gdf.to_crs(3035)
@@ -1394,17 +1479,9 @@ def write_cesm_inputs_from_data(
         annual_heat_by_d = [0.0] * len(districts)
     annual_heat_mwh_total = float(sum(annual_heat_by_d))
     if annual_heat_mwh_total <= 0.0:
-        heat_series = _load_numeric_txt(data_dir / heat_file)
-        if heat_unit.upper() == "J":
-            annual_heat_mwh_total = float(heat_series.sum() / 3.6e9)
-        elif heat_unit.upper() == "MWH":
-            annual_heat_mwh_total = float(heat_series.sum())
-        else:
-            raise ValueError("heat_unit must be 'J' or 'MWh'.")
+        raise ValueError("Annual heat demand is zero; provide demands in the EnergySystem/OM input.")
+    if len(annual_heat_by_d) != len(districts):
         annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
-    else:
-        if len(annual_heat_by_d) != len(districts):
-            annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
     xlsx = paths.xlsx_path
     units_df = _units_df()
     scenario_df = _scenario_df(
@@ -1646,23 +1723,26 @@ def write_cesm_inputs_from_data(
                     if name not in conv_procs:
                         conv_procs.append(name)
             continue
+
         if len(districts) == 1 or tech.commodity_out != demand_commodity:
             name = f"{tech.name}"
             if name not in conv_procs:
                 conv_procs.append(name)
-        else:
-            for i in districts:
-                name = f"{tech.name}_D{i}"
-                if name not in conv_procs:
-                    conv_procs.append(name)
+            continue
+
+        if tech_district is not None:
+            name = tech.name
+            if name not in conv_procs:
+                conv_procs.append(name)
+            continue
+
+        for i in districts:
+            name = f"{tech.name}_D{i}"
+            if name not in conv_procs:
+                conv_procs.append(name)
 
     extra_supply_rows: List[dict[str, Any]] = []
-    # Prices are specified in €/MWh; entries reflect 0.10/0.15/0.25 €/kWh for gas, oil, and hydrogen respectively.
-    supply_price_defaults = {
-        "gas": 100.0,
-        "oil": 150.0,
-        "hydrogen": 250.0,
-    }
+    supply_price_defaults = {k.lower(): float(v) for k, v in supply_prices.items()}
     for commodity in supply_candidates:
         if commodity not in commodity_list:
             commodity_list.append(commodity)
@@ -1780,8 +1860,58 @@ def write_cesm_inputs_from_data(
         convsubproc_rows=len(convsubproc_df),
     )
 
-def write_cesm_inputs_multidistrict_from_data(**kwargs) -> None:
-    return write_cesm_inputs_from_data(**kwargs)
+def _polygons_from_energy_system(es: EnergySystem) -> Optional[gpd.GeoDataFrame]:
+    regions = getattr(es, "regions", []) or []
+    frames: list[gpd.GeoDataFrame] = []
+    for region in regions:
+        poly = getattr(region, "polygon", None)
+        if isinstance(poly, gpd.GeoDataFrame):
+            frames.append(poly.copy())
+    if not frames:
+        return None
+    gdf = pd.concat(frames, ignore_index=True)
+    if "id" not in gdf.columns:
+        gdf["id"] = range(len(gdf))
+    try:
+        if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
+            gdf = gdf.to_crs(3035)
+    except Exception:
+        pass
+    return gdf
+
+
+def write_cesm_inputs_from_energy_system(
+    energy_system: EnergySystem,
+    scenario: Scenario,
+    *,
+    workdir: PathLike,
+    model_name: str,
+    scenario_name: str,
+    tss_name: str,
+    demand_name: str = "residential_heat",
+    technology_registry: TechnologyRegistry | None = None,
+    polygons_gdf: Optional[gpd.GeoDataFrame] = None,
+    **kwargs: Any,
+) -> None:
+    """Generate CESM inputs from an EnergySystem."""
+
+    om_ctx = build_om_from_es(energy_system, scenario, demand_name=demand_name)
+    if polygons_gdf is None:
+        polygons_gdf = _polygons_from_energy_system(energy_system)
+    _write_cesm_inputs_from_om(
+        om_ctx,
+        workdir=workdir,
+        model_name=model_name,
+        scenario_name=scenario_name,
+        tss_name=tss_name,
+        start_year=getattr(scenario, "start_year", None),
+        end_year=getattr(scenario, "end_year", None),
+        year_gap=getattr(scenario, "year_gap", None),
+        discount_rate=getattr(scenario, "discount_rate", None),
+        polygons_gdf=polygons_gdf,
+        technology_registry=technology_registry,
+        **kwargs,
+    )
 
 # Edge helpers ----------------------------------------------------------------
 

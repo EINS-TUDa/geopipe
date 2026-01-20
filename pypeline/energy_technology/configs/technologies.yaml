@@ -102,17 +102,17 @@ heat_grid:
   {}
 
 grid_electricity:
+  commodity_out: electricity
   commodity_in: dummy
 
 grid_hydrogen:
   commodity_out: hydrogen
   commodity_in: dummy
 
+# heat pipes for district-level connections
 heat_pipe:
-  efficiency: 1.0
-  technical_lifetime: 40
-  opex_cost_energy: 1.44
-  opex_cost_power: 0
-  capex_cost_power: 54040
-  capex_cost_base: 17221
-  cap_max: 100.0
+  efficiency: 0.98
+  technical_lifetime: 30
+  opex_cost_energy: 0.0
+  capex_cost_power: 100.0
+  cap_max: 1000000000

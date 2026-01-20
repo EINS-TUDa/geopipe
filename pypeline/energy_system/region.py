@@ -8,7 +8,6 @@ import geopandas as gpd
 from pypeline.energy_technology.technology import (
     Technology,
     RegionTechnology,
-    TechnologyDependencyManager,
     TechnologyRequirement,
 )
 from pypeline.energy_technology.technology_registry import (
@@ -20,8 +19,18 @@ from pypeline.energy_technology.technology_registry import (
 HEAT_EXCHANGER_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
 PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
 REGIONAL_TECH_ALIAS_MAP: dict[str, tuple[str, ...]] = {PRIMARY_HEAT_EXCHANGER: HEAT_EXCHANGER_NAMES[1:]}
-
+INDIRECT_TECH_PREFIX = "ind_"
 CENTRAL_TECH_PREFIX = "cen_"
+
+def _indirect_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
+    candidates: list[str] = []
+    for name in registry.get_all(return_type="name"):
+        if not name.startswith(INDIRECT_TECH_PREFIX):
+            continue
+        if "_D" in name:
+            continue
+        candidates.append(name)
+    return _dedupe_preserve_order(candidates)
 
 
 def _is_central_base(name: str) -> bool:
@@ -42,7 +51,7 @@ def _dedupe_preserve_order(names: list[str]) -> tuple[str, ...]:
 def _central_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
     candidates: list[str] = []
     for name in registry.get_all(return_type="name"):
-        if "_D" in name or "_U" in name:
+        if "_D" in name:
             continue
         canonical = _canonical_regional_base(name)
         if _is_central_base(canonical) and registry.has_technology(canonical):
@@ -52,7 +61,7 @@ def _central_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
 
 def _regional_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
     base_names: list[str] = list(_central_base_names(registry))
-    for static_name in ("heat_grid", PRIMARY_HEAT_EXCHANGER):
+    for static_name in ("heat_grid", PRIMARY_HEAT_EXCHANGER, *_indirect_base_names(registry)):
         if registry.has_technology(static_name):
             base_names.append(static_name)
     return _dedupe_preserve_order(base_names)

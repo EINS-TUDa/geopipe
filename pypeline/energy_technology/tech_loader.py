@@ -384,6 +384,13 @@ def _load_specs_from_yaml(path: Path, defaults: _DefaultsBundle | None = None) -
     validate_specs(specs)
     return specs
 
+def load_specs_from_file(file_path: str | Path) -> List[TechnologySpec]:
+    path = Path(file_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Technology spec file not found: {path}")
+    defaults = _load_defaults_from_yaml(path.parent / "defaults.yaml")
+    return _load_specs_from_yaml(path, defaults)
+
 def load_specs_from_package(extra_spec_files: Iterable[str | Path] | None = None) -> List[TechnologySpec]:
     base = Path(__file__).resolve().parent
     data_dir = base / "configs"

@@ -4,20 +4,19 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from pypeline import DataRegistry, EnergySystemBuilder, TechnologyRegistry
+from pypeline import EnergySystemBuilder, TechnologyRegistry
+from pypeline.data.default_registry import get_default_data_registry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
-from pypeline.optimization.om_adapter import build_om_from_es
-from tools.cesm_plugin import write_cesm_inputs_from_data
+from tools.cesm_plugin import write_cesm_inputs_from_energy_system
 
 
-def _build_bensheim_om():
+def _build_bensheim_es():
     tech_reg = TechnologyRegistry()
     tech_reg.load_from_default()
-    data_reg = DataRegistry()
-    data_reg.load_from_default()
+    data_reg = get_default_data_registry()
 
-    polygons_path = Path("data") / "wah_bensheim_4_districts.geojson"
+    polygons_path = Path("data/projects/bensheim/wah_bensheim_4_districts.geojson")
 
     polygons = gpd.read_file(polygons_path)
 
@@ -41,8 +40,7 @@ def _build_bensheim_om():
     es = esb.build()
 
     scenario = Scenario(name="BensheimTestScenario", start_year=2020, end_year=2030, year_gap=5, tss="4ThinWeeks")
-    om = build_om_from_es(es, scenario, demand_name="residential_heat")
-    return om, tech_reg, polygons_path
+    return es, scenario, tech_reg, polygons
 
 
 def _profile_peak(value):
@@ -72,18 +70,18 @@ def _profile_peak(value):
 
 
 def test_cap_reserves_do_not_exceed_cap_max(tmp_path):
-    om, tech_reg, polygons_path = _build_bensheim_om()
+    es, scenario, tech_reg, polygons = _build_bensheim_es()
 
     workdir = tmp_path / "cesm"
-    write_cesm_inputs_from_data(
-        om,
+    write_cesm_inputs_from_energy_system(
+        es,
+        scenario,
         workdir=workdir,
         model_name="BensheimTest",
         scenario_name="Base",
         tss_name="4ThinWeeks",
-        polygons_path=polygons_path,
-        data_dir=Path("data"),
-        retain_existing_output_factor=0.0,
+        demand_name="residential_heat",
+        polygons_gdf=polygons,
         technology_registry=tech_reg,
     )
 
