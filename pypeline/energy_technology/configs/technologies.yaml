@@ -94,12 +94,6 @@ cen_biomass_woodpellets:
   cap_min: 5.8
   cap_max: 5.8
 
-##################
-# grids and pipes
-##################
-
-heat_grid:
-  {}
 
 grid_electricity:
   commodity_out: electricity
@@ -109,7 +103,14 @@ grid_hydrogen:
   commodity_out: hydrogen
   commodity_in: dummy
 
-# heat pipes for district-level connections
+
+heat_grid:
+  {}
+
+#############################
+# hidden from region builder
+#############################
+
 heat_pipe:
   efficiency: 0.98
   technical_lifetime: 30

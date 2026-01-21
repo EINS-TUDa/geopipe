@@ -21,6 +21,11 @@ PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
 REGIONAL_TECH_ALIAS_MAP: dict[str, tuple[str, ...]] = {PRIMARY_HEAT_EXCHANGER: HEAT_EXCHANGER_NAMES[1:]}
 INDIRECT_TECH_PREFIX = "ind_"
 CENTRAL_TECH_PREFIX = "cen_"
+EXCLUDED_TECH_NAMES: tuple[str, ...] = ("heat_pipe",)
+
+
+def _is_excluded(name: str) -> bool:
+    return name in EXCLUDED_TECH_NAMES
 
 def _indirect_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
     candidates: list[str] = []
@@ -62,6 +67,8 @@ def _central_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
 def _regional_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
     base_names: list[str] = list(_central_base_names(registry))
     for static_name in ("heat_grid", PRIMARY_HEAT_EXCHANGER, *_indirect_base_names(registry)):
+        if _is_excluded(static_name):
+            continue
         if registry.has_technology(static_name):
             base_names.append(static_name)
     return _dedupe_preserve_order(base_names)
@@ -478,11 +485,15 @@ class RegionBuilder:
         all_technologies: list[str] = []
         seen_names: set[str] = set()
         for name in raw_names:
+            if _is_excluded(name):
+                continue
             if name in all_regional_tokens:
                 continue
             if _is_other_district_clone(name, district_id):
                 continue
             canonical_name = _canonical_regional_name(name)
+            if _is_excluded(canonical_name):
+                continue
             lookup_name = canonical_name if registry.has_technology(canonical_name) else name
             if lookup_name in seen_names:
                 continue
