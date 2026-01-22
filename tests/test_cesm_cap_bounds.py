@@ -16,7 +16,7 @@ def _build_bensheim_es():
     tech_reg.load_from_default()
     data_reg = get_default_data_registry()
 
-    polygons_path = Path("data/projects/bensheim/wah_bensheim_4_districts.geojson")
+    polygons_path = Path("examples/bensheim/wah_bensheim_4_districts.geojson")
 
     polygons = gpd.read_file(polygons_path)
 

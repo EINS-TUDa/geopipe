@@ -262,11 +262,11 @@ def get_default_data_registry() -> DataRegistry:
 if __name__ == "__main__":
     # Simple test query for debugging
     test_query_1 = {"key": "heating_shares",
-                "region": gpd.read_file("../../data/projects/neuburg/polygon_neuburg.geojson")}
+                "region": gpd.read_file("../../examples/neuburg/polygon_neuburg.geojson")}
     test_query_2 = {"key": "residential_heat_demand",
-                "region": gpd.read_file("../../data/projects/neuburg/polygon_neuburg.geojson")}
+                "region": gpd.read_file("../../examples/neuburg/polygon_neuburg.geojson")}
     test_query_3 = {"key": "residential_heat_demand_profile"}
-    test_query_4 = {"key": "heating_shares", "region": gpd.read_file("../../data/projects/bensheim/baublock_bensheim_epsg25832.geojson")}
+    test_query_4 = {"key": "heating_shares", "region": gpd.read_file("../../examples/bensheim/baublock_bensheim_epsg25832.geojson")}
 
     registry = get_default_data_registry()
     for ds in registry.get_datasets():

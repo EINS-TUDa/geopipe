@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import geopandas as gpd
 import sqlite3
-project_root = Path(__file__).resolve().parents[1]
+project_root = Path(__file__).resolve().parents[2]
 from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import (
     EnergySystemRuleBook,
@@ -23,8 +23,10 @@ def must_exist(p: Path, what: str) -> None:
 def main():
     tech_reg = TechnologyRegistry()
     tech_reg.load_from_default()
-    polygons_path = Path("data/projects/bensheim/wah_bensheim_4_districts.geojson")
+    polygons_path = project_root / "examples" / "bensheim" / "wah_bensheim_4_districts.geojson"
     polygons = gpd.read_file(polygons_path)
+
+
     data_reg = get_default_data_registry()
 
     esb = EnergySystemBuilder(energy_system_name="Bensheim")
@@ -66,7 +68,6 @@ def main():
     
     workdir     = Path("CESM")
     techmap_dir = workdir / "Data" / "Techmap"
-    project_root = Path(__file__).resolve().parents[1]
     # Provide data directory for CESM writer (no plugin defaults).
     es.data_dir = project_root / "data"
     runner = project_root / "tools" / "cesm_plugin.py"
