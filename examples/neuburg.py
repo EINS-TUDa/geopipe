@@ -3,12 +3,13 @@ from pathlib import Path
 import sys
 import geopandas as gpd
 import sqlite3
+project_root = Path(__file__).resolve().parents[1]
 
 from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.data.default_registry import get_default_data_registry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
 from pypeline.energy_system.scenario import Scenario
-from tools.cesm_plugin import CESMBackend  # unified backend import (replaces pypeline.optimization.cesm_backend)
+from tools.cesm_plugin import CESMBackend 
 from pypeline.plot.plotter import EnergySystemPlotter
 
 def must_exist(p: Path, what: str) -> None:
@@ -19,7 +20,7 @@ def main():
     tech_reg = TechnologyRegistry(); tech_reg.load_from_default()
     data_reg = get_default_data_registry()
 
-    polygons_path = Path("data/projects/neuburg/polygon_neuburg.geojson")
+    polygons_path = project_root / "data/projects/neuburg/polygon_neuburg.geojson"
     polygons = gpd.read_file(Path(polygons_path))
 
     esb = EnergySystemBuilder(energy_system_name="neuburg")
@@ -34,6 +35,7 @@ def main():
     esb.set_energy_system_rule_book(rulebook)
 
     es = esb.build()
+    es.data_dir = project_root / "data"
 
     es_plotter = EnergySystemPlotter(es)
     es_plotter.plot()
@@ -44,7 +46,14 @@ def main():
     tss_name      = "4ThinWeeks"
     run_name      = f"{model_name}-{scenario_name}"
 
-    scenario = Scenario(name=run_name, start_year=2020, end_year=2030, year_gap=5, tss=tss_name)
+    scenario = Scenario(
+        name=run_name,
+        start_year=2020,
+        end_year=2030,
+        year_gap=5,
+        tss=tss_name,
+        retain_existing_output_drop_per_year=0.05,
+    )
 
     workdir     = Path("CESM")
     techmap_dir = workdir / "Data" / "Techmap"
@@ -52,8 +61,6 @@ def main():
     techmap_dir.mkdir(parents=True, exist_ok=True)
     ts_dir.mkdir(parents=True, exist_ok=True)
 
-    project_root = Path(__file__).resolve().parents[1]
-    # Use unified plugin directly as runner
     runner = project_root / "tools" / "cesm_plugin.py"
     must_exist(runner, "plugin script")
 

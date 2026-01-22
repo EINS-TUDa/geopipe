@@ -18,6 +18,6 @@ categories:
 # there is a base cost o every unit, the optimal choce depends on that cost per unit.
 stages:
   stage1:
-    max_units: 20
+    max_units: 3000
   stage3:
-    max_units: 10
+    max_units: 1000

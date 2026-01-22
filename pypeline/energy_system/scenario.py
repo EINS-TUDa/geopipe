@@ -22,6 +22,8 @@ class Scenario:
     co2_limit: Optional[Union[Number, Dict[int, Number]]] = None
     rules: List[str] = field(default_factory=list)
     discount_rate: float = 0.05
+    retain_existing_output_schedule: Optional[List[float]] = None
+    retain_existing_output_drop_per_year: Optional[Number] = None
 
     def years(self) -> List[int]:
         return list(range(self.start_year, self.end_year + 1, self.year_gap))

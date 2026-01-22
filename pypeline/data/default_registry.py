@@ -37,7 +37,7 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
     sql_text = text(f"""
         SELECT
             {columns_sql}
-        FROM opendata.share_2_buildings
+        FROM clean_census_energietraeger.share_2_buildings
         WHERE ST_Within(
             centroid,
             ST_Transform(

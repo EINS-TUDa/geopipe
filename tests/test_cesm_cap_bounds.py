@@ -71,6 +71,7 @@ def _profile_peak(value):
 
 def test_cap_reserves_do_not_exceed_cap_max(tmp_path):
     es, scenario, tech_reg, polygons = _build_bensheim_es()
+    retain_existing_output_schedule = [(0.95) ** (year - scenario.start_year) for year in scenario.years()]
 
     workdir = tmp_path / "cesm"
     write_cesm_inputs_from_energy_system(
@@ -83,6 +84,7 @@ def test_cap_reserves_do_not_exceed_cap_max(tmp_path):
         demand_name="residential_heat",
         polygons_gdf=polygons,
         technology_registry=tech_reg,
+        retain_existing_output_schedule=retain_existing_output_schedule,
     )
 
     xlsx_path = workdir / "Data" / "Techmap" / "BensheimTest.xlsx"

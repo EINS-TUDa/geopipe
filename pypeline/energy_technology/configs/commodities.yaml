@@ -6,9 +6,9 @@ supply_prices_eur_per_mwh:
   gas: 120.0
   oil: 110.0
   hydrogen: 200.0
-  biomass: 60.0
+  biomass: 80.0
 
-# Optional defaults for network edge generation in CESM writer
+# defaults for network edge generation in CESM writer
 edge_defaults:
   edge_strategy: mst
   min_shared_border_m: 0.0

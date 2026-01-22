@@ -4,9 +4,13 @@ from pathlib import Path
 import sys
 import geopandas as gpd
 import sqlite3
-
+project_root = Path(__file__).resolve().parents[1]
 from pypeline import EnergySystemBuilder, TechnologyRegistry
-from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
+from pypeline.energy_system.rule_book import (
+    EnergySystemRuleBook,
+    MinimumDHNThroughputRule,
+    MinimumCentralCapacityRule,
+)
 from pypeline.energy_system.scenario import Scenario
 from pypeline.plot.plotter import EnergySystemPlotter
 from tools.cesm_plugin import CESMBackend
@@ -19,9 +23,9 @@ def must_exist(p: Path, what: str) -> None:
 def main():
     tech_reg = TechnologyRegistry()
     tech_reg.load_from_default()
-    data_reg = get_default_data_registry()
     polygons_path = Path("data/projects/bensheim/wah_bensheim_4_districts.geojson")
-    polygons = gpd.read_file(Path(polygons_path))
+    polygons = gpd.read_file(polygons_path)
+    data_reg = get_default_data_registry()
 
     esb = EnergySystemBuilder(energy_system_name="Bensheim")
     esb.set_polygons(polygons)
@@ -37,23 +41,34 @@ def main():
     })
 
     rulebook = EnergySystemRuleBook()
-    rulebook.add_rule(MinimumDHNThroughputRule(demand_name="residential_heat", min_share=0.20))
+    rulebook.add_rule(MinimumDHNThroughputRule(demand_name="residential_heat", min_share=0.25))
+    rulebook.add_rule(MinimumCentralCapacityRule(demand_name="residential_heat", min_share_of_demand=0.10,commodity="gas",))
     esb.set_energy_system_rule_book(rulebook)
 
     es = esb.build()
     es_plotter = EnergySystemPlotter(es)
     es_plotter.plot()
-    print("Constraints:", getattr(es, "constraints", {}))
+
+    print("Constraints:", es.constraints)
 
     model_name    = "Bensheim"
     scenario_name = "Base4twk"
     tss_name      = "4ThinWeeks"
     run_name      = f"{model_name}-{scenario_name}"
-    scenario = Scenario(name=run_name, start_year=2020, end_year=2030, year_gap=5, tss=tss_name)
+    scenario = Scenario(
+        name=run_name,
+        start_year=2020,
+        end_year=2030,
+        year_gap=5,
+        tss=tss_name,
+        retain_existing_output_drop_per_year=0.05,
+    )
     
     workdir     = Path("CESM")
     techmap_dir = workdir / "Data" / "Techmap"
     project_root = Path(__file__).resolve().parents[1]
+    # Provide data directory for CESM writer (no plugin defaults).
+    es.data_dir = project_root / "data"
     runner = project_root / "tools" / "cesm_plugin.py"
     must_exist(runner, "runner script")
 
@@ -83,7 +98,11 @@ def main():
 
     from cesm.core.plotter import Plotter, PlotType
     from cesm.core.data_access import DAO
-    db_path = Path("CESM") / "Runs" / run_name / "db.sqlite"
+    # Use the DB path returned by the CESM backend (handles fallback run directories)
+    db_path = Path(solution.results["db"])
+    if not db_path.is_absolute():
+        db_path = project_root / db_path
+    print(f"Using DB: {db_path}")
     conn = sqlite3.connect(str(db_path))
     dao = DAO(conn)
     plotter = Plotter(dao)
