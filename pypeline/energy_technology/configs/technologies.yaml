@@ -123,6 +123,6 @@ heat_pipe:
   technical_lifetime: 30.0
   opex_cost_power: 0.0
   opex_cost_energy: 0.0
-  capex_cost_power: 10.0
+  capex_cost_power: 100.0
   capex_cost_base: 0.0
   cap_max: 1000000000.0

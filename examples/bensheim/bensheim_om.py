@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import geopandas as gpd
 import sqlite3
+import matplotlib.pyplot as plt
 project_root = Path(__file__).resolve().parents[2]
 from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import (
@@ -44,14 +45,11 @@ def main():
 
     rulebook = EnergySystemRuleBook()
     rulebook.add_rule(MinimumDHNThroughputRule(demand_name="residential_heat", min_share=0.25))
-    rulebook.add_rule(MinimumCentralCapacityRule(demand_name="residential_heat", min_share_of_demand=0.10,commodity="gas",))
+    rulebook.add_rule(MinimumCentralCapacityRule(demand_name="residential_heat", min_share_of_demand=0.50,commodity="gas",))
     esb.set_energy_system_rule_book(rulebook)
 
     es = esb.build()
     es_plotter = EnergySystemPlotter(es)
-    es_plotter.plot()
-
-    print("Constraints:", es.constraints)
 
     model_name    = "Bensheim"
     scenario_name = "Base4twk"
@@ -64,11 +62,11 @@ def main():
         year_gap=5,
         tss=tss_name,
         retain_existing_output_drop_per_year=0.05,
+        lockout_years=2,
     )
     
     workdir     = Path("CESM")
     techmap_dir = workdir / "Data" / "Techmap"
-    # Provide data directory for CESM writer (no plugin defaults).
     es.data_dir = project_root / "data"
     runner = project_root / "tools" / "cesm_plugin.py"
     must_exist(runner, "runner script")
@@ -94,12 +92,38 @@ def main():
     solution = backend.optimize(es, scenario=scenario, demand_name="residential_heat")
     visible = sorted([p.stem for p in techmap_dir.glob("*.xlsx") if p.is_file()])
     print(f"Techmaps in CESM/Data/Techmap: {visible}")
-    #print("Using DB:", solution.results.get("db"))
     print(solution.results)
+
+    # plot commodity supply mix
+    years = list(range(int(scenario.start_year), int(scenario.end_year) + 1, int(scenario.year_gap)))
+    es_plotter.plot_optimized_years_grid(
+        solution.results,
+        years=years,
+        demand_name="residential_heat",
+        kind="energy",
+        share_view="commodity",
+        ncols=2,
+        include_initial=True,
+        initial_title="before optimization (commodity mix)",
+        show=False,
+    )
+
+    # plot technology mix
+    es_plotter.plot_optimized_years_grid(
+        solution.results,
+        years=years,
+        demand_name="residential_heat",
+        kind="energy",
+        share_view="technology",
+        ncols=2,
+        include_initial=True,
+        initial_title="before optimization (technology mix)",
+        show=False,
+    )
+    plt.show()
 
     from cesm.core.plotter import Plotter, PlotType
     from cesm.core.data_access import DAO
-    # Use the DB path returned by the CESM backend (handles fallback run directories)
     db_path = Path(solution.results["db"])
     if not db_path.is_absolute():
         db_path = project_root / db_path
@@ -112,12 +136,6 @@ def main():
     sankey_fig.show()
     sankey_fig2 = plotter.plot_sankey(year=2030)
     sankey_fig2.show()
-
-    # plotter.plot_timeseries(
-    #     timeseries_type=PlotType.TimeSeries.POWER_CONSUMPTION,
-    #     year=2020,
-    #     commodity="Electricity",
-    # )
 
     conn.close()
 

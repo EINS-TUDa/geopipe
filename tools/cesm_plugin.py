@@ -4,7 +4,6 @@ Public API:
     - CESMBackend (Optimization Model adapter)
     - write_cesm_inputs_minimal_from_om
     - write_cesm_inputs_from_energy_system
-    - tech_to_cesms_row
 """
 from __future__ import annotations
 import argparse, json, math, sqlite3, subprocess, sys, logging
@@ -79,7 +78,7 @@ def _prepare_io_paths(workdir: Path, model_name: str, tss_name: str) -> _CesmIOP
     return _CesmIOPaths(techmap_dir=techmap_dir, timeseries_dir=timeseries_dir, xlsx_path=xlsx_path, tss_file=tss_file)
 
 
-def _commodity_config_from_energy_system(es: EnergySystem) -> tuple[dict[str, float], dict[str, float], dict[str, Any]]:
+def _commodity_config_from_energy_system(es: EnergySystem) -> tuple[dict[str, float], dict[str, float]]:
     config_raw = getattr(es, "commodity_config", None)
     if config_raw is None:
         raise ValueError("EnergySystem.commodity_config is required to provide commodity prices for CESM export")
@@ -88,7 +87,6 @@ def _commodity_config_from_energy_system(es: EnergySystem) -> tuple[dict[str, fl
 
     grid_raw = config_raw.get("grid_prices")
     supply_raw = config_raw.get("supply_prices_eur_per_mwh")
-    edge_defaults_raw = config_raw.get("edge_defaults", {})
 
     if not isinstance(grid_raw, dict) or not isinstance(supply_raw, dict):
         raise ValueError("EnergySystem.commodity_config must include grid_prices and supply_prices_eur_per_mwh mappings")
@@ -107,16 +105,15 @@ def _commodity_config_from_energy_system(es: EnergySystem) -> tuple[dict[str, fl
 
     grid_prices = _coerce_prices(grid_raw, lower_keys=True)
     supply_prices = _coerce_prices(supply_raw, lower_keys=True)
-    edge_defaults = edge_defaults_raw if isinstance(edge_defaults_raw, dict) else {}
+
 
     logger.debug(
-        "_commodity_config_from_energy_system parsed: grid_prices=%s, supply_prices=%s, edge_defaults=%s",
+        "_commodity_config_from_energy_system parsed: grid_prices=%s, supply_prices=%s",
         grid_prices,
         supply_prices,
-        edge_defaults,
     )
 
-    return grid_prices, supply_prices, edge_defaults
+    return grid_prices, supply_prices
 
 
 def _ensure_tss_indices(tss_file: Path, *, default_hours: int = 224) -> List[int]:
@@ -360,6 +357,7 @@ class _ConversionRowsBuilder:
         retain_factor: float | None,
         retain_years_factor: float | None,
         retain_schedule: Optional[List[float]],
+        lockout_years: int,
         elec_price_eur_per_mwh: float,
     ) -> None:
         self.scenario_name = scenario_name
@@ -381,6 +379,10 @@ class _ConversionRowsBuilder:
         self.retain_factor = retain_factor
         self.retain_years_factor = retain_years_factor
         self.retain_schedule = retain_schedule
+        self.lockout_years = max(0, int(lockout_years))
+        self.lockout_until_year = (
+            self.scenario_years[0] + self.lockout_years if self.scenario_years else None
+        )
         self.elec_price_eur_per_mwh = elec_price_eur_per_mwh
         self._tech_builders = {
             "ind_heat_pump": self._rows_residential,
@@ -647,7 +649,7 @@ class _ConversionRowsBuilder:
         self._apply_min_central_cap(row, tech)
         existing_cap = self._existing_capacity(metrics)
         self._ensure_unit_capacity(row, existing_cap)
-        self._limit_first_year_capacity(row, existing_cap, tech)
+        self._limit_first_year_capacity(row, existing_cap, tech, metrics=metrics)
         self._clamp_reserves_to_cap_max(row)
         return row
 
@@ -683,6 +685,36 @@ class _ConversionRowsBuilder:
         per_unit_min = enforce_min
         if cap_max_peak and cap_max_peak > 0.0:
             per_unit_min = min(enforce_min, cap_max_peak)
+
+        if self.scenario_years and self.lockout_until_year is not None:
+            cap_min_existing_map = self._profile_to_map(row.get("cap_min"))
+            cap_res_min_existing_map = self._profile_to_map(row.get("cap_res_min"))
+            cap_res_max_existing_map = self._profile_to_map(row.get("cap_res_max"))
+
+            cap_min_pairs: list[tuple[int, float]] = []
+            cap_res_min_pairs: list[tuple[int, float]] = []
+            cap_res_max_pairs: list[tuple[int, float]] = []
+
+            for year in self.scenario_years:
+                active = year >= self.lockout_until_year
+                cap_min_floor = per_unit_min if active else 0.0
+                cap_res_min_floor = enforce_min if active else 0.0
+                cap_res_max_floor = (UNBOUNDED_CAP if math.isinf(total_cap_limit) else total_cap_limit) if active else 0.0
+
+                cap_min_pairs.append((year, max(float(cap_min_existing_map.get(year, 0.0) or 0.0), cap_min_floor)))
+                cap_res_min_pairs.append((year, max(float(cap_res_min_existing_map.get(year, 0.0) or 0.0), cap_res_min_floor)))
+                cap_res_max_pairs.append((year, max(float(cap_res_max_existing_map.get(year, 0.0) or 0.0), cap_res_max_floor)))
+
+            cap_min_prof = self._format_profile(cap_min_pairs)
+            cap_res_min_prof = self._format_profile(cap_res_min_pairs)
+            cap_res_max_prof = self._format_profile(cap_res_max_pairs)
+            if cap_min_prof:
+                row["cap_min"] = cap_min_prof
+            if cap_res_min_prof:
+                row["cap_res_min"] = cap_res_min_prof
+            if cap_res_max_prof:
+                row["cap_res_max"] = cap_res_max_prof
+            return
 
         existing_cap_min = _require_float("cap_min", row.get("cap_min")) if row.get("cap_min") is not None else 0.0
         row["cap_min"] = max(existing_cap_min, per_unit_min)
@@ -761,6 +793,8 @@ class _ConversionRowsBuilder:
         if isinstance(metrics, dict):
             cap = _require_float("initial_capacity", metrics.get("initial_capacity", 0.0))
             output = _require_float("initial_energy_output", metrics.get("initial_energy_output", 0.0))
+            base_name, _ = _split_base_and_district(tech.name)
+            is_indirect = base_name.startswith("ind_")
 
             lifetime_years = _require_float("technical_lifetime", getattr(tech, "technical_lifetime", 0.0) or 0.0)
             window_factor_raw = self.retain_years_factor if self.retain_years_factor is not None else 1.0
@@ -783,6 +817,13 @@ class _ConversionRowsBuilder:
                     pairs = []
                     for idx, year in enumerate(self.scenario_years):
                         if self._years_since_start(year) > remaining_years + 1e-9:
+                            pairs.append((year, 0.0))
+                            continue
+                        if (
+                            self.lockout_until_year is not None
+                            and year < self.lockout_until_year
+                            and not is_indirect
+                        ):
                             pairs.append((year, 0.0))
                             continue
                         factor = self._retain_factor_for_year(idx)
@@ -828,13 +869,21 @@ class _ConversionRowsBuilder:
         base_name, tech_district = _split_base_and_district(tech.name)
         if district is None and tech_district is not None:
             district = tech_district
-        if base_name in HEAT_EXCHANGER_BASE_NAMES and district is not None:
+        if (base_name in HEAT_EXCHANGER_BASE_NAMES or base_name == "heat_grid") and district is not None:
             rid = self.district_to_region.get(district, district)
             target = max(
                 self.min_dhn_targets.get(rid, 0.0),
                 self.min_heat_grid_targets.get(rid, 0.0),
             )
             if target and target > 0:
+                if self.scenario_years and self.lockout_until_year is not None:
+                    pairs = [
+                        (year, 0.0 if year < self.lockout_until_year else float(target))
+                        for year in self.scenario_years
+                    ]
+                    prof = self._format_profile(pairs)
+                    if prof:
+                        return {"min_eout": prof}
                 return {"min_eout": float(target)}
         return None
 
@@ -961,6 +1010,7 @@ class _ConversionRowsBuilder:
         row: dict[str, Any],
         existing_capacity: float,
         tech: Technology,
+        metrics: Optional[dict[str, Any]] = None,
     ) -> None:
         if not self.scenario_years:
             return
@@ -983,10 +1033,18 @@ class _ConversionRowsBuilder:
         hydrogen_related = "hydrogen" in name_lower or _has_h2(cin) or _has_h2(cout)
 
         cap_limit = max(0.0, float(existing_capacity or 0.0))
-        if cap_limit == 0.0 and not hydrogen_related and all(not row.get(col) for col in ("cap_min", "cap_max")):
-            return
-
+        base_name, _ = _split_base_and_district(tech.name)
+        is_indirect = base_name.startswith("ind_")
+        if cap_limit <= 0.0 and is_indirect and isinstance(metrics, dict):
+            try:
+                existing_output = float(metrics.get("initial_energy_output", 0.0) or 0.0)
+            except NUMERIC_ERRORS:
+                existing_output = 0.0
+            if existing_output > 0.0:
+                cap_limit = max(cap_limit, existing_output / 8760.0)
         first_year = self.scenario_years[0]
+        lockout_until_year = self.lockout_until_year if self.lockout_until_year is not None else first_year
+
         hydrogen_start_year = 2030
 
         def _coerce_default(value: Any) -> Optional[float]:
@@ -1035,6 +1093,9 @@ class _ConversionRowsBuilder:
                     return 0.0
                 if base is None:
                     return UNBOUNDED_CAP
+            if year < lockout_until_year:
+                # Lockout period: no new capacity beyond what already exists.
+                return cap_limit
             if cap_limit <= 0.0:
                 return base
             if year != first_year:
@@ -1047,17 +1108,34 @@ class _ConversionRowsBuilder:
             base_val = base if base is not None else 0.0
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            # Keep user-specified minima when there is no existing capacity; only clamp when a
-            # positive capacity limit is present.
+            if year < lockout_until_year:
+                return min(base_val, cap_limit)
+            # Keep user-specified minima for later years when there is no existing capacity.
             if cap_limit <= 0.0:
                 return base_val
-            if year == first_year:
+            return base_val
+
+        def _adjust_cap_res_min(year: int, base: Optional[float]) -> Optional[float]:
+            base_val = base if base is not None else 0.0
+            if hydrogen_related and year < hydrogen_start_year:
+                return 0.0
+            if year < lockout_until_year:
                 return min(base_val, cap_limit)
             return base_val
 
-        if cap_limit > 0.0 or hydrogen_related:
-            _update_column("cap_max", _adjust_cap_max)
+        def _adjust_cap_res_max(year: int, base: Optional[float]) -> Optional[float]:
+            if hydrogen_related and year < hydrogen_start_year:
+                return 0.0
+            if year < lockout_until_year:
+                if base is None:
+                    return cap_limit
+                return min(float(base), cap_limit)
+            return base
+
+        _update_column("cap_max", _adjust_cap_max)
         _update_column("cap_min", _adjust_cap_min)
+        _update_column("cap_res_min", _adjust_cap_res_min)
+        _update_column("cap_res_max", _adjust_cap_res_max)
 
     # Misc helpers -----------------------------------------------------------
     def _years_since_start(self, year: int) -> float:
@@ -1578,7 +1656,6 @@ def _write_cesm_inputs_from_om(
     export_price_eur_per_mwh: float | None = None,
     grid_prices: dict[str, float] | None = None,
     supply_prices: dict[str, float] | None = None,
-    edge_defaults: dict[str, Any] | None = None,
     pipe_loss_fraction: float | None = None,
     pipe_cap_max_mw: float | None = None,
     pipe_opex_eur_per_mwh: float | None = None,
@@ -1632,9 +1709,6 @@ def _write_cesm_inputs_from_om(
             out[str(key).lower()] = val
         return out
 
-    edge_defaults = edge_defaults or {}
-    if not edge_defaults:
-        raise ValueError("edge_defaults must be provided via the EnergySystem commodity_config (no defaults)")
     if grid_prices is None or supply_prices is None:
         raise ValueError(
             "Commodity prices must be provided via EnergySystem.commodity_config or explicitly as grid_prices/supply_prices"
@@ -1666,12 +1740,12 @@ def _write_cesm_inputs_from_om(
         supply_prices,
     )
     
-    edge_strategy = edge_strategy or edge_defaults.get("edge_strategy", "mst")
-    min_shared_border_m = (
-        float(edge_defaults.get("min_shared_border_m", 0.0)) if min_shared_border_m is None else min_shared_border_m
-    )
-    max_pipes_per_district = edge_defaults.get("max_pipes_per_district") if max_pipes_per_district is None else max_pipes_per_district
-    neighbor_distance_m = edge_defaults.get("neighbor_distance_m") if neighbor_distance_m is None else neighbor_distance_m
+    edge_strategy = "mst"
+    min_shared_border_m = 0.0 if min_shared_border_m is None else float(min_shared_border_m)
+    if max_pipes_per_district is not None:
+        max_pipes_per_district = int(max_pipes_per_district)
+    if neighbor_distance_m is not None:
+        neighbor_distance_m = float(neighbor_distance_m)
 
     scenario_years: List[int] = []
     try:
@@ -2025,6 +2099,12 @@ def _write_cesm_inputs_from_om(
             sanitized.append(max(0.0, val))
         if sanitized:
             retain_schedule = sanitized
+
+    lockout_years_raw = getattr(om_scenario, "lockout_years", 2)
+    try:
+        lockout_years = max(0, int(lockout_years_raw))
+    except NUMERIC_ERRORS:
+        lockout_years = 2
     
     logger.debug(
         "retain_existing_output_factor=%s -> retain_factor=%s",
@@ -2207,6 +2287,7 @@ def _write_cesm_inputs_from_om(
         retain_factor=retain_factor,
         retain_years_factor=retain_existing_output_years_factor,
         retain_schedule=retain_schedule,
+        lockout_years=lockout_years,
         elec_price_eur_per_mwh=elec_price_eur_per_mwh,
     )
 
@@ -2273,15 +2354,13 @@ def write_cesm_inputs_from_energy_system(
         raise ValueError("retain_existing_output_schedule must be provided via scenario or argument")
 
     om_ctx = build_om_from_es(energy_system, scenario, demand_name=demand_name)
-    grid_prices, supply_prices, edge_defaults = _commodity_config_from_energy_system(energy_system)
+    grid_prices, supply_prices = _commodity_config_from_energy_system(energy_system)
     logger.debug(
-        "commodity_config extracted: grid_prices=%s (%s), supply_prices=%s (%s), edge_defaults=%s (%s)",
+        "commodity_config extracted: grid_prices=%s (%s), supply_prices=%s (%s)",
         grid_prices,
         type(grid_prices).__name__,
         supply_prices,
         type(supply_prices).__name__,
-        edge_defaults,
-        type(edge_defaults).__name__,
     )
     if polygons_gdf is None:
         polygons_gdf = _polygons_from_energy_system(energy_system)
@@ -2294,7 +2373,6 @@ def write_cesm_inputs_from_energy_system(
         data_dir=getattr(energy_system, "data_dir", None),
         grid_prices=grid_prices,
         supply_prices=supply_prices,
-        edge_defaults=edge_defaults,
         start_year=getattr(scenario, "start_year", None),
         end_year=getattr(scenario, "end_year", None),
         year_gap=getattr(scenario, "year_gap", None),

@@ -203,7 +203,6 @@ class EnergySystemBuilder:
         *,
         grid_prices: dict[str, Any],
         supply_prices_eur_per_mwh: dict[str, Any],
-        edge_defaults: dict[str, Any] | None = None,
     ):
         if not isinstance(grid_prices, dict):
             raise TypeError("grid_prices must be a mapping")
@@ -213,10 +212,6 @@ class EnergySystemBuilder:
             "grid_prices": dict(grid_prices),
             "supply_prices_eur_per_mwh": dict(supply_prices_eur_per_mwh),
         }
-        if edge_defaults is not None:
-            if not isinstance(edge_defaults, dict):
-                raise TypeError("edge_defaults must be a mapping if provided")
-            config["edge_defaults"] = dict(edge_defaults)
         self.commodity_config = config
         return self
 
