@@ -1,8 +1,9 @@
 from __future__ import annotations
-
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Mapping, Optional, Sequence
+import numpy as np
+import pandas as pd
 
 from pypeline.energy_system.demand import RegionDemand
 from pypeline.energy_system.energy_system import EnergySystem
@@ -20,7 +21,7 @@ class OMContext:
     commodity: str
     annual_demand: Dict[int, Dict[int, float]]  # region -> year -> MWh
     demand_profile: List[float]                 # l = 8760
-    schedules: Dict[str, List[float]]           # Schedules g_{tech,h}: tech -> fractional share of demand per hour
+    schedules: Dict[str, List[float]]           # {tech,h}: fractional share of demand per hour
     tss_indices: List[int]                      # 0-based hour indices
     tss_weights: List[int]
     constraints: Dict[str, Dict[int, float]] | None = None
@@ -37,46 +38,33 @@ def _shares_from_energy_outputs(tech_to_energy_mwh: Mapping[str, float]) -> Dict
 
 
 def _try_get_fractional_profile(region_demand: RegionDemand) -> Optional[List[float]]:
-    """Try common attribute paths on a RegionDemand to extract an 8760-shape profile."""
-    prof = getattr(region_demand, "profile", None)
+    """Extract an 8760-shape profile from RegionDemand.profile when available."""
+    prof = region_demand.profile
     if prof is not None:
         try:
             seq = [float(x) for x in prof]
             if len(seq) == 8760:
                 return seq
-        except Exception:
+        except (TypeError, ValueError):
             pass
-    
-    d = getattr(region_demand, "demand", None)
-    if d is not None:
-        prof2 = getattr(d, "profile", None)
-        if prof2 is not None:
-            try:
-                seq = [float(x) for x in prof2]
-                if len(seq) == 8760:
-                    return seq
-            except Exception:
-                pass
     return None
 
 
 def _safe_int_id(raw, fallback: int) -> int:
     """Handle pandas Series / NumPy scalars / strings gracefully when converting to int."""
-    if hasattr(raw, "iloc"):
-        try:
-            raw = raw.iloc[0]
-        except Exception:
-            pass
-    try:
-        import numpy as _np  
-        if isinstance(raw, _np.generic):
-            raw = raw.item()
-    except Exception:
-        pass
+    if isinstance(raw, pd.Series):
+        if raw.empty:
+            return int(fallback)
+        raw = raw.iloc[0]
+    if isinstance(raw, np.generic):
+        raw = raw.item()
     try:
         return int(raw)
-    except Exception:
-        return int(fallback)
+    except (TypeError, ValueError):
+        try:
+            return int(float(raw))
+        except (TypeError, ValueError):
+            return int(fallback)
 
 
 def make_flat_schedules(shares: Mapping[str, float], hours: int = 8760) -> Dict[str, List[float]]:
@@ -120,28 +108,24 @@ def build_om_from_es(
         d0 = regions[0].get_demand(demand_name)
         if d0 is None:
             raise ValueError(f"First region has no demand name '{demand_name}'")
-        commodity_out = d0.demand.commodity_in if hasattr(d0, "demand") else getattr(d0, "commodity_in", None)
-        if commodity_out is None:
-            raise ValueError("Could not infer output commodity for selected demand")
+        commodity_out = d0.demand.commodity_in
 
     region_ids: List[int] = []
     annual_demand: Dict[int, Dict[int, float]] = {}
     shares_accumulated: defaultdict[str, float] = defaultdict(float)
-
     demand_profile: Optional[List[float]] = None
-
     region_metrics: Dict[int, Dict[str, Dict[str, float]]] = {}
     tech_objects: Dict[str, Technology] = {}
 
     for idx, region in enumerate(regions):
-        rid = _safe_int_id(getattr(region, "id", getattr(region, "id_", idx)), idx)
+        rid = _safe_int_id(region.id, idx)
         region_ids.append(rid)
 
         rd = region.get_demand(demand_name)
         if rd is None:
             raise ValueError(f"Region {rid} has no demand '{demand_name}'")
 
-        ann = float(getattr(rd, "value", getattr(rd, "annual", 0.0)))
+        ann = rd.annual_value()
         annual_demand[rid] = {year: ann for year in scenario_years}
 
         if demand_profile is None:
@@ -151,18 +135,16 @@ def build_om_from_es(
 
         tech_to_energy: Dict[str, float] = {}
         metrics = region_metrics.setdefault(rid, {})
-        for region_technology in getattr(region, "region_technologies", []):
-            tech = getattr(region_technology, "technology", None)
-            if tech is None:
-                continue
-            tech_name = getattr(tech, "name", f"tech-{len(tech_objects)}")
+        for region_technology in region.region_technologies:
+            tech = region_technology.technology
+            tech_name = tech.name
             tech_objects.setdefault(tech_name, tech)
             metrics[tech_name] = {
-                "initial_energy_output": float(getattr(region_technology, "initial_energy_output", 0.0)),
-                "initial_capacity": float(getattr(region_technology, "initial_capacity", 0.0)),
+                "initial_energy_output": float(region_technology.initial_energy_output),
+                "initial_capacity": float(region_technology.initial_capacity),
             }
-            if getattr(tech, "commodity_out", None) == commodity_out:
-                tech_to_energy[tech_name] = float(getattr(region_technology, "initial_energy_output", 0.0))
+            if tech.commodity_out == commodity_out:
+                tech_to_energy[tech_name] = float(region_technology.initial_energy_output)
 
         for tech_name, value in _shares_from_energy_outputs(tech_to_energy).items():
             shares_accumulated[tech_name] += value
@@ -190,7 +172,7 @@ def build_om_from_es(
         schedules = make_flat_schedules(shares_annual, hours=hours)
 
     tss_idx, tss_w = four_times_indices()
-    constraints = getattr(energy_system, "constraints", None)
+    constraints = energy_system.constraints
 
     return OMContext(
         years=scenario_years,

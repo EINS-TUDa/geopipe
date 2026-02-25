@@ -132,10 +132,9 @@ def main():
     dao = DAO(conn)
     plotter = Plotter(dao)
 
-    sankey_fig = plotter.plot_sankey(year=2020)
-    sankey_fig.show()
-    sankey_fig2 = plotter.plot_sankey(year=2030)
-    sankey_fig2.show()
+    for year in years:
+        sankey_fig = plotter.plot_sankey(year=year)
+        sankey_fig.show()
 
     conn.close()
 
