@@ -2533,9 +2533,6 @@ def _scenario_df(
 def _tss_df(*, tss_name: str, dt_hours: int) -> pd.DataFrame:
     return pd.DataFrame([{"TSS_name": tss_name, "dt": int(dt_hours)}], columns=["TSS_name", "dt"])
 
-def _param_cols() -> list[str]:
-    return list(CONV_SUBPROC_PARAM_COLS)
-
 # ====================================================================================
 # Runner CLI
 # ====================================================================================
