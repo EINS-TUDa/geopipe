@@ -116,6 +116,11 @@ def build_for_subfolder(
         output_path=plot_out,
         region_id_column=region_id_column,
         title=f"District topology: {name}",
+        caps_legend={
+            "max_demand_mwh": f"{float(max_demand_mwh):.0f}",
+            "max_street_length_km": f"{float(max_street_length_km):.1f}",
+            "demand_share_pct": f"{float(demand_share_pct):.0f}%",
+        },
     )
 
     print(

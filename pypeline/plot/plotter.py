@@ -1,4 +1,5 @@
 import re
+import hashlib
 from pathlib import Path
 from typing import Any
 import matplotlib.pyplot as plt
@@ -25,6 +26,7 @@ def plot_streets_colored_by_region(
     output_path: Path,
     region_id_column: str = "id",
     title: str = "Districts by streets",
+    caps_legend: dict[str, Any] | None = None,
 ) -> None:
     """Render a quick topology plot for polygon pipeline outputs.
 
@@ -232,6 +234,34 @@ def plot_streets_colored_by_region(
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
     ax.set_aspect("equal", adjustable="box")
+
+    if caps_legend:
+        legend_lines = []
+        for key, value in caps_legend.items():
+            if value is None:
+                continue
+            legend_lines.append(f"{key}: {value}")
+        if legend_lines:
+            legend_handles = [
+                Line2D([], [], linestyle="none", marker=None, color="none", label=line)
+                for line in legend_lines
+            ]
+            caps_box = ax.legend(
+                handles=legend_handles,
+                title="Topology caps",
+                loc="lower left",
+                frameon=True,
+                facecolor="white",
+                framealpha=0.9,
+                edgecolor="#bdbdbd",
+                fontsize=8,
+                title_fontsize=9,
+                handlelength=0,
+                handletextpad=0,
+                borderpad=0.6,
+            )
+            ax.add_artist(caps_box)
+
     fig.subplots_adjust(top=0.88)
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
     fig.savefig(output_path, dpi=220)
@@ -287,11 +317,6 @@ class EnergySystemPlotter:
                 out[label] = self._COMMODITY_COLORS.get(key, self._COMMODITY_COLORS["other"])
             return out
 
-        families: dict[str, list[str]] = {}
-        for label in sorted(labels):
-            fam = self._technology_family(label)
-            families.setdefault(fam, []).append(label)
-
         family_cmaps = {
             "gas": "Reds",
             "heat_pump": "Wistia",
@@ -303,12 +328,13 @@ class EnergySystemPlotter:
             "other": "Greys",
         }
         out: dict[str, Any] = {}
-        for fam, fam_labels in families.items():
+        for label in sorted(labels):
+            fam = self._technology_family(label)
             cmap = cm.get_cmap(family_cmaps.get(fam, "Greys"))
-            n = len(fam_labels)
-            vals = [0.75] if n == 1 else np.linspace(0.45, 0.9, n)
-            for idx, label in enumerate(fam_labels):
-                out[label] = cmap(float(vals[idx]))
+            token = hashlib.md5(str(label).encode("utf-8")).hexdigest()
+            u = (int(token[:8], 16) % 1000) / 999.0
+            val = 0.42 + 0.50 * float(u)
+            out[label] = cmap(float(val))
         return out
 
     @staticmethod
@@ -477,6 +503,19 @@ class EnergySystemPlotter:
 
         color_map = self._build_label_color_map(used_labels, share_view=share_view) if used_labels else {}
 
+        all_bounds = [region.polygon.total_bounds for region in self.energy_system.regions if region.polygon is not None]
+        if all_bounds:
+            minx = min((b[0] for b in all_bounds))
+            miny = min((b[1] for b in all_bounds))
+            maxx = max((b[2] for b in all_bounds))
+            maxy = max((b[3] for b in all_bounds))
+            map_span = max(float(maxx - minx), float(maxy - miny), 1.0)
+        else:
+            map_span = 1.0
+
+        demand_values_all = [float(v.get("demand_value", 0.0)) for v in region_plot_data.values()]
+        max_demand_value = max(demand_values_all) if demand_values_all else 0.0
+
         # Plot each region's polygon
         for region_idx, region in enumerate(self.energy_system.regions):
             region.polygon.boundary.plot(
@@ -521,8 +560,8 @@ class EnergySystemPlotter:
                 if isinstance(centroid, Point):
                     x, y = centroid.x, centroid.y
 
-                    # Calculate the pie radius based on demand_value
-                    pie_radius = 20 + demand_value / 100000  # Adjust formula as needed
+                    demand_norm = (demand_value / max_demand_value) if max_demand_value > 0 else 0.0
+                    pie_radius = map_span * (0.012 + 0.018 * demand_norm)
 
                     # Total output from all technologies
                     total_output = sum(tech_outputs.values())

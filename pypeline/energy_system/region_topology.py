@@ -929,7 +929,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
         if not changed:
             break
     if enable_final_resort and max_demand_mwh is not None and (float(max_demand_mwh) > 0.0):
-        small_region_demand_threshold_mwh = 0.15 * float(max_demand_mwh)
+        small_region_demand_threshold_mwh = 0.20 * float(max_demand_mwh)
         assigned_for_dem = s.dropna(subset=[region_id_column]).copy()
         demand_total_by_region: dict[int, float] = {}
         if not assigned_for_dem.empty:
@@ -1292,13 +1292,12 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
         members_from_s = sorted((int(v) for v in s.loc[s[region_id_column] == rid_i, '_street_key'].dropna().astype(int).tolist()))
         if not members_from_s:
             continue
-        geoms = [g for g in grp.geometry if g is not None and (not g.is_empty)]
-        if not geoms:
-            seg_geoms = [g for g in base.loc[base['_street_key'].isin(members_from_s), 'geometry'].tolist() if g is not None and (not g.is_empty)]
-            if not seg_geoms:
-                continue
-            geoms = [g.buffer(max(1.0, float(tolerance_m))) for g in seg_geoms]
-        row['geometry'] = unary_union(geoms).buffer(0)
+        seg_geoms = [g for g in base.loc[base['_street_key'].isin(members_from_s), 'geometry'].tolist() if g is not None and (not g.is_empty)]
+        if not seg_geoms:
+            continue
+        corridor_buffer_m = max(20.0, 2.0 * float(tolerance_m))
+        geoms = [g.buffer(corridor_buffer_m) for g in seg_geoms]
+        row['geometry'] = unary_union(geoms).convex_hull.buffer(0)
         row['_street_members'] = members_from_s
         row['_demand_street_members'] = sorted((int(v) for v in s.loc[(s[region_id_column] == rid_i) & (s['_is_demand_street'] == True), '_street_key'].dropna().astype(int).tolist()))
         row['street_count'] = float(len(members_from_s))
