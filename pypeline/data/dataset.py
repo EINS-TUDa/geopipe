@@ -19,6 +19,28 @@ class CensusTechnology(Enum):
     District_Heating = "District Heating"
     NoEnergyCarrier = "No Energy Carrier"
 
+
+CENSUS_HEATING_CATEGORY_TO_TECH: dict[str, str | None] = {
+    "Gas": "ind_gas_boiler",
+    "Heizoel": "ind_oil_boiler",
+    "Holz_Holzpellets": "ind_biomass_boiler",
+    "Biomasse_Biogas": "ind_biogas_boiler",
+    "Solar_Geothermie_Waermepumpen": "ind_heat_pump",
+    "Strom": "ind_direct_electric",
+    "Kohle": "ind_coal_boiler",
+    "Fernwaerme": "HeatExchanger",
+    "kein_Energietraeger": None,
+}
+
+
+def census_category_to_tech(category: str | None) -> str | None:
+    if category is None:
+        return None
+    key = str(category).strip()
+    if not key:
+        return None
+    return CENSUS_HEATING_CATEGORY_TO_TECH.get(key)
+
 class Dataset(ABC):
     """
     A Dataset represents a queryable data source with metadata.

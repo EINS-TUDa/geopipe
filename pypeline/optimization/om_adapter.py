@@ -1,15 +1,25 @@
 from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 import numpy as np
-import pandas as pd
 
 from pypeline.energy_system.demand import RegionDemand
 from pypeline.energy_system.energy_system import EnergySystem
+from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME
+from pypeline.energy_system.io_utils import (
+    commodity_config_from_energy_system,
+    polygons_from_energy_system,
+    resolve_retain_schedule,
+)
 from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_system.tss import four_times_indices
-from pypeline.optimization.validation import assert_fractional, renormalize_to_one
+from pypeline.validation import (
+    assert_fractional,
+    normalize_shares_or_zero,
+    renormalize_to_one,
+    to_int_id,
+)
 from pypeline.energy_technology.technology import Technology
 
 
@@ -52,19 +62,10 @@ def _try_get_fractional_profile(region_demand: RegionDemand) -> Optional[List[fl
 
 def _safe_int_id(raw, fallback: int) -> int:
     """Handle pandas Series / NumPy scalars / strings gracefully when converting to int."""
-    if isinstance(raw, pd.Series):
-        if raw.empty:
-            return int(fallback)
-        raw = raw.iloc[0]
-    if isinstance(raw, np.generic):
-        raw = raw.item()
     try:
-        return int(raw)
-    except (TypeError, ValueError):
-        try:
-            return int(float(raw))
-        except (TypeError, ValueError):
-            return int(fallback)
+        return to_int_id(raw)
+    except ValueError:
+        return int(fallback)
 
 
 def make_flat_schedules(shares: Mapping[str, float], hours: int = 8760) -> Dict[str, List[float]]:
@@ -93,7 +94,7 @@ def _shape_schedule_for_share(
 def build_om_from_es(
     energy_system: EnergySystem,
     scenario: Scenario,
-    demand_name: str = "residential_heat",
+    demand_name: str = DEFAULT_HEAT_GRID_DEMAND_NAME,
     commodity_out: Optional[str] = None,
     shaped_schedules: Optional[Mapping[str, Sequence[float]]] = None,
 ) -> OMContext:
@@ -149,11 +150,7 @@ def build_om_from_es(
         for tech_name, value in _shares_from_energy_outputs(tech_to_energy).items():
             shares_accumulated[tech_name] += value
 
-    total_share = sum(shares_accumulated.values())
-    if total_share > 0:
-        shares_annual = {t: s / total_share for t, s in shares_accumulated.items()}
-    else:
-        shares_annual = {t: 0.0 for t in shares_accumulated}
+    shares_annual = normalize_shares_or_zero(shares_accumulated)
 
     hours = 8760
     if demand_profile is None:

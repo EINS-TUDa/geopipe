@@ -337,6 +337,11 @@ def _spec_from_dict(data: Dict) -> TechnologySpec:
         opex_cost_power=float(data.get("opex_cost_power", 0.0)),
         capex_cost_power=float(data.get("capex_cost_power", 0.0)),
         capex_cost_base=float(data.get("capex_cost_base", 0.0)),
+        pipe_capex_eur_per_km=(
+            float(data["pipe_capex_eur_per_km"])
+            if data.get("pipe_capex_eur_per_km") is not None
+            else None
+        ),
         cap_min=float(data["cap_min"]) if data.get("cap_min") is not None else None,
         cap_max=float(data["cap_max"]) if data.get("cap_max") is not None else None,
         max_units=int(data["max_units"]) if data.get("max_units") is not None else None,

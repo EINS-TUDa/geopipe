@@ -2,10 +2,17 @@ from abc import ABC, abstractmethod
 import math
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from pypeline.data.data_registry import DataRegistry
-from pypeline.energy_technology.technology import Technology
+from pypeline.energy_technology.technology import (
+    DHN_TECH_BASE_NAMES,
+    Technology,
+    is_central_heat_supply as _is_central_heat_supply,
+)
 
-HEAT_EXCHANGER_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
-HOURS_PER_YEAR = 8760.0
+HEAT_EXCHANGER_NAMES: tuple[str, ...] = DHN_TECH_BASE_NAMES[:2]
+PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
+DEFAULT_HEAT_GRID_DEMAND_NAME: str = "residential_heat"
+DEFAULT_HEAT_GRID_COST_DATASET: str = "residential_heat_technology_shares"
+HOURS_PER_YEAR: float = 8760.0
 
 def _matches_tech_name(name: str | None, candidates: tuple[str, ...]) -> bool:
     """Return True if `name` matches any candidate or its district clones."""
@@ -18,18 +25,6 @@ def _matches_tech_name(name: str | None, candidates: tuple[str, ...]) -> bool:
         if base in candidates:
             return True
     return False
-
-
-def _is_central_heat_supply(name: str | None) -> bool:
-    if not name:
-        return False
-    base = name
-    if "_U" in base:
-        base, _ = base.rsplit("_U", 1)
-    if "_D" in base:
-        base, _ = base.rsplit("_D", 1)
-    return base.startswith("cen_")
-
 if TYPE_CHECKING:
     from pypeline.energy_system.region import Region
 
@@ -103,9 +98,11 @@ class MinimumDHNThroughputRule(EnergySystemRule):
     """
     Require a minimum annual heat delivered by DHN-like techs for the given demand.
     Writes per-region targets (MWh) to energy_system.constraints['min_dhn_throughput_mwh'].
+    Target activation in the CESM plugin is conditional: it is enforced only for
+    districts where DHN already exists or is forced to be built by trigger logic.
     """
     def __init__(self,
-                 demand_name="residential_heat",
+                 demand_name=DEFAULT_HEAT_GRID_DEMAND_NAME,
                  min_share=None,                     
                  min_mwh_by_region=None,             
                  dhn_tech_names=None):               
@@ -145,7 +142,7 @@ class MinimumDHNThroughputRule(EnergySystemRule):
                 if tech is None:
                     continue
                 tech_name = tech.name
-                if _matches_tech_name(tech_name, self.dhn_tech_names) or _is_central_heat_supply(tech_name):
+                if _matches_tech_name(tech_name, self.dhn_tech_names):
                     has_dhn = True
                     break
             if not has_dhn:
@@ -169,7 +166,7 @@ class MinimumCentralCapacityRule(EnergySystemRule):
     def __init__(
         self,
         *,
-        demand_name: str = "residential_heat",
+        demand_name: str = DEFAULT_HEAT_GRID_DEMAND_NAME,
         min_share_of_demand: float = 0.5,
         min_share_by_region: Optional[Dict[int, float]] = None,
         hours_per_year: float = HOURS_PER_YEAR,
@@ -269,7 +266,7 @@ class MinimumHeatGridOutputRule(RegionRule):
     """Ensure heat-grid-supplied technologies meet a minimum output by rescaling shares."""
 
     def __init__(self,
-                 demand_name: str = "residential_heat",
+                 demand_name: str = DEFAULT_HEAT_GRID_DEMAND_NAME,
                  min_output_mwh: float = 1.0,
                  min_share: float | None = None,
                  heat_grid_names: tuple[str, ...] | None = None):
@@ -385,7 +382,7 @@ class MinimumHeatGridConstraintRule(EnergySystemRule):
 
     def __init__(
         self,
-        demand_name: str = "residential_heat",
+        demand_name: str = DEFAULT_HEAT_GRID_DEMAND_NAME,
         min_output_mwh: float = 1.0,
         min_share: float | None = None,
         min_mwh_by_region: Optional[Dict[int, float]] = None,
@@ -458,7 +455,7 @@ class HeatExchangerCostAdjustmentRule(RegionRule):
     def __init__(
         self,
     data_registry: DataRegistry | None,
-    dataset_type: str = "residential_heat_technology_shares",
+    dataset_type: str = DEFAULT_HEAT_GRID_COST_DATASET,
     heat_exchanger_names: tuple[str, ...] = HEAT_EXCHANGER_NAMES,
         decentralized_keys: tuple[str, ...] | None = None,
         cost_attribute: str = "capex_cost_power",

@@ -107,9 +107,11 @@ def build_for_subfolder(
     )
 
     polygons_out = subfolder / f"polygon_{name}.geojson"
+    streets_out = subfolder / f"street_segments_{name}.geojson"
     plot_out = subfolder / f"district_topology_{name}.png"
 
     polygons.drop(columns=["_street_members", "_demand_street_members"], errors="ignore").to_file(polygons_out, driver="GeoJSON")
+    streets_with_region.to_file(streets_out, driver="GeoJSON")
     plot_streets_colored_by_region(
         streets_with_region=streets_with_region,
         polygons=polygons,
@@ -132,6 +134,7 @@ def build_for_subfolder(
         f"disconnected regions: {mantra['disconnected_regions']}"
     )
     print(f"Wrote polygons: {polygons_out} ({len(polygons)} region features)")
+    print(f"Wrote district street segments: {streets_out} ({len(streets_with_region)} features)")
     print(f"Wrote topology plot: {plot_out}")
 
     return polygons_out, plot_out

@@ -20,4 +20,4 @@ stages:
   stage1:
     max_units: 10000
   stage3:
-    max_units: 2
+    max_units: 50

@@ -3,12 +3,12 @@
 #################################
 
 ind_heat_pump:
-  efficiency: 4.1
-  technical_lifetime: 18
-  opex_cost_energy: 0
-  opex_cost_power: 13000
-  capex_cost_power: 10100
-  capex_cost_base: 10600
+  efficiency: 3.9
+  technical_lifetime: 18  # years
+  opex_cost_energy: 0     # €/MWh
+  opex_cost_power: 13000  # €/MW
+  capex_cost_power: 10100 # €/MWh
+  capex_cost_base: 10600  # €
   cap_min: 0.005
   cap_max: 0.11
 
@@ -16,7 +16,7 @@ ind_gas_boiler:
   efficiency: 0.94
   technical_lifetime: 20
   opex_cost_energy: 0
-  opex_cost_power: 50000000000
+  opex_cost_power: 5000
   capex_cost_power: 1620
   capex_cost_base: 7100
   cap_min: 0.01
@@ -33,12 +33,12 @@ ind_oil_boiler:
   cap_max: 0.11
 
 ind_hydrogen_boiler:
-  efficiency: 0.994 
+  efficiency: 0.95 
   technical_lifetime: 20
   opex_cost_energy: 0
   opex_cost_power: 100000
-  capex_cost_power: 177000
-  capex_cost_base: 10900
+  capex_cost_power: 200000
+  capex_cost_base: 11400
   cap_min: 0.06
   cap_max: 0.11
 
@@ -50,7 +50,7 @@ heat_exchanger:
   capex_cost_power: 0
   capex_cost_base: 1360000
   cap_min: 0.01
-  cap_max: 1000000000.0
+  cap_max: 100000000.0
 
 ################################
 # central heating technologies
@@ -62,7 +62,7 @@ cen_heat_pump:
   opex_cost_energy: 0
   opex_cost_power: 150000
   capex_cost_power: 31000
-  capex_cost_base: 530000
+  capex_cost_base: 53000
   cap_min: 0.3
   cap_max: 20.0
 
@@ -91,11 +91,17 @@ cen_biomass_woodpellets:
   technical_lifetime: 25
   opex_cost_energy: 0
   opex_cost_power: 100
-  capex_cost_power: 439000
+  capex_cost_power: 440000
   capex_cost_base: 260000
-  cap_min: 446.7
-  cap_max: 446.7
+  cap_min: 450
+  cap_max: 450
 
+heat_grid:
+  efficiency: 0.855
+  technical_lifetime: 40.0
+  cap_min: 1000000.0
+  cap_max: 1000000.0
+  max_units: 1
 
 grid_electricity:
   commodity_out: electricity
@@ -110,19 +116,15 @@ grid_hydrogen:
   max_units: 1
 
 
-heat_grid:
-  cap_max: 1000000000
-  max_units: 1
-
 #############################
 # hidden from region builder
 #############################
 
 heat_pipe:
-  efficiency: 0.99
-  technical_lifetime: 30.0
+  efficiency: 0.955
+  technical_lifetime: 40.0
   opex_cost_power: 0.0
-  opex_cost_energy: 0.0
-  capex_cost_power: 100.0
-  capex_cost_base: 0.0
-  cap_max: 1000000000.0
+  opex_cost_energy: 1.44
+  pipe_capex_eur_per_km: 1000000.0
+  cap_min: 100000.0
+  cap_max: 100000.0

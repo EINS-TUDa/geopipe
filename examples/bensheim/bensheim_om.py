@@ -28,7 +28,11 @@ def main():
     polygons = gpd.read_file(polygons_path)
 
 
-    data_reg = get_default_data_registry()
+    data_reg = get_default_data_registry(
+        mode="local",
+        local_heat_demand_file=project_root / "data" / "WaermeatlasHessen.gpkg",
+        local_heating_shares_file=project_root / "data" / "Census2022HeatingType100mGrid" / "Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
+    )
 
     esb = EnergySystemBuilder(energy_system_name="Bensheim")
     esb.set_polygons(polygons)
@@ -82,11 +86,13 @@ def main():
         cli=[sys.executable, str(runner)],
         run_args=["--workdir", ".", "-m", model_name, "-s", scenario_name],
         run_subdir=run_name,
+        results_db_name="db.sqlite",
         write_inputs=True,
         model_name=model_name,
         scenario_name=scenario_name,
         tss_name=tss_name,
         scenario=scenario,
+        demand_name="residential_heat",
     )
 
     solution = backend.optimize(es, scenario=scenario, demand_name="residential_heat")

@@ -36,6 +36,7 @@ class TechnologySpec:
     opex_cost_power: float = 0.0
     capex_cost_power: float = 0.0
     capex_cost_base: float = 0.0
+    pipe_capex_eur_per_km: float | None = None
     cap_min: float | None = None
     cap_max: float | None = None
     max_units: int | None = None
@@ -53,6 +54,7 @@ class TechnologySpec:
             "opex_cost_power": self.opex_cost_power,
             "capex_cost_power": self.capex_cost_power,
             "capex_cost_base": self.capex_cost_base,
+            "pipe_capex_eur_per_km": self.pipe_capex_eur_per_km,
             "cap_min": self.cap_min,
             "cap_max": self.cap_max,
             "max_units": self.max_units,
@@ -71,6 +73,7 @@ class TechnologySpec:
             opex_cost_power=self.opex_cost_power,
             capex_cost_power=self.capex_cost_power,
             capex_cost_base=self.capex_cost_base,
+            pipe_capex_eur_per_km=self.pipe_capex_eur_per_km,
             cap_min=self.cap_min,
             cap_max=self.cap_max,
             max_units=self.max_units,
@@ -97,6 +100,7 @@ def validate_spec_dict(data: dict[str, Any]) -> None:
         "opex_cost_power",
         "capex_cost_power",
         "capex_cost_base",
+        "pipe_capex_eur_per_km",
         "cap_min",
         "cap_max",
     )

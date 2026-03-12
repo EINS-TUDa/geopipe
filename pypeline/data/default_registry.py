@@ -1,5 +1,6 @@
 import geopandas as gpd
 import pandas as pd
+from pathlib import Path
 from pypeline.data import (
     DataRegistry,
     DatabaseConnection,
@@ -7,12 +8,8 @@ from pypeline.data import (
 )
 from sqlalchemy import text
 
-from pypeline.data.data_utils import get_gdf_from_ags
 from pypeline.data.dataset import SimpleDataset, FileDataset, CensusTechnology
 from pypeline.energy_system.unit import UnitEnum
-
-# Module-level variable for singleton instance
-_DEFAULT_REGISTRY: DataRegistry | None = None
 
 
 def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:
@@ -93,17 +90,38 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 
     return total_demand
 
-def waermeatlas_hessen_query(dataset: FileDataset, query: dict) -> float:
+def local_heat_demand_query(dataset: FileDataset, query: dict) -> float:
     if query["key"] != "residential_heat_demand":
-        raise ValueError("waermeatlas_hessen_query only supports 'residential_heat_demand' key")
+        raise ValueError("local_heat_demand_query only supports 'residential_heat_demand' key")
 
     region: gpd.GeoDataFrame = query["region"]
     region_epsg = region.crs.to_epsg()
 
     gdf = dataset.get_data()
-    gdf = gdf.to_crs(epsg=region_epsg)
-    gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
-    return gdf_in_region["qnutzwaerme_2020_kwh"].sum()
+    if gdf.crs.to_epsg() != region_epsg:
+        gdf = gdf.to_crs(epsg=region_epsg)
+
+    if "qnutzwaerme_2020_kwh" in gdf.columns:
+        gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
+        return float(pd.to_numeric(gdf_in_region["qnutzwaerme_2020_kwh"], errors="coerce").fillna(0.0).sum())
+
+    gdf_in_region = gpd.sjoin(gdf, region, predicate="intersects", how="inner")
+
+    if "total_heat_demand" in gdf_in_region.columns:
+        total_heat_demand_wh = pd.to_numeric(gdf_in_region["total_heat_demand"], errors="coerce").fillna(0.0).sum()
+        return float(total_heat_demand_wh) / 1_000_000.0
+
+    if "linear_heat_density" in gdf_in_region.columns and "street_length" in gdf_in_region.columns:
+        linear = pd.to_numeric(gdf_in_region["linear_heat_density"], errors="coerce").fillna(0.0)
+        length = pd.to_numeric(gdf_in_region["street_length"], errors="coerce").fillna(0.0)
+        total_heat_demand_wh = (linear * length).sum()
+        return float(total_heat_demand_wh) / 1_000_000.0
+
+    raise ValueError(
+        "Local heat demand file must contain either 'qnutzwaerme_2020_kwh', "
+        "'total_heat_demand', or both 'linear_heat_density' and 'street_length'."
+    )
+
 
 def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusTechnology, float]:
     if query["key"] != "heating_shares":
@@ -126,8 +144,29 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusT
     if gdf.crs.to_epsg() != region_epsg:
         gdf = gdf.to_crs(epsg=region_epsg)
 
+    existing_columns = set(gdf.columns)
+    optional_district_heating_columns = [
+        "Nahwaerme",
+        "nahwaerme",
+        "NAHWAERME",
+    ]
+    district_heating_aliases = [
+        "Fernwaerme",
+        "fernwaerme",
+        "FERNWAERME",
+        *optional_district_heating_columns,
+    ]
+    district_heating_columns = [col for col in district_heating_aliases if col in existing_columns]
+
     gdf_in_region = gpd.sjoin(gdf, region, predicate="intersects", how="inner")
     gdf_in_region = gdf_in_region.rename(columns=census_names)
+
+    if district_heating_columns:
+        effective_district_heating_columns = [census_names.get(col, col) for col in district_heating_columns]
+        district_heat_values = pd.Series(0.0, index=gdf_in_region.index)
+        for col in effective_district_heating_columns:
+            district_heat_values = district_heat_values + pd.to_numeric(gdf_in_region[col], errors='coerce').fillna(0.0)
+        gdf_in_region[CensusTechnology.District_Heating] = district_heat_values
 
     technologies = list(census_names.values())
 
@@ -161,9 +200,12 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusT
     return tech_shares
 
 
-def _create_default_datasets() -> list:
-    """Create and return all default datasets (lazy initialization)."""
-    # Create database connection
+def _create_default_datasets(
+    *,
+    mode: str,
+    local_heat_demand_file: str | Path | None,
+    local_heating_shares_file: str | Path | None,
+) -> list:
     ***REMOVED***_conn = DatabaseConnection(
         host="localhost",
         # host="ds1.example.com",
@@ -171,24 +213,6 @@ def _create_default_datasets() -> list:
         database="***REMOVED***",
         user="***REMOVED***",
         password="***REMOVED***"
-    )
-    print(f"***REMOVED*** on {***REMOVED***_conn.host} available: {***REMOVED***_conn.is_available()}")
-
-    census_heating_dataset = PostgreSQLDataset(
-        keys=["heating_shares"],
-        db_connection=***REMOVED***_conn,
-        priority=5,
-        query_function=***REMOVED***_census_query,
-        regional_validity=get_gdf_from_ags(["09 1 85 149"])
-    )
-
-    ***REMOVED***_kwp_dataset = PostgreSQLDataset(
-        keys=["residential_heat_demand"],
-        unit=UnitEnum.KWH,
-        db_connection=***REMOVED***_conn,
-        priority=5,
-        query_function=***REMOVED***_kwp_query,
-        regional_validity=get_gdf_from_ags(["09 1 85 149"])
     )
 
     residential_heat_demand_profile_dataset = CSVDataset(
@@ -203,7 +227,7 @@ def _create_default_datasets() -> list:
         file_path="data/corrected_eletricity_demand_2016.txt",
         pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
         priority=1,
-    )
+    )    
 
     residential_yearly_electricity_demand = SimpleDataset(
         keys=["residential_electricity_demand"],
@@ -212,49 +236,94 @@ def _create_default_datasets() -> list:
         priority=1,
     )
 
-    waermeatlas_hessen_dataset = FileDataset(
-        keys=["residential_heat_demand"],
-        file_path="data/WaermeatlasHessen.gpkg",
-        query_function=waermeatlas_hessen_query,
-        unit=UnitEnum.KWH,
-        priority=5,
-        regional_validity=get_gdf_from_ags(["06"]),
-        load_data_kwargs={"layer":"WAH_Punkte"}
-    )
-
-    census_south_hessen_dataset = FileDataset(
-        keys=["heating_shares"],
-        file_path="data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
-        query_function=census_south_hessen_query,
-        priority=3,
-        regional_validity=get_gdf_from_ags(["06"]),
-    )
-
-    return [
-        census_heating_dataset,
-        ***REMOVED***_kwp_dataset,
+    datasets = [
         residential_heat_demand_profile_dataset,
         residential_electricity_demand_profile_dataset,
         residential_yearly_electricity_demand,
-        waermeatlas_hessen_dataset,
-        census_south_hessen_dataset,
     ]
 
+    if mode == "***REMOVED***":
+        ***REMOVED***_available = ***REMOVED***_conn.is_available()
+        print(f"***REMOVED*** on {***REMOVED***_conn.host} available: {***REMOVED***_available}")
+        if not ***REMOVED***_available:
+            raise ConnectionError("infDB is not reachable. Retry or pass local files")
 
-def get_default_data_registry() -> DataRegistry:
+        datasets.insert(0, PostgreSQLDataset(
+            keys=["heating_shares"],
+            db_connection=***REMOVED***_conn,
+            priority=5,
+            query_function=***REMOVED***_census_query,
+            regional_validity=None,
+        ))
+        datasets.insert(1, PostgreSQLDataset(
+            keys=["residential_heat_demand"],
+            unit=UnitEnum.KWH,
+            db_connection=***REMOVED***_conn,
+            priority=5,
+            query_function=***REMOVED***_kwp_query,
+            regional_validity=None,
+        ))
+        return datasets
+
+    if local_heat_demand_file is None or local_heating_shares_file is None:
+        raise ValueError(
+            "Local mode requires explicit local_heat_demand_file and local_heating_shares_file; "
+            "implicit fallback paths are disabled."
+        )
+
+    heat_file = Path(local_heat_demand_file)
+    shares_file = Path(local_heating_shares_file)
+    if not heat_file.exists():
+        raise FileNotFoundError(f"Local heat demand file not found: {heat_file}")
+    if not shares_file.exists():
+        raise FileNotFoundError(f"Local heating shares file not found: {shares_file}")
+
+    datasets.insert(0, FileDataset(
+        keys=["residential_heat_demand"],
+        file_path=str(heat_file),
+        query_function=local_heat_demand_query,
+        unit=UnitEnum.KWH,
+        priority=6,
+        regional_validity=None,
+        load_data_kwargs={"layer": "WAH_Punkte"} if heat_file.suffix.lower() == ".gpkg" else None,
+    ))
+    datasets.insert(1, FileDataset(
+        keys=["heating_shares"],
+        file_path=str(shares_file),
+        query_function=census_south_hessen_query,
+        priority=6,
+        regional_validity=None,
+    ))
+    return datasets
+
+
+def get_default_data_registry(
+    *,
+    mode: str,
+    local_heat_demand_file: str | Path | None = None,
+    local_heating_shares_file: str | Path | None = None,
+) -> DataRegistry:
     """
-    Returns the default DataRegistry instance.
-    Uses lazy initialization - the registry is created only on first call.
+    Builds a DataRegistry.
+
+    Modes:
+    - '***REMOVED***': infDB-backed demand/heating-shares datasets.
+    - 'local': local-file demand/heating-shares datasets.
+
+    Strict behavior: local requires explicit file paths.
     """
-    global _DEFAULT_REGISTRY
+    if mode not in {"***REMOVED***", "local"}:
+        raise ValueError("mode must be one of: '***REMOVED***', 'local'")
 
-    if _DEFAULT_REGISTRY is None:
-        _DEFAULT_REGISTRY = DataRegistry()
-        datasets = _create_default_datasets()
-        for dataset in datasets:
-            _DEFAULT_REGISTRY.register(dataset)
+    registry = DataRegistry()
+    for dataset in _create_default_datasets(
+        mode=mode,
+        local_heat_demand_file=local_heat_demand_file,
+        local_heating_shares_file=local_heating_shares_file,
+    ):
+        registry.register(dataset)
 
-    return _DEFAULT_REGISTRY
+    return registry
 
 
 if __name__ == "__main__":
@@ -266,7 +335,11 @@ if __name__ == "__main__":
     test_query_3 = {"key": "residential_heat_demand_profile"}
     test_query_4 = {"key": "heating_shares", "region": gpd.read_file("../../data/baublock_bensheim_epsg25832.geojson")}
 
-    registry = get_default_data_registry()
+    registry = get_default_data_registry(
+        mode="local",
+        local_heat_demand_file="data/WaermeatlasHessen.gpkg",
+        local_heating_shares_file="data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
+    )
     for ds in registry.get_datasets():
         if isinstance(ds, FileDataset):
             ds.file_path = "../../" + ds.file_path
