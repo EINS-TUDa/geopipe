@@ -10,7 +10,7 @@ from pypeline.data.datasets import (
 )
 
 def test_district_from_bounding_box():
-    region = gpd.read_file(Path("data") / "wah_bensheim_4_districts.geojson")
+    region = gpd.read_file(Path("examples/bensheim/wah_bensheim_4_districts.geojson"))
     cen = Census2022HeatingType100mGrid()
     shares = {
         tech: float(value)
@@ -39,7 +39,7 @@ def test_district_from_bounding_box():
 
 
 def test_residential_yearly_heat_demand():
-    region = gpd.read_file(Path("data") / "baublock_bensheim_epsg25832.geojson")
+    region = gpd.read_file(Path("examples/bensheim/baublock_bensheim_epsg25832.geojson"))
     wh = WaermeatlasHessen()
     total_heat_demand = wh.query({"region": region, "key": "residential_heat"})
     total_heat_demand = round(total_heat_demand, 2)

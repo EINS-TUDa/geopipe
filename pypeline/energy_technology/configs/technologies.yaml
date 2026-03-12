@@ -6,9 +6,9 @@ ind_heat_pump:
   efficiency: 4.1
   technical_lifetime: 18
   opex_cost_energy: 0
-  opex_cost_power: 76000
-  capex_cost_power: 2780000
-  capex_cost_base: 13900
+  opex_cost_power: 13000
+  capex_cost_power: 10100
+  capex_cost_base: 10600
   cap_min: 0.005
   cap_max: 0.11
 
@@ -16,18 +16,18 @@ ind_gas_boiler:
   efficiency: 0.94
   technical_lifetime: 20
   opex_cost_energy: 0
-  opex_cost_power: 5000
-  capex_cost_power: 274000
-  capex_cost_base: 11400
+  opex_cost_power: 50000000000
+  capex_cost_power: 1620
+  capex_cost_base: 7100
   cap_min: 0.01
   cap_max: 0.11
 
 ind_oil_boiler:
   efficiency: 0.925
   technical_lifetime: 20
-  opex_cost_energy: 0
+  opex_cost_energy: 0.0
   opex_cost_power: 6000
-  capex_cost_power: 291000
+  capex_cost_power: 700
   capex_cost_base: 11400
   cap_min: 0.01
   cap_max: 0.11
@@ -49,70 +49,80 @@ heat_exchanger:
   opex_cost_power: 25000
   capex_cost_power: 0
   capex_cost_base: 1360000
+  cap_min: 0.01
+  cap_max: 1000000000.0
 
 ################################
 # central heating technologies
 ################################
 
 cen_heat_pump:
-  efficiency: 2.9
+  efficiency: 3.1
   technical_lifetime: 28
   opex_cost_energy: 0
-  opex_cost_power: 22000
-  capex_cost_power: 585593
-  capex_cost_base: 823281
+  opex_cost_power: 150000
+  capex_cost_power: 31000
+  capex_cost_base: 530000
   cap_min: 0.3
-  cap_max: 20
+  cap_max: 20.0
 
 cen_gas_boiler:
   efficiency: 0.99
   technical_lifetime: 25
-  opex_cost_energy: 1.3
-  opex_cost_power: 1100
-  capex_cost_power: 105579
-  capex_cost_base: 12210
+  opex_cost_energy: 0
+  opex_cost_power: 2000
+  capex_cost_power: 100000
+  capex_cost_base: 65000
   cap_min: 0.5
   cap_max: 10
 
 cen_oil_boiler:
   efficiency: 0.93
   technical_lifetime: 20
-  opex_cost_energy: 2.45
-  opex_cost_power: 1500
-  capex_cost_power: 145556
-  capex_cost_base: 3444
+  opex_cost_energy: 0
+  opex_cost_power: 6500
+  capex_cost_power: 149000
+  capex_cost_base: 18000
   cap_min: 0.1
-  cap_max: 1
+  cap_max: 1.0
 
 cen_biomass_woodpellets:
-  efficiency: 0.9
-  technical_lifetime: 28
-  opex_cost_energy: 3
-  opex_cost_power: 5158
+  efficiency: 0.5
+  technical_lifetime: 25
+  opex_cost_energy: 0
+  opex_cost_power: 100
   capex_cost_power: 439000
   capex_cost_base: 260000
-  cap_min: 5.8
-  cap_max: 5.8
+  cap_min: 446.7
+  cap_max: 446.7
 
-##################
-# grids and pipes
-##################
-
-heat_grid:
-  {}
 
 grid_electricity:
+  commodity_out: electricity
   commodity_in: dummy
+  cap_max: 1000000000
+  max_units: 1
 
 grid_hydrogen:
   commodity_out: hydrogen
   commodity_in: dummy
+  cap_max: 1000000000
+  max_units: 1
+
+
+heat_grid:
+  cap_max: 1000000000
+  max_units: 1
+
+#############################
+# hidden from region builder
+#############################
 
 heat_pipe:
-  efficiency: 1.0
-  technical_lifetime: 40
-  opex_cost_energy: 1.44
-  opex_cost_power: 0
-  capex_cost_power: 54040
-  capex_cost_base: 17221
-  cap_max: 100.0
+  efficiency: 0.99
+  technical_lifetime: 30.0
+  opex_cost_power: 0.0
+  opex_cost_energy: 0.0
+  capex_cost_power: 10.0
+  capex_cost_base: 0.0
+  cap_max: 1000000000.0

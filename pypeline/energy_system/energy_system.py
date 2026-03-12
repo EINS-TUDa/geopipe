@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Sequence
-
 import geopandas as gpd
 import pandas as pd
+import yaml
 
 from pypeline.data.data_registry import DataRegistry
 from pypeline.data.dataset import CensusTechnology
@@ -43,7 +44,9 @@ class EnergySystem:
     regions: list[Region]
     units: Unit
     connections: list[RegionConnection]
+    commodity_config: dict[str, Any] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
+    data_dir: str | Path | None = None
 
 class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
@@ -59,6 +62,7 @@ class EnergySystemBuilder:
         self.technology_dependency_manager: TechnologyDependencyManager | None = None
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
+        self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
 
     def set_unit(self, input_unit: UnitEnum):
         self.unit = input_unit.unit
@@ -174,6 +178,47 @@ class EnergySystemBuilder:
             ]
         }
         self.technology_dependency_manager = TechnologyDependencyManager(dependencies=dependencies)
+
+    def _load_default_commodity_config(self) -> dict[str, Any]:
+        root = Path(__file__).resolve().parents[1]
+        candidates = [root / "energy_technology" / "configs" / "commodities.yaml", root.parent / "configs" / "commodities.yaml"]
+        for candidate in candidates:
+            if candidate.exists():
+                cfg = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+                if isinstance(cfg, dict):
+                    return cfg
+        return {}
+
+    def set_commodity_config(self, config: dict[str, Any] | None):
+        if config is None:
+            self.commodity_config = {}
+            return self
+        if not isinstance(config, dict):
+            raise TypeError("commodity_config must be a mapping")
+        self.commodity_config = dict(config)
+        return self
+
+    def set_commodity_prices(
+        self,
+        *,
+        grid_prices: dict[str, Any],
+        supply_prices_eur_per_mwh: dict[str, Any],
+        edge_defaults: dict[str, Any] | None = None,
+    ):
+        if not isinstance(grid_prices, dict):
+            raise TypeError("grid_prices must be a mapping")
+        if not isinstance(supply_prices_eur_per_mwh, dict):
+            raise TypeError("supply_prices_eur_per_mwh must be a mapping")
+        config: dict[str, Any] = {
+            "grid_prices": dict(grid_prices),
+            "supply_prices_eur_per_mwh": dict(supply_prices_eur_per_mwh),
+        }
+        if edge_defaults is not None:
+            if not isinstance(edge_defaults, dict):
+                raise TypeError("edge_defaults must be a mapping if provided")
+            config["edge_defaults"] = dict(edge_defaults)
+        self.commodity_config = config
+        return self
 
     def set_default_region_builder_config(self):
         self.region_builder_config = {
@@ -305,7 +350,9 @@ class EnergySystemBuilder:
             name=self.energy_system_name,
             regions=regions,
             units=self.unit,
-            connections=connections)
+            connections=connections,
+            commodity_config=self.commodity_config or {},
+        )
 
         # apply energy system rule book if set
         if self.rule_book:

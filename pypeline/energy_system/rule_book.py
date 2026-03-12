@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
+import math
 from typing import TYPE_CHECKING, Any, Dict, Optional
-
 from pypeline.data.data_registry import DataRegistry
 from pypeline.energy_technology.technology import Technology
 
-
 HEAT_EXCHANGER_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
-
+HOURS_PER_YEAR = 8760.0
 
 def _matches_tech_name(name: str | None, candidates: tuple[str, ...]) -> bool:
     """Return True if `name` matches any candidate or its district clones."""
@@ -155,6 +154,113 @@ class MinimumDHNThroughputRule(EnergySystemRule):
             targets[rid] = target
 
         constraints.setdefault("min_dhn_throughput_mwh", {}).update(targets)
+        energy_system.constraints = constraints
+        return energy_system
+
+
+class MinimumCentralCapacityRule(EnergySystemRule):
+    """Ensure central plants can cover a share of demand per district.
+
+    Writes per-technology MW floors into energy_system.constraints['min_central_cap_mw'].
+    If `commodity` is set, the per-district totals are stored under energy_system.constraints['min_central_cap_mw_total_by_commodity'][commodity].
+    The CESM writer applies these as cap_min overrides.
+    """
+
+    def __init__(
+        self,
+        *,
+        demand_name: str = "residential_heat",
+        min_share_of_demand: float = 0.5,
+        min_share_by_region: Optional[Dict[int, float]] = None,
+        hours_per_year: float = HOURS_PER_YEAR,
+        commodity: str | None = None,
+    ) -> None:
+        self.demand_name = demand_name
+        self.min_share_of_demand = max(0.0, float(min_share_of_demand))
+        self.min_share_by_region = (
+            {int(k): max(0.0, float(v)) for k, v in min_share_by_region.items()}
+            if isinstance(min_share_by_region, dict)
+            else None
+        )
+        self.hours_per_year = max(1e-6, float(hours_per_year))
+        self.commodity = (commodity or "").strip().lower() or None
+
+    def _target_share(self, region_id: Optional[int]) -> float:
+        if region_id is None:
+            return self.min_share_of_demand
+        if self.min_share_by_region and region_id in self.min_share_by_region:
+            return self.min_share_by_region[region_id]
+        return self.min_share_of_demand
+
+    def apply(self, energy_system):
+        constraints = energy_system.constraints if energy_system.constraints is not None else {}
+        totals: Dict[int, float] = constraints.get("min_central_cap_mw_total", {}) if isinstance(constraints, dict) else {}
+        totals_by_co: Dict[str, Dict[int, float]] = (
+            constraints.get("min_central_cap_mw_total_by_commodity", {}) if isinstance(constraints, dict) else {}
+        )
+        if not isinstance(totals, dict):
+            totals = {}
+        if not isinstance(totals_by_co, dict):
+            totals_by_co = {}
+
+        for region in energy_system.regions or []:
+            rid = _extract_region_id(region)
+            share = self._target_share(rid)
+            if share <= 0.0:
+                continue
+            rd = region.get_demand(self.demand_name)
+            if rd is None:
+                continue
+            annual_mwh = rd.annual_value()
+            cap_target = share * annual_mwh / self.hours_per_year
+            if cap_target <= 0.0:
+                continue
+            available_cap: float = 0.0
+            unbounded = False
+
+            for rt in region.region_technologies or []:
+                tech = rt.technology
+                if tech is None:
+                    continue
+                tech_name = tech.name
+                if not _is_central_heat_supply(tech_name):
+                    continue
+
+                cap_max_val = getattr(tech, "cap_max", None)
+                units_val = getattr(tech, "max_units", None)
+                cap_max_f = float(cap_max_val) if cap_max_val is not None else None
+                units_f = float(units_val) if units_val is not None else math.inf
+                if cap_max_f is None or math.isnan(cap_max_f):
+                    unbounded = True
+                    continue
+                if math.isnan(units_f):
+                    units_f = math.inf
+                if math.isinf(cap_max_f) or math.isinf(units_f):
+                    unbounded = True
+                    continue
+                units_f = max(1.0, units_f)
+                available_cap += max(0.0, cap_max_f * units_f)
+
+            if not unbounded and available_cap + 1e-9 < cap_target:
+                raise ValueError(
+                    "MinimumCentralCapacityRule infeasible: required floor exceeds available cap_max "
+                    f"(region {rid if rid is not None else '?'}: need {cap_target:.3f} MW, "
+                    f"available {available_cap:.3f} MW). "
+                    "Increase central cap_max or lower min_share_of_demand."
+                )
+
+            if self.commodity:
+                bucket = totals_by_co.get(self.commodity, {})
+                if not isinstance(bucket, dict):
+                    bucket = {}
+                bucket[rid] = max(bucket.get(rid, 0.0), cap_target)
+                totals_by_co[self.commodity] = bucket
+            else:
+                totals[rid] = max(totals.get(rid, 0.0), cap_target)
+
+        if self.commodity:
+            constraints["min_central_cap_mw_total_by_commodity"] = totals_by_co
+        constraints["min_central_cap_mw_total"] = totals
         energy_system.constraints = constraints
         return energy_system
 

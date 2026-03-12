@@ -1,10 +1,10 @@
 """Unified CESM plugin consolidating backend adapter, runner CLI, and writer utilities.
 
 Public API:
-    - CESMBackend (OptimizationModel adapter)
-    - write_cesm_inputs_minimal_from_om 
-    - write_cesm_inputs_from_data / write_cesm_inputs_multidistrict_from_data
-    - tech_to_cesms_row 
+    - CESMBackend (Optimization Model adapter)
+    - write_cesm_inputs_minimal_from_om
+    - write_cesm_inputs_from_energy_system
+    - tech_to_cesms_row
 """
 from __future__ import annotations
 import argparse, json, math, sqlite3, subprocess, sys, logging
@@ -16,24 +16,51 @@ import numpy as np
 import geopandas as gpd 
 
 from pypeline.optimization.solver import OptimizationModel, Solution
-from pypeline.optimization.om_adapter import OMContext
+from pypeline.optimization.om_adapter import OMContext, build_om_from_es
+from pypeline.energy_system.energy_system import EnergySystem
+from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import (
     TechnologyRegistry,
     get_default_technology_registry,
 )
-
-InputWriter = Callable[[OMContext, Path, str, str, str], None]
 PathLike = Union[str, Path]
 
 logger = logging.getLogger(__name__)
 
 NUMERIC_ERRORS = (TypeError, ValueError)
 
+def _require_float(label: str, value: Any) -> float:
+    f = float(value)
+    if math.isnan(f):
+        raise ValueError(f"{label} is NaN")
+    return f
+
+
+def _require_finite(label: str, value: Any, *, allow_zero: bool = True, gt_zero: bool = False) -> float:
+    f = _require_float(label, value)
+    if not math.isfinite(f):
+        raise ValueError(f"{label} must be finite")
+    if gt_zero and f <= 0.0:
+        raise ValueError(f"{label} must be > 0")
+    if not allow_zero and f == 0.0:
+        raise ValueError(f"{label} must be non-zero")
+    return f
+
+
+def _require_positive_int(label: str, value: Any) -> int:
+    if value is None:
+        raise ValueError(f"{label} is required")
+    try:
+        iv = int(value)
+    except NUMERIC_ERRORS as exc:
+        raise ValueError(f"{label} must be an integer") from exc
+    if iv <= 0:
+        raise ValueError(f"{label} must be > 0")
+    return iv
+
 UNBOUNDED_CAP = 1e9
 UNBOUNDED_ENERGY = 1e12
-
-
 @dataclass
 class _CesmIOPaths:
     techmap_dir: Path
@@ -52,11 +79,85 @@ def _prepare_io_paths(workdir: Path, model_name: str, tss_name: str) -> _CesmIOP
     return _CesmIOPaths(techmap_dir=techmap_dir, timeseries_dir=timeseries_dir, xlsx_path=xlsx_path, tss_file=tss_file)
 
 
+def _commodity_config_from_energy_system(es: EnergySystem) -> tuple[dict[str, float], dict[str, float], dict[str, Any]]:
+    config_raw = getattr(es, "commodity_config", None)
+    if config_raw is None:
+        raise ValueError("EnergySystem.commodity_config is required to provide commodity prices for CESM export")
+    if not isinstance(config_raw, dict):
+        raise ValueError("EnergySystem.commodity_config must be a mapping")
+
+    grid_raw = config_raw.get("grid_prices")
+    supply_raw = config_raw.get("supply_prices_eur_per_mwh")
+    edge_defaults_raw = config_raw.get("edge_defaults", {})
+
+    if not isinstance(grid_raw, dict) or not isinstance(supply_raw, dict):
+        raise ValueError("EnergySystem.commodity_config must include grid_prices and supply_prices_eur_per_mwh mappings")
+
+    def _coerce_prices(source: dict[str, Any], *, lower_keys: bool = True) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for key, raw_val in source.items():
+            try:
+                val = float(raw_val)
+            except NUMERIC_ERRORS as exc:
+                raise ValueError("Non-numeric commodity price in EnergySystem.commodity_config") from exc
+            if not math.isfinite(val):
+                raise ValueError("Commodity prices must be finite")
+            out[str(key).lower() if lower_keys else str(key)] = val
+        return out
+
+    grid_prices = _coerce_prices(grid_raw, lower_keys=True)
+    supply_prices = _coerce_prices(supply_raw, lower_keys=True)
+    edge_defaults = edge_defaults_raw if isinstance(edge_defaults_raw, dict) else {}
+
+    logger.debug(
+        "_commodity_config_from_energy_system parsed: grid_prices=%s, supply_prices=%s, edge_defaults=%s",
+        grid_prices,
+        supply_prices,
+        edge_defaults,
+    )
+
+    return grid_prices, supply_prices, edge_defaults
+
+
 def _ensure_tss_indices(tss_file: Path, *, default_hours: int = 224) -> List[int]:
     if not tss_file.exists():
-        tss_file.write_text("\n".join(str(i) for i in range(1, default_hours + 1)), encoding="utf-8")
+        raise FileNotFoundError(f"TSS file missing: {tss_file}. Provide it via the EnergySystem/Scenario.")
     content = tss_file.read_text(encoding="utf-8").strip()
     return [int(line) for line in content.splitlines() if line.strip()]
+
+
+def _normalize_profile(profile_full: np.ndarray, tss_vals: List[int]) -> np.ndarray:
+    """Normalize a profile and optionally rescale to TSS indices."""
+    prof_sum = float(profile_full.sum())
+    if prof_sum <= 0:
+        raise ValueError("Electricity profile sums to zero; cannot normalize.")
+    profile_full = profile_full / prof_sum
+    if not tss_vals:
+        return profile_full
+
+    max_idx = max(tss_vals)
+    if max_idx >= len(profile_full):
+        raise ValueError(f"TSS requires index {max_idx} but profile length is {len(profile_full)}.")
+
+    idx_arr = np.asarray(tss_vals, dtype=int) - 1
+    selected_sum = float(profile_full[idx_arr].sum())
+    if selected_sum <= 0.0:
+        raise ValueError("Electricity profile assigns zero weight to selected TSS hours; cannot normalize.")
+    if not np.isclose(selected_sum, 1.0):
+        profile_full = profile_full / selected_sum
+    from decimal import Decimal, ROUND_HALF_UP, getcontext
+
+    getcontext().prec = 28
+    quantum = Decimal("0.00000001")
+    rounded: list[Decimal] = []
+    for pos in idx_arr:
+        rounded.append(Decimal(profile_full[pos]).quantize(quantum, rounding=ROUND_HALF_UP))
+    correction = Decimal("1.0") - sum(rounded)
+    if correction != 0:
+        rounded[-1] = (rounded[-1] + correction).quantize(quantum, rounding=ROUND_HALF_UP)
+    for pos, dec_val in zip(idx_arr, rounded):
+        profile_full[pos] = float(dec_val)
+    return profile_full
 
 
 def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.ndarray) -> Path:
@@ -65,36 +166,39 @@ def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.n
     return path
 
 
-def _standard_sheet_frames(
-    *,
-    scenario_name: str,
-    start_year: int,
-    end_year: int,
-    year_gap: int,
-    tss_name: str,
-    discount_rate: float,
-    dt_hours: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    units_df = _units_df()
-    scenario_df = _scenario_df(
-        scenario_name=scenario_name,
-        start_year=start_year,
-        end_year=end_year,
-        year_gap=year_gap,
-        tss_name=tss_name,
-        discount_rate=discount_rate,
-    )
-    tss_df = _tss_df(tss_name=tss_name, dt_hours=dt_hours)
-    return units_df, scenario_df, tss_df
+def _resolve_retain_schedule(*, explicit_schedule: Optional[List[float]], scenario: Scenario | None) -> Optional[List[float]]:
+    """Pick retention schedule from explicit arg or scenario; derive from drop-per-year if provided."""
+    if explicit_schedule:
+        return explicit_schedule
+    if scenario is None:
+        return None
+    scen_schedule = getattr(scenario, "retain_existing_output_schedule", None)
+    if scen_schedule:
+        return scen_schedule
+    drop_val_raw = getattr(scenario, "retain_existing_output_drop_per_year", None)
+    if drop_val_raw is None:
+        return None
+    try:
+        drop_val = float(drop_val_raw)
+    except NUMERIC_ERRORS:
+        return None
+    if math.isnan(drop_val):
+        return None
+    drop_val = max(0.0, drop_val)
+    years = scenario.years() if hasattr(scenario, "years") else []
+    if not years:
+        return None
+    start_year = years[0]
+    return [(1.0 - drop_val) ** (year - start_year) for year in years]
 
 
 def _convsubproc_dataframe(rows: List[dict[str, Any]]) -> pd.DataFrame:
     convsubproc_df = pd.DataFrame(rows)
     base_cols = list(CONV_SUBPROC_BASE_COLS)
     param_cols = list(CONV_SUBPROC_PARAM_COLS)
-    for col in base_cols + param_cols:
-        if col not in convsubproc_df.columns:
-            convsubproc_df[col] = np.nan
+    missing_cols = [col for col in base_cols + param_cols if col not in convsubproc_df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing conversion subprocess columns: {missing_cols}")
     return convsubproc_df[base_cols + param_cols]
 
 
@@ -195,17 +299,10 @@ def census_category_to_tech(category: str) -> Optional[str]:
     return CENSUS_HEATING_CATEGORY_TO_TECH.get(key)
 
 
-def _strip_unit_suffix(name: str) -> str:
-    if "_U" not in name:
-        return name
-    base, suffix = name.rsplit("_U", 1)
-    if suffix.isdigit():
-        return base
-    return name
-
-
 def _extract_district_id_from_name(name: str) -> Optional[int]:
-    base = _strip_unit_suffix(name)
+    if not name:
+        return None
+    base = name
     if "_D" not in base:
         return None
     suffix = base.rsplit("_D", 1)[-1]
@@ -226,9 +323,18 @@ def _extract_district_id_from_name(name: str) -> Optional[int]:
 def _split_base_and_district(name: str) -> tuple[str, Optional[int]]:
     district = _extract_district_id_from_name(name)
     if district is None:
-        return _strip_unit_suffix(name), None
-    base = _strip_unit_suffix(name).rsplit("_D", 1)[0]
+        return name, None
+    base = name.rsplit("_D", 1)[0]
     return base, district
+
+
+def _is_central_heat_supply(name: str | None) -> bool:
+    if not name:
+        return False
+    base = name
+    if "_D" in base:
+        base, _ = base.rsplit("_D", 1)
+    return base.startswith("cen_")
 
 
 class _ConversionRowsBuilder:
@@ -241,14 +347,19 @@ class _ConversionRowsBuilder:
         districts: List[int],
         district_index: dict[int, int],
         heat_names: List[str],
+        district_heat_in_names: dict[int, str],
         district_heat_out_names: dict[int, str],
         min_dhn_targets: dict[int, float],
         min_heat_grid_targets: dict[int, float],
+        min_central_cap_targets: dict[str, float],
+        min_central_cap_totals: dict[int, float],
+        min_central_cap_totals_by_co: dict[str, dict[int, float]],
         district_to_region: dict[int, int],
         region_metrics: dict[str, Any],
         total_metrics: dict[str, dict[str, float]],
         retain_factor: float | None,
         retain_years_factor: float | None,
+        retain_schedule: Optional[List[float]],
         elec_price_eur_per_mwh: float,
     ) -> None:
         self.scenario_name = scenario_name
@@ -257,14 +368,19 @@ class _ConversionRowsBuilder:
         self.districts = districts
         self.district_index = district_index
         self.heat_names = heat_names
+        self.district_heat_in_names = district_heat_in_names
         self.district_heat_out_names = district_heat_out_names
         self.min_dhn_targets = min_dhn_targets
         self.min_heat_grid_targets = min_heat_grid_targets
+        self.min_central_cap_targets = min_central_cap_targets
+        self.min_central_cap_totals = min_central_cap_totals
+        self.min_central_cap_totals_by_co = min_central_cap_totals_by_co
         self.district_to_region = district_to_region
         self.region_metrics = region_metrics
         self.total_metrics = total_metrics
         self.retain_factor = retain_factor
         self.retain_years_factor = retain_years_factor
+        self.retain_schedule = retain_schedule
         self.elec_price_eur_per_mwh = elec_price_eur_per_mwh
         self._tech_builders = {
             "ind_heat_pump": self._rows_residential,
@@ -273,18 +389,100 @@ class _ConversionRowsBuilder:
             "heat_exchanger": self._rows_heat_exchanger,
             "ind_district_heating_connection": self._rows_heat_exchanger,
             "heat_grid": self._rows_default,
-            "cen_heat_pump": self._rows_default,
-            "cen_gas_boiler": self._rows_default,
-            "cen_oil_boiler": self._rows_default,
+            "cen_heat_pump": self._rows_central_heat_supply,
+            "cen_gas_boiler": self._rows_central_heat_supply,
+            "cen_oil_boiler": self._rows_central_heat_supply,
             "grid_electricity": self._rows_grid_electricity,
         }
 
     # Public API -------------------------------------------------------------
     def build_rows(self, technologies: List[Technology]) -> List[dict[str, Any]]:
+        self._allocate_min_central_caps(technologies)
         rows: List[dict[str, Any]] = []
         for tech in technologies:
             rows.extend(self.rows_for_technology(tech))
         return rows
+
+    def _allocate_min_central_caps(self, technologies: List[Technology]) -> None:
+        if not self.min_central_cap_totals and not self.min_central_cap_totals_by_co:
+            return
+        techs_by_district: dict[int, List[Technology]] = {}
+        for tech in technologies:
+            if not _is_central_heat_supply(tech.name):
+                continue
+            district = _extract_district_id_from_name(tech.name)
+            if district is None:
+                raise ValueError("Central heat supply technology is missing district suffix while min_central_cap_totals are set: "f"{tech.name}")
+            techs_by_district.setdefault(district, []).append(tech)
+
+        def _tech_commodity(t: Technology) -> str:
+            raw = getattr(t, "commodity_in", None)
+            return str(raw).strip().lower() if raw is not None else ""
+
+        def _allocate_for_bucket(district: int, target: float, predicate: Callable[[Technology], bool]) -> None:
+            techs = [t for t in techs_by_district.get(district, []) if predicate(t)]
+            if not techs:
+                raise ValueError(f"No central heat supply technologies found for district {district} matching constraint; target={target}")
+
+            def _cp_key(t: Technology) -> str:
+                if _extract_district_id_from_name(t.name) is not None:
+                    return t.name
+                if len(self.districts) == 1:
+                    return t.name
+                return f"{t.name}_D{district}"
+
+            def _cap_max(tech: Technology) -> float:
+                val = getattr(tech, "cap_max", None)
+                if val is None:
+                    raise ValueError(f"cap_max missing for central tech '{tech.name}' in district {district}")
+                return _require_finite(f"cap_max for {tech.name}", val, gt_zero=True)
+
+            def _max_units(tech: Technology) -> float:
+                units = getattr(tech, "max_units", None)
+                return float(_require_positive_int(f"max_units for {tech.name}", units))
+
+            def _total_cap(tech: Technology) -> float:
+                cap = _cap_max(tech)
+                units = _max_units(tech)
+                return cap * units
+
+            def _capex(tech: Technology) -> float:
+                return _require_finite(f"capex_cost_power for {tech.name}", getattr(tech, "capex_cost_power", None), allow_zero=True)
+
+            # Sort cheapest-first; allocate across techs so total meets the district target without relying on a single unbounded tech swallowing the entire floor.
+            sorted_techs = sorted(techs, key=lambda t: (_capex(t), _cap_max(t)))
+            remaining = float(target)
+            finite_bucket: list[tuple[Technology, float]] = []
+            unbounded: list[Technology] = []
+            for tech in sorted_techs:
+                if tech.name in self.min_central_cap_targets:
+                    continue
+                cap = _total_cap(tech)
+                if math.isinf(cap):
+                    unbounded.append(tech)
+                else:
+                    finite_bucket.append((tech, cap))
+
+            # Allocate to finite caps first.
+            for tech, cap in finite_bucket:
+                if remaining <= 1e-9:
+                    break
+                take = min(remaining, cap)
+                if take > 0:
+                    self.min_central_cap_targets[_cp_key(tech)] = take
+                    remaining -= take
+
+            if remaining > 1e-9 and unbounded:
+                self.min_central_cap_targets[_cp_key(unbounded[0])] = remaining
+
+        # First, allocate commodity-specific targets
+        for commodity, per_district in self.min_central_cap_totals_by_co.items():
+            for district, target in per_district.items():
+                _allocate_for_bucket(district, target, lambda t, c=commodity: _tech_commodity(t) == c)
+
+        # Then, allocate generic totals
+        for district, target in self.min_central_cap_totals.items():
+            _allocate_for_bucket(district, target, lambda t: True)
 
     def rows_for_technology(self, tech: Technology) -> List[dict[str, Any]]:
         builder = self._tech_builders.get(tech.name)
@@ -301,27 +499,27 @@ class _ConversionRowsBuilder:
     # Core helpers -----------------------------------------------------------
     def _rows_residential(self, tech: Technology) -> List[dict[str, Any]]:
         rows: List[dict[str, Any]] = []
-        if len(self.districts) == 1:
-            district = self.districts[0]
+        tech_district = _extract_district_id_from_name(tech.name)
+        if tech_district is not None and tech_district not in self.districts:
+            return rows
+
+        target_districts: List[int]
+        if tech_district is not None:
+            target_districts = [tech_district]
+        elif len(self.districts) == 1:
+            target_districts = [self.districts[0]]
+        else:
+            if not self.districts:
+                raise ValueError(f"No districts configured for residential technology {tech.name}")
+            target_districts = list(self.districts)
+
+        for district in target_districts:
             overrides = self._min_eout_override(tech, district)
             heat_comm = self._heat_comm_for_district(district)
+            cp_name = tech.name if tech_district is not None or len(self.districts) == 1 else f"{tech.name}_D{district}"
             rows.append(
                 self._build_cs_row(
-                    cp_name=f"{tech.name}",
-                    cin=tech.commodity_in,
-                    cout=heat_comm,
-                    tech=tech,
-                    overrides=overrides,
-                    district=district,
-                )
-            )
-            return rows
-        for district in self.districts:
-            overrides = self._min_eout_override(tech, district)
-            heat_comm = self._heat_comm_for_district(district, fallback=tech.commodity_out)
-            rows.append(
-                self._build_cs_row(
-                    cp_name=f"{tech.name}_D{district}",
+                    cp_name=cp_name,
                     cin=tech.commodity_in,
                     cout=heat_comm,
                     tech=tech,
@@ -338,13 +536,15 @@ class _ConversionRowsBuilder:
         def _district_iter() -> List[int]:
             if target_district is not None:
                 return [target_district]
-            return self.districts if self.districts else [0]
+            if not self.districts:
+                raise ValueError(f"No districts configured for heat exchanger technology {tech.name}")
+            return self.districts
 
         for district in _district_iter():
             if district not in self.district_index:
-                continue
+                raise ValueError(f"District {district} is not present in district_index for heat exchanger {tech.name}")
             overrides = self._min_eout_override(tech, district)
-            heat_comm = self._heat_comm_for_district(district, fallback=tech.commodity_out)
+            heat_comm = self._heat_comm_for_district(district)
             cin = tech.commodity_in
             if target_district is not None:
                 cin = self.district_heat_out_names.get(district, tech.commodity_in)
@@ -356,6 +556,36 @@ class _ConversionRowsBuilder:
                     cout=heat_comm,
                     tech=tech,
                     overrides=overrides,
+                    district=district,
+                )
+            )
+        return rows
+
+    def _rows_central_heat_supply(self, tech: Technology) -> List[dict[str, Any]]:
+        rows: List[dict[str, Any]] = []
+        tech_district = _extract_district_id_from_name(tech.name)
+        if tech_district is not None and tech_district not in self.districts:
+            return rows
+
+        if tech_district is not None:
+            target_districts = [tech_district]
+        elif len(self.districts) == 1:
+            target_districts = [self.districts[0]]
+        else:
+            target_districts = list(self.districts)
+
+        for district in target_districts:
+            cout = tech.commodity_out
+            if cout is None or "_D" not in str(cout):
+                cout = self.district_heat_in_names.get(district, cout or "")
+            cp_name = tech.name if tech_district is not None or len(self.districts) == 1 else f"{tech.name}_D{district}"
+            rows.append(
+                self._build_cs_row(
+                    cp_name=cp_name,
+                    cin=tech.commodity_in,
+                    cout=cout,
+                    tech=tech,
+                    overrides=None,
                     district=district,
                 )
             )
@@ -414,11 +644,54 @@ class _ConversionRowsBuilder:
         merged = self._merge_overrides(existing, overrides)
         if merged:
             row.update({k: v for k, v in merged.items() if v is not None})
+        self._apply_min_central_cap(row, tech)
         existing_cap = self._existing_capacity(metrics)
         self._ensure_unit_capacity(row, existing_cap)
         self._limit_first_year_capacity(row, existing_cap, tech)
         self._clamp_reserves_to_cap_max(row)
         return row
+
+    def _apply_min_central_cap(self, row: dict[str, Any], tech: Technology) -> None:
+        target = self.min_central_cap_targets.get(row.get("conversion_process_name"))
+        if target is None:
+            return
+        target_total = float(target)
+
+        cap_max_peak = self._profile_peak(row.get("cap_max"))
+        max_units_raw = row.get("max_units")
+        if max_units_raw is None:
+            raise ValueError("max_units missing for central capacity application")
+        max_units_val = _require_float("max_units", max_units_raw)
+        if max_units_val < 1.0:
+            raise ValueError("max_units must be >= 1")
+
+        if cap_max_peak is None or not math.isfinite(cap_max_peak) or cap_max_peak <= 0.0:
+            raise ValueError("cap_max must be positive and finite for central capacity application")
+
+        total_cap_limit = math.inf
+        total_cap_limit = cap_max_peak * max_units_val
+        enforce_min = target_total if math.isinf(total_cap_limit) else target_total
+
+        required_units = int(math.ceil(enforce_min / cap_max_peak))
+        if required_units > max_units_val:
+            raise ValueError(
+                f"insufficient max_units for {tech.name}: need {required_units} to meet min central cap {enforce_min},"
+                f" but got {max_units_val} (cap_max {cap_max_peak})"
+            )
+
+        # Keep per-unit minimum no larger than the unit size to avoid build_min_activation infeasibility.
+        per_unit_min = enforce_min
+        if cap_max_peak and cap_max_peak > 0.0:
+            per_unit_min = min(enforce_min, cap_max_peak)
+
+        existing_cap_min = _require_float("cap_min", row.get("cap_min")) if row.get("cap_min") is not None else 0.0
+        row["cap_min"] = max(existing_cap_min, per_unit_min)
+
+        existing_cap_res_min = _require_float("cap_res_min", self._profile_peak(row.get("cap_res_min"))) if row.get("cap_res_min") is not None else 0.0
+        row["cap_res_min"] = max(existing_cap_res_min, enforce_min)
+
+        existing_cap_res_max = _require_float("cap_res_max", self._profile_peak(row.get("cap_res_max"))) if row.get("cap_res_max") is not None else 0.0
+        row["cap_res_max"] = UNBOUNDED_CAP if math.isinf(total_cap_limit) else max(existing_cap_res_max, total_cap_limit)
 
     # Metric helpers ---------------------------------------------------------
     def _existing_metrics(self, tech: Technology, district: Optional[int]) -> Optional[dict[str, Any]]:
@@ -439,37 +712,39 @@ class _ConversionRowsBuilder:
 
     @staticmethod
     def _existing_capacity(metrics: Optional[dict[str, Any]]) -> float:
+        if metrics is None:
+            return 0.0
         if not isinstance(metrics, dict):
+            raise TypeError("metrics must be a mapping")
+        val = _require_float("initial_capacity", metrics.get("initial_capacity", 0.0))
+        return max(0.0, val)
+
+    def _retain_factor_for_year(self, year_index: int) -> float:
+        if self.retain_schedule:
+            if year_index < len(self.retain_schedule):
+                return self.retain_schedule[year_index]
+            return 0.5
+        if self.retain_factor is None:
             return 0.0
-        try:
-            val = float(metrics.get("initial_capacity", 0.0) or 0.0)
-        except NUMERIC_ERRORS:
-            return 0.0
-        if math.isnan(val):
-            return 0.0
+        val = _require_float("retain_factor", self.retain_factor)
         return max(0.0, val)
 
     @staticmethod
     def _ensure_unit_capacity(row: dict[str, Any], existing_capacity: float) -> None:
-        unit_cap = row.get("cap_max")
-        try:
-            unit_cap_val = float(unit_cap)
-        except NUMERIC_ERRORS:
-            return
+        unit_cap_val = _require_float("cap_max", row.get("cap_max"))
         if not math.isfinite(unit_cap_val) or unit_cap_val <= 0.0:
-            return
-        max_units_val = row.get("max_units")
-        try:
-            max_units_int = int(max_units_val)
-        except NUMERIC_ERRORS:
-            max_units_int = 1
+            raise ValueError("cap_max must be positive and finite")
+        max_units_int = int(row.get("max_units"))
         if max_units_int < 1:
-            max_units_int = 1
+            raise ValueError("max_units must be >= 1")
         required_units = 0
         if existing_capacity and existing_capacity > 0.0:
             required_units = int(math.ceil(existing_capacity / unit_cap_val))
         if required_units > max_units_int:
-            max_units_int = required_units
+            raise ValueError(
+                f"Existing capacity {existing_capacity} exceeds cap_max * max_units"
+                f" ({unit_cap_val} * {max_units_int}) for {row.get('conversion_process_name')}"
+            )
         row["max_units"] = max_units_int
 
     def _existing_overrides(
@@ -484,23 +759,12 @@ class _ConversionRowsBuilder:
         overrides: dict[str, Any] = {}
         cap = 0.0
         if isinstance(metrics, dict):
-            try:
-                cap = float(metrics.get("initial_capacity", 0.0) or 0.0)
-            except NUMERIC_ERRORS:
-                cap = 0.0
-            try:
-                output = float(metrics.get("initial_energy_output", 0.0) or 0.0)
-            except NUMERIC_ERRORS:
-                output = 0.0
+            cap = _require_float("initial_capacity", metrics.get("initial_capacity", 0.0))
+            output = _require_float("initial_energy_output", metrics.get("initial_energy_output", 0.0))
 
-            lifetime_years = float(getattr(tech, "technical_lifetime", 0.0) or 0.0)
-            window_factor = self.retain_years_factor if self.retain_years_factor is not None else 1.0
-            try:
-                window_factor = float(window_factor)
-            except NUMERIC_ERRORS:
-                window_factor = 1.0
-            if math.isnan(window_factor):
-                window_factor = 1.0
+            lifetime_years = _require_float("technical_lifetime", getattr(tech, "technical_lifetime", 0.0) or 0.0)
+            window_factor_raw = self.retain_years_factor if self.retain_years_factor is not None else 1.0
+            window_factor = _require_float("retain_years_factor", window_factor_raw)
             window_factor = max(0.0, window_factor)
             remaining_years = max(0.0, lifetime_years * window_factor)
 
@@ -515,26 +779,28 @@ class _ConversionRowsBuilder:
                     if cap_profile:
                         overrides["cap_res_min"] = cap_profile
                         overrides["cap_res_max"] = cap_profile
-                if output > 0.0 and self.retain_factor is not None and self.retain_factor > 0.0:
-                    min_profile = self._format_profile(
-                        [
-                            (
-                                year,
-                                output * self.retain_factor
-                                if self._years_since_start(year) <= remaining_years + 1e-9
-                                else 0.0,
-                            )
-                            for year in self.scenario_years
-                        ]
-                    )
+                if output > 0.0:
+                    pairs = []
+                    for idx, year in enumerate(self.scenario_years):
+                        if self._years_since_start(year) > remaining_years + 1e-9:
+                            pairs.append((year, 0.0))
+                            continue
+                        factor = self._retain_factor_for_year(idx)
+                        if factor <= 0.0:
+                            pairs.append((year, 0.0))
+                            continue
+                        pairs.append((year, output * factor))
+                    min_profile = self._format_profile(pairs)
                     if min_profile:
                         overrides["min_eout"] = min_profile
             else:
                 if cap > 0.0:
                     overrides["cap_res_min"] = cap
                     overrides["cap_res_max"] = cap
-                if output > 0.0 and self.retain_factor is not None and self.retain_factor > 0.0:
-                    overrides["min_eout"] = output * self.retain_factor
+                if output > 0.0:
+                    factor = self._retain_factor_for_year(0)
+                    if factor > 0.0:
+                        overrides["min_eout"] = output * factor
 
         return overrides
 
@@ -649,9 +915,14 @@ class _ConversionRowsBuilder:
         if cap_max_peak is None:
             return
 
+        # Use total capacity (cap_max * max_units), so multi-unit builds are honored.
+        max_units = _require_float("max_units", row.get("max_units"))
         cap_max_map = self._profile_to_map(cap_max_value)
         if not cap_max_map and self.scenario_years:
             cap_max_map = {year: cap_max_peak for year in self.scenario_years}
+
+        cap_total_map = {year: val * max_units for year, val in cap_max_map.items()} if cap_max_map else None
+        cap_total_peak = cap_max_peak * max_units
 
         for key in ("cap_res_min", "cap_res_max"):
             value = row.get(key)
@@ -664,16 +935,25 @@ class _ConversionRowsBuilder:
                     reserve_val = reserve_map.get(year)
                     if reserve_val is None:
                         continue
-                    limit = cap_max_map.get(year, cap_max_peak)
-                    clamped.append((year, min(reserve_val, limit)))
-                formatted = self._format_profile(clamped)
-                if formatted:
-                    row[key] = formatted
+                    limit = cap_total_map.get(year, cap_total_peak) if cap_total_map is not None else cap_total_peak
+                    if reserve_val > limit + 1e-9:
+                        cp_name = row.get("conversion_process_name", "<unknown>")
+                        raise ValueError(
+                            f"{key} {reserve_val} exceeds cap_max * max_units ({limit}) for {cp_name} in year {year}"
+                        )
+                    clamped.append((year, reserve_val))
+                if clamped:
+                    row[key] = self._format_profile(clamped)
                 continue
             reserve_peak = self._profile_peak(value)
             if reserve_peak is None:
                 continue
-            row[key] = min(reserve_peak, cap_max_peak)
+            if reserve_peak > cap_total_peak + 1e-9:
+                cp_name = row.get("conversion_process_name", "<unknown>")
+                raise ValueError(
+                    f"{key} {reserve_peak} exceeds cap_max * max_units ({cap_total_peak}) for {cp_name}"
+                )
+            row[key] = reserve_peak
 
     # Capacity limiting ------------------------------------------------------
     def _limit_first_year_capacity(
@@ -767,8 +1047,10 @@ class _ConversionRowsBuilder:
             base_val = base if base is not None else 0.0
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
+            # Keep user-specified minima when there is no existing capacity; only clamp when a
+            # positive capacity limit is present.
             if cap_limit <= 0.0:
-                return base_val if hydrogen_related else min(base_val, cap_limit)
+                return base_val
             if year == first_year:
                 return min(base_val, cap_limit)
             return base_val
@@ -783,10 +1065,10 @@ class _ConversionRowsBuilder:
             return 0.0
         return float(year - self.scenario_years[0])
 
-    def _heat_comm_for_district(self, district: int, fallback: Optional[str] = None) -> str:
+    def _heat_comm_for_district(self, district: int) -> str:
         heat_idx = self.district_index.get(district)
         if heat_idx is None or heat_idx >= len(self.heat_names):
-            return fallback or ""
+            raise ValueError(f"Missing heat commodity mapping for district {district}")
         return self.heat_names[heat_idx]
 # ====================================================================================
 # Backend adapter
@@ -801,11 +1083,15 @@ class CESMBackend(OptimizationModel):
         run_args: Optional[List[str]] = None,
         run_subdir: Optional[str] = None,
         results_db_name: str = "db.sqlite",
-        input_writer: Optional[Callable[[OMContext, Path, str, str, str], None]] = None,
         model_name: Optional[str] = None,
         scenario_name: Optional[str] = None,
         tss_name: Optional[str] = None,
         write_inputs: bool = True,
+        scenario: Scenario | None = None,
+        demand_name: str = "residential_heat",
+        retain_existing_output_factor: float | None = None,
+        retain_existing_output_years_factor: float | None = None,
+        retain_existing_output_schedule: Optional[List[float]] = None,
     ):
         super().__init__(conversion_sub_processes=None, conversion_processes=None, commodities=None, tss=None)
         self.workdir = Path(workdir)
@@ -820,12 +1106,26 @@ class CESMBackend(OptimizationModel):
         self.run_subdir = run_subdir or (f"{self.model_name}-{self.scenario_name}" if self.model_name and self.scenario_name else None)
         self.results_db_name = results_db_name
 
-        self.input_writer = input_writer
         self.write_inputs = write_inputs
+        self.scenario = scenario
+        self.demand_name = demand_name
+        self.retain_existing_output_factor = retain_existing_output_factor
+        self.retain_existing_output_years_factor = retain_existing_output_years_factor
+        self.retain_existing_output_schedule = retain_existing_output_schedule
 
     # OptimizationModel API ---------------------------------------------------
-    def optimize(self, model: OMContext) -> Solution:
-        self._materialize_inputs(model)
+    def optimize(self, model: EnergySystem, *, scenario: Scenario | None = None, demand_name: str | None = None) -> Solution:
+        if not isinstance(model, EnergySystem):
+            raise TypeError("CESMBackend.optimize expects an EnergySystem")
+
+        logger.debug("optimize: energy_system commodity_config=%s", getattr(model, "commodity_config", None))
+
+        scenario_obj = scenario or self.scenario
+        if scenario_obj is None:
+            raise ValueError("scenario is required to write CESM inputs")
+        demand = demand_name or self.demand_name or "residential_heat"
+
+        self._materialize_inputs_from_energy_system(model, scenario_obj, demand)
         self._run_cli()
         db_path = self._expected_run_db()
         if not db_path.exists():
@@ -844,16 +1144,29 @@ class CESMBackend(OptimizationModel):
     def _expected_run_db(self) -> Path:
         if not self.run_subdir:
             raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
-        return self.workdir / "Runs" / self.run_subdir / self.results_db_name
+        primary = self.workdir / "Runs" / self.run_subdir / self.results_db_name
+        return primary
 
-    def _materialize_inputs(self, ctx: OMContext) -> None:
+    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario, demand_name: str) -> None:
         if not self.write_inputs:
             return
-        if not (self.input_writer and self.model_name and self.scenario_name and self.tss_name):
-            return
-        self.input_writer(ctx, self.workdir, self.model_name, self.scenario_name, self.tss_name)
+        if not (self.model_name and self.scenario_name and self.tss_name):
+            raise ValueError("model_name, scenario_name, and tss_name must be set to write CESM inputs")
 
-    def _run_cli(self) -> None:
+        write_cesm_inputs_from_energy_system(
+            energy_system,
+            scenario,
+            workdir=self.workdir,
+            model_name=self.model_name,
+            scenario_name=self.scenario_name,
+            tss_name=self.tss_name,
+            demand_name=demand_name,
+            retain_existing_output_factor=self.retain_existing_output_factor,
+            retain_existing_output_years_factor=self.retain_existing_output_years_factor,
+            retain_existing_output_schedule=self.retain_existing_output_schedule,
+        )
+
+    def _run_cli(self, extra_args: list[str] | None = None) -> None:
         exe = self.cli[0]
         exe_path = Path(exe)
         if not exe_path.is_absolute():
@@ -863,6 +1176,8 @@ class CESMBackend(OptimizationModel):
                 f"CESM executable not found: {exe_path}\nWorkdir: {self.workdir.resolve()}\nCLI: {self.cli}"
             )
         cmd = [str(exe_path), *self.cli[1:], *self.run_args]
+        if extra_args:
+            cmd.extend(extra_args)
         (self.workdir / "cesm_cmd.txt").write_text(json.dumps(cmd, indent=2))
         cp = subprocess.run(cmd, cwd=self.workdir, capture_output=True, text=True)
         (self.workdir / "cesm_stdout.log").write_text(cp.stdout or "")
@@ -1163,31 +1478,86 @@ def tech_to_cesms_row(
     cap_min_attr = getattr(tech, "cap_min", None)
     cap_max_attr = getattr(tech, "cap_max", None)
     max_units = getattr(tech, "max_units", 1)
-    cap_max_value = np.nan
-    if cap_max_attr is not None:
-        cap_max_value = float(cap_max_attr)
+    spec_co2_attr = getattr(tech, "spec_co2", None)
+    is_storage_attr = getattr(tech, "is_storage", False)
+    out_frac_min_attr = getattr(tech, "out_frac_min", None)
+    out_frac_max_attr = getattr(tech, "out_frac_max", None)
+    in_frac_min_attr = getattr(tech, "in_frac_min", None)
+    in_frac_max_attr = getattr(tech, "in_frac_max", None)
+    availability_profile_attr = getattr(tech, "availability_profile", None)
+    output_profile_attr = getattr(tech, "output_profile", None)
+
+    efficiency_val = _require_finite("efficiency", tech.efficiency, gt_zero=True)
+    lifetime_val = _require_finite("technical_lifetime", tech.technical_lifetime, gt_zero=True)
+    opex_energy_val = _require_finite("opex_cost_energy", tech.opex_cost_energy, allow_zero=True)
+    opex_power_val = _require_finite("opex_cost_power", tech.opex_cost_power, allow_zero=True)
+    capex_power_val = _require_finite("capex_cost_power", tech.capex_cost_power, allow_zero=True)
+    capex_base_val = _require_finite("capex_cost_base", getattr(tech, "capex_cost_base", None), allow_zero=True)
+
+    spec_co2_val = None if spec_co2_attr is None else _require_finite("spec_co2", spec_co2_attr, allow_zero=True)
+    is_storage_val = bool(is_storage_attr)
+    c_rate_val: float | None = None
+    efficiency_charge_val: float | None = None
+    if is_storage_val:
+        c_rate_raw = getattr(tech, "c_rate", None)
+        if c_rate_raw is None:
+            raise ValueError(f"c_rate is required for storage technology '{tech.name}'")
+        efficiency_charge_raw = getattr(tech, "efficiency_charge", None)
+        if efficiency_charge_raw is None:
+            raise ValueError(f"efficiency_charge is required for storage technology '{tech.name}'")
+        c_rate_val = _require_finite("c_rate", c_rate_raw, gt_zero=True)
+        efficiency_charge_val = _require_finite("efficiency_charge", efficiency_charge_raw, gt_zero=True)
+
+    def _optional_frac(label: str, raw: Any) -> float | None:
+        if raw is None:
+            return None
+        return _require_finite(label, raw, allow_zero=True)
+
+    out_frac_min_val = _optional_frac("out_frac_min", out_frac_min_attr)
+    out_frac_max_val = _optional_frac("out_frac_max", out_frac_max_attr)
+    in_frac_min_val = _optional_frac("in_frac_min", in_frac_min_attr)
+    in_frac_max_val = _optional_frac("in_frac_max", in_frac_max_attr)
+
+    if cap_max_attr is None:
+        raise ValueError(f"cap_max is required for technology '{tech.name}'")
+    cap_max_val = _require_finite(f"cap_max for {tech.name}", cap_max_attr, gt_zero=True)
+    max_units_val = _require_positive_int("max_units", max_units)
+
+    cap_min_val = None
+    if cap_min_attr is not None:
+        cap_min_val = _require_finite(f"cap_min for {tech.name}", cap_min_attr, allow_zero=True, gt_zero=False)
 
     row: Dict[str, Any] = {
         "conversion_process_name": cp_name,
         "commodity_in": _canon_co(cin),
         "commodity_out": _canon_co(cout),
         "scenario": scenario_name,
-        "efficiency": float(tech.efficiency) if tech.efficiency is not None else np.nan,
-        "technical_lifetime": int(tech.technical_lifetime) if tech.technical_lifetime is not None else np.nan,
+        "efficiency": efficiency_val,
+        "technical_lifetime": lifetime_val,
         "technical_availability": 1.0,
-        "opex_cost_energy": float(tech.opex_cost_energy) if tech.opex_cost_energy is not None else np.nan,
-        "opex_cost_power": float(tech.opex_cost_power) if tech.opex_cost_power is not None else np.nan,
-        "capex_cost_power": float(tech.capex_cost_power) if tech.capex_cost_power is not None else np.nan,
-        "capex_cost_base": float(getattr(tech, "capex_cost_base", 0.0)) if getattr(tech, "capex_cost_base", None) is not None else 0.0,
-        "cap_min": float(cap_min_attr) if cap_min_attr is not None else np.nan,
-        "cap_max": cap_max_value,
-        "cap_active": np.nan,
-    "max_units": int(max_units) if max_units is not None else np.nan,
+        "spec_co2": spec_co2_val,
+        "c_rate": c_rate_val,
+        "efficiency_charge": efficiency_charge_val,
+        "is_storage": 1 if is_storage_val else 0,
+        "opex_cost_energy": opex_energy_val,
+        "opex_cost_power": opex_power_val,
+        "capex_cost_power": capex_power_val,
+        "capex_cost_base": capex_base_val,
+        "cap_min": cap_min_val,
+        "cap_max": cap_max_val,
+        "cap_active": None,
+        "max_units": max_units_val,
+        "out_frac_min": out_frac_min_val,
+        "out_frac_max": out_frac_max_val,
+        "in_frac_min": in_frac_min_val,
+        "in_frac_max": in_frac_max_val,
+        "availability_profile": availability_profile_attr,
+        "output_profile": output_profile_attr,
     }
     row.update(overrides)
     return row
 
-def write_cesm_inputs_from_data(
+def _write_cesm_inputs_from_om(
     om,
     *,
     workdir: PathLike,
@@ -1195,44 +1565,113 @@ def write_cesm_inputs_from_data(
     scenario_name: str,
     tss_name: str,
     polygons_path: Optional[PathLike] = None,
+    polygons_gdf: Optional[gpd.GeoDataFrame] = None,
     data_dir: Optional[PathLike] = None,
-    start_year: int = 2020,
-    end_year: int = 2030,
-    year_gap: int = 5,
-    discount_rate: float = 0.05,
+    start_year: int | None = None,
+    end_year: int | None = None,
+    year_gap: int | None = None,
+    discount_rate: float | None = None,
     dt_hours: int = 1,
-    heat_file: str = "D_Heat_Household_J.txt",
-    heat_unit: str = "MWH",
-    elec_profile_file: str = "corrected_eletricity_demand_2016.txt",
-    heat_commodity_base: str = "Heat",
-    elec_price_eur_per_mwh: float = 100.0,
-    export_price_eur_per_mwh: float = -10.0,
+    elec_profile_file: str | None = None,
+    heat_commodity_base: str | None = None,
+    elec_price_eur_per_mwh: float | None = None,
+    export_price_eur_per_mwh: float | None = None,
+    grid_prices: dict[str, float] | None = None,
+    supply_prices: dict[str, float] | None = None,
+    edge_defaults: dict[str, Any] | None = None,
     pipe_loss_fraction: float | None = None,
     pipe_cap_max_mw: float | None = None,
     pipe_opex_eur_per_mwh: float | None = None,
     pipe_capex_eur_per_mw: float | None = None,
     pipe_lifetime_years: int | None = None,
-    edge_strategy: str = "mst",
-    min_shared_border_m: float = 0.0,
+    edge_strategy: str | None = None,
+    min_shared_border_m: float | None = None,
     max_pipes_per_district: Optional[int] = None,
     neighbor_distance_m: Optional[float] = None,
     selected_techs: list[Technology] | TechnologyRegistry | None = None,
-    retain_existing_output_factor: float | None = 1.0,
-    retain_existing_output_years_factor: float | None = 1.0,
+    retain_existing_output_factor: float | None = None,
+    retain_existing_output_years_factor: float | None = None,
+    retain_existing_output_schedule: Optional[List[float]] = None,
     technology_registry: TechnologyRegistry | None = None,
     pipe_technology_name: str = "heat_pipe",
 ) -> None:
     workdir = Path(workdir)
     paths = _prepare_io_paths(workdir, model_name, tss_name)
-    techmap_dir = paths.techmap_dir
     ts_dir = paths.timeseries_dir
     om_scenario = getattr(om, "scenario", None)
-    if om_scenario is not None:
-        start_year = getattr(om_scenario, "start_year", start_year)
-        end_year = getattr(om_scenario, "end_year", end_year)
-        year_gap = getattr(om_scenario, "year_gap", year_gap)
-    data_dir = Path(data_dir) if data_dir is not None else Path("data")
+    start_year = start_year if start_year is not None else getattr(om_scenario, "start_year", None)
+    end_year = end_year if end_year is not None else getattr(om_scenario, "end_year", None)
+    year_gap = year_gap if year_gap is not None else getattr(om_scenario, "year_gap", None)
+    discount_rate = discount_rate if discount_rate is not None else getattr(om_scenario, "discount_rate", None)
+
+    if start_year is None or end_year is None or year_gap is None:
+        raise ValueError("start_year, end_year, and year_gap must be provided via scenario or arguments")
+    if discount_rate is None:
+        raise ValueError("discount_rate must be provided via scenario or arguments")
+    if retain_existing_output_schedule is None:
+        raise ValueError("retain_existing_output_schedule must be provided by the scenario (no defaults)")
+
+    if data_dir is None:
+        raise ValueError("data_dir must be provided via the EnergySystem (no default path)")
+    data_dir = Path(data_dir)
     om_regions = list(getattr(om, "regions", []))
+
+    def _sanitize_price_map(source: dict[str, float] | None) -> dict[str, float]:
+        if source is None:
+            return {}
+        if not isinstance(source, dict):
+            raise ValueError(f"Commodity price map must be a mapping, got {type(source).__name__}: {source!r}")
+        out: dict[str, float] = {}
+        for key, value in source.items():
+            try:
+                val = float(value)
+            except NUMERIC_ERRORS as exc:
+                raise ValueError("Commodity prices must be numeric") from exc
+            if not math.isfinite(val):
+                raise ValueError("Commodity prices must be finite")
+            out[str(key).lower()] = val
+        return out
+
+    edge_defaults = edge_defaults or {}
+    if not edge_defaults:
+        raise ValueError("edge_defaults must be provided via the EnergySystem commodity_config (no defaults)")
+    if grid_prices is None or supply_prices is None:
+        raise ValueError(
+            "Commodity prices must be provided via EnergySystem.commodity_config or explicitly as grid_prices/supply_prices"
+        )
+    grid_prices = _sanitize_price_map(grid_prices)
+    supply_prices = _sanitize_price_map(supply_prices)
+
+    if elec_price_eur_per_mwh is None:
+        try:
+            elec_price_eur_per_mwh = float(grid_prices["electricity"])
+        except KeyError as exc:
+            raise ValueError("Missing electricity grid price in commodity configuration") from exc
+        except NUMERIC_ERRORS as exc:
+            raise ValueError("Non-numeric electricity grid price in commodity configuration") from exc
+
+    if export_price_eur_per_mwh is None:
+        try:
+            export_price_eur_per_mwh = float(grid_prices["export"])
+        except KeyError as exc:
+            raise ValueError("Missing export grid price in commodity configuration") from exc
+        except NUMERIC_ERRORS as exc:
+            raise ValueError("Non-numeric export grid price in commodity configuration") from exc
+
+    logger.debug(
+        "commodity pricing resolved: grid_prices=%s, elec=%s, export=%s, supply_prices=%s",
+        grid_prices,
+        elec_price_eur_per_mwh,
+        export_price_eur_per_mwh,
+        supply_prices,
+    )
+    
+    edge_strategy = edge_strategy or edge_defaults.get("edge_strategy", "mst")
+    min_shared_border_m = (
+        float(edge_defaults.get("min_shared_border_m", 0.0)) if min_shared_border_m is None else min_shared_border_m
+    )
+    max_pipes_per_district = edge_defaults.get("max_pipes_per_district") if max_pipes_per_district is None else max_pipes_per_district
+    neighbor_distance_m = edge_defaults.get("neighbor_distance_m") if neighbor_distance_m is None else neighbor_distance_m
 
     scenario_years: List[int] = []
     try:
@@ -1257,98 +1696,69 @@ def write_cesm_inputs_from_data(
 
     profile_full = None
     try:
-        om_profile = getattr(om, "profile", None)
+        om_profile = getattr(om, "demand_profile", None)
+        if om_profile is None:
+            om_profile = getattr(om, "profile", None)
         if om_profile is not None:
             if hasattr(om_profile, "values"):
                 om_profile = om_profile.values
             profile_arr = np.asarray(list(om_profile), dtype=float)
             if profile_arr.size == 8760:
-                prof_sum = float(profile_arr.sum())
-                if prof_sum > 0:
-                    profile_full = profile_arr / prof_sum
+                profile_full = profile_arr
     except NUMERIC_ERRORS:
         profile_full = None
     if profile_full is None:
+        if elec_profile_file is None:
+            raise ValueError("elec_profile_file must be provided via the EnergySystem (no default)")
         profile_full = _load_numeric_txt(data_dir / elec_profile_file)
-        prof_sum = float(profile_full.sum())
-        if prof_sum <= 0:
-            raise ValueError(f"Electricity profile {elec_profile_file} sums to zero; cannot normalize.")
-        profile_full = profile_full / prof_sum
     tss_vals = _ensure_tss_indices(paths.tss_file)
-    max_idx = max(tss_vals) if tss_vals else 0
-    if max_idx >= len(profile_full):
-        raise ValueError(f"TSS requires index {max_idx} but profile length is {len(profile_full)}.")
-    if tss_vals:
-        idx_arr = np.asarray(tss_vals, dtype=int) - 1
-        selected_sum = float(profile_full[idx_arr].sum())
-        if selected_sum <= 0.0:
-            raise ValueError("Electricity profile assigns zero weight to selected TSS hours; cannot normalize.")
-        if not np.isclose(selected_sum, 1.0):
-            profile_full = profile_full / selected_sum
-        from decimal import Decimal, ROUND_HALF_UP, getcontext
-        getcontext().prec = 28
-        quantum = Decimal("0.00000001")
-        rounded: list[Decimal] = []
-        for pos in idx_arr:
-            rounded.append(Decimal(profile_full[pos]).quantize(quantum, rounding=ROUND_HALF_UP))
-        correction = Decimal("1.0") - sum(rounded)
-        if correction != 0:
-            rounded[-1] = (rounded[-1] + correction).quantize(quantum, rounding=ROUND_HALF_UP)
-        for pos, dec_val in zip(idx_arr, rounded):
-            profile_full[pos] = float(dec_val)
+    profile_full = _normalize_profile(profile_full, tss_vals)
     demand_profile_name = "HeatDemandProfile"
     _write_demand_profile(ts_dir, demand_profile_name, profile_full)
     districts: List[int]
     heat_names: List[str]
     directed_edges: List[Tuple[int, int]] = []
-    base_heat_name = heat_commodity_base
-    if polygons_path is None:
-        count = len(om_regions) if om_regions else 1
-        if count <= 0:
-            count = 1
-        districts = list(range(count))
-        area_weights = np.ones(count, dtype=float)
-        if area_weights.sum() > 0:
-            area_weights = area_weights / area_weights.sum()
-        if count == 1:
-            heat_names = [f"{base_heat_name}"]
-        else:
-            heat_names = [f"{base_heat_name}_D{i}" for i in districts]
-    else:
+    base_heat_name = heat_commodity_base or getattr(om, "commodity", None) or demand_commodity
+    gdf: Optional[gpd.GeoDataFrame] = None
+    if polygons_gdf is not None:
+        gdf = polygons_gdf.copy()
+    if polygons_path is None and gdf is None:
+        raise ValueError("polygons must be provided via EnergySystem (no synthetic fallback)")
+    if gdf is None:
         if gpd is None:
             raise RuntimeError("geopandas required for polygons_path.")
         poly_path = Path(polygons_path)
         if not poly_path.exists():
             raise FileNotFoundError(f"polygons not found: {poly_path}")
         gdf = gpd.read_file(poly_path)
-        try:
-            if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
-                gdf = gdf.to_crs(3035)
-        except (AttributeError, TypeError, ValueError):
-            pass
-        n = int(len(gdf))
-        if n < 1:
-            raise ValueError("No polygons found.")
-        areas = gdf.geometry.area.values.astype(float)
-        if not np.isfinite(areas).all() or areas.sum() <= 0:
-            area_weights = np.ones(n, dtype=float) / n
-        else:
-            area_weights = areas / areas.sum()
-        districts = list(range(n))
-        if n == 1:
-            heat_names = [f"{base_heat_name}"]
-        else:
-            heat_names = [f"{base_heat_name}_D{i}" for i in range(n)]
-            undirected_edges = _edges_pruned(
-                gdf,
-                edge_strategy=edge_strategy,
-                min_shared_border_m=min_shared_border_m,
-                max_pipes_per_district=max_pipes_per_district,
-                neighbor_distance_m=neighbor_distance_m,
-            )
-            for i, j in undirected_edges:
-                directed_edges.append((i, j))
-                directed_edges.append((j, i))
+    try:
+        if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
+            gdf = gdf.to_crs(3035)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    n = int(len(gdf))
+    if n < 1:
+        raise ValueError("No polygons found.")
+    areas = gdf.geometry.area.values.astype(float)
+    if not np.isfinite(areas).all() or areas.sum() <= 0:
+        area_weights = np.ones(n, dtype=float) / n
+    else:
+        area_weights = areas / areas.sum()
+    districts = list(range(n))
+    if n == 1:
+        heat_names = [f"{base_heat_name}"]
+    else:
+        heat_names = [f"{base_heat_name}_D{i}" for i in range(n)]
+        undirected_edges = _edges_pruned(
+            gdf,
+            edge_strategy=edge_strategy,
+            min_shared_border_m=min_shared_border_m,
+            max_pipes_per_district=max_pipes_per_district,
+            neighbor_distance_m=neighbor_distance_m,
+        )
+        for i, j in undirected_edges:
+            directed_edges.append((i, j))
+            directed_edges.append((j, i))
 
     district_index = {d: idx for idx, d in enumerate(districts)}
     if len(districts) <= 1:
@@ -1393,18 +1803,10 @@ def write_cesm_inputs_from_data(
     if not annual_heat_by_d:
         annual_heat_by_d = [0.0] * len(districts)
     annual_heat_mwh_total = float(sum(annual_heat_by_d))
-    if annual_heat_mwh_total <= 0.0:
-        heat_series = _load_numeric_txt(data_dir / heat_file)
-        if heat_unit.upper() == "J":
-            annual_heat_mwh_total = float(heat_series.sum() / 3.6e9)
-        elif heat_unit.upper() == "MWH":
-            annual_heat_mwh_total = float(heat_series.sum())
-        else:
-            raise ValueError("heat_unit must be 'J' or 'MWh'.")
+    if annual_heat_mwh_total < 0.0:
+        raise ValueError("Annual heat demand is negative.")
+    if len(annual_heat_by_d) != len(districts):
         annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
-    else:
-        if len(annual_heat_by_d) != len(districts):
-            annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
     xlsx = paths.xlsx_path
     units_df = _units_df()
     scenario_df = _scenario_df(
@@ -1449,18 +1851,12 @@ def write_cesm_inputs_from_data(
         if default_registry.has_technology(pipe_technology_name):
             pipe_tech = default_registry.get_by_name(pipe_technology_name)
 
-    DEFAULT_PIPE_LOSS = 0.02
-    DEFAULT_PIPE_CAPEX = 100.0
-    DEFAULT_PIPE_OPEX = 0.0
-    DEFAULT_PIPE_LIFETIME = 30
-    DEFAULT_PIPE_CAP_MAX = UNBOUNDED_ENERGY
-
-    def _pick(value_override, spec_value, fallback):
+    def _require_value(value_override: Any, spec_value: Any, field_name: str) -> Any:
         if value_override is not None:
             return value_override
         if spec_value is not None:
             return spec_value
-        return fallback
+        raise ValueError(f"{field_name} is required for pipe technology '{pipe_technology_name}'")
 
     spec_efficiency: float | None = None
     if pipe_tech and getattr(pipe_tech, "efficiency", None) is not None:
@@ -1500,14 +1896,14 @@ def write_cesm_inputs_from_data(
         except NUMERIC_ERRORS:
             spec_cap_max = None
 
-    resolved_loss = _pick(pipe_loss_fraction, spec_loss, DEFAULT_PIPE_LOSS)
+    resolved_loss = _require_value(pipe_loss_fraction, spec_loss, "pipe_loss_fraction or pipe efficiency")
     pipe_eff = max(0.0, 1.0 - float(resolved_loss))
-    pipe_capex_value = _pick(pipe_capex_eur_per_mw, spec_capex, DEFAULT_PIPE_CAPEX)
-    pipe_opex_value = _pick(pipe_opex_eur_per_mwh, spec_opex, DEFAULT_PIPE_OPEX)
-    pipe_lifetime_value = int(_pick(pipe_lifetime_years, spec_lifetime, DEFAULT_PIPE_LIFETIME))
-    pipe_cap_max_value = float(_pick(pipe_cap_max_mw, spec_cap_max, DEFAULT_PIPE_CAP_MAX))
+    pipe_capex_value = _require_value(pipe_capex_eur_per_mw, spec_capex, "pipe_capex_eur_per_mw")
+    pipe_opex_value = _require_value(pipe_opex_eur_per_mwh, spec_opex, "pipe_opex_eur_per_mwh")
+    pipe_lifetime_value = int(_require_value(pipe_lifetime_years, spec_lifetime, "pipe_lifetime_years"))
+    pipe_cap_max_value = float(_require_value(pipe_cap_max_mw, spec_cap_max, "pipe_cap_max_mw"))
 
-    def _to_int_id(raw: Any, fallback: int) -> int:
+    def _to_int_id(raw: Any) -> int:
         if hasattr(raw, "iloc"):
             try:
                 raw = raw.iloc[0]
@@ -1520,50 +1916,71 @@ def write_cesm_inputs_from_data(
         except NUMERIC_ERRORS:
             try:
                 return int(float(raw))
-            except NUMERIC_ERRORS:
-                return int(fallback)
+            except NUMERIC_ERRORS as exc:
+                raise ValueError(f"Unable to parse integer id from {raw!r}") from exc
 
     constraints_raw = getattr(om, "constraints", {}) or {}
+    if constraints_raw and not isinstance(constraints_raw, dict):
+        raise ValueError("constraints must be provided as a mapping")
+
     demand_commodity = getattr(om, "commodity", None) or "residential_heat"
 
-    min_dhn_targets_raw = (
-        constraints_raw.get("min_dhn_throughput_mwh", {}) if isinstance(constraints_raw, dict) else {}
-    )
+    min_dhn_targets_raw = constraints_raw.get("min_dhn_throughput_mwh", {}) if constraints_raw else {}
+    if min_dhn_targets_raw and not isinstance(min_dhn_targets_raw, dict):
+        raise ValueError("min_dhn_throughput_mwh constraint must be a mapping of region ids to values")
     min_dhn_targets: dict[int, float] = {}
-    if isinstance(min_dhn_targets_raw, dict):
-        for key, value in min_dhn_targets_raw.items():
-            try:
-                rid = _to_int_id(key, 0)
-            except (TypeError, ValueError):
-                continue
-            try:
-                val = float(value)
-            except NUMERIC_ERRORS:
-                continue
-            if val > 0:
-                min_dhn_targets[rid] = float(val)
+    for key, value in (min_dhn_targets_raw or {}).items():
+        rid = _to_int_id(key)
+        val = float(value)
+        if val > 0:
+            min_dhn_targets[rid] = float(val)
 
     min_heat_grid_key = f"min_heat_grid_{demand_commodity}"
-    min_heat_grid_raw = constraints_raw.get(min_heat_grid_key, {}) if isinstance(constraints_raw, dict) else {}
+    min_heat_grid_raw = constraints_raw.get(min_heat_grid_key, {}) if constraints_raw else {}
+    if min_heat_grid_raw and not isinstance(min_heat_grid_raw, dict):
+        raise ValueError(f"{min_heat_grid_key} constraint must be a mapping of region ids to values")
     min_heat_grid_targets: dict[int, float] = {}
-    if isinstance(min_heat_grid_raw, dict):
-        for key, value in min_heat_grid_raw.items():
-            try:
-                rid = _to_int_id(key, 0)
-            except (TypeError, ValueError):
-                continue
-            try:
-                val = float(value)
-            except NUMERIC_ERRORS:
-                continue
+    for key, value in (min_heat_grid_raw or {}).items():
+        rid = _to_int_id(key)
+        val = float(value)
+        if val > 0:
+            min_heat_grid_targets[rid] = float(val)
+
+    min_central_cap_raw = constraints_raw.get("min_central_cap_mw", {}) if constraints_raw else {}
+    min_central_cap_targets: dict[str, float] = {}
+    for tech_name, value in (min_central_cap_raw or {}).items():
+        val = float(value)
+        if val > 0:
+            min_central_cap_targets[tech_name] = float(val)
+
+    min_central_cap_total_raw = constraints_raw.get("min_central_cap_mw_total", {})
+    min_central_cap_totals: dict[int, float] = {}
+    for key, value in (min_central_cap_total_raw or {}).items():
+        did = _to_int_id(key)
+        val = float(value)
+        if val > 0:
+            min_central_cap_totals[did] = float(val)
+
+    min_central_cap_total_by_co_raw = constraints_raw.get("min_central_cap_mw_total_by_commodity", {}) 
+    min_central_cap_totals_by_co: dict[str, dict[int, float]] = {}
+    for commodity_raw, per_district in (min_central_cap_total_by_co_raw or {}).items():
+        commodity = str(commodity_raw).strip().lower()
+        bucket: dict[int, float] = {}
+        for key, value in per_district.items():
+            did = _to_int_id(key)
+            val = float(value)
             if val > 0:
-                min_heat_grid_targets[rid] = float(val)
+                bucket[did] = float(val)
+        if bucket:
+            min_central_cap_totals_by_co[commodity] = bucket
 
     om_region_ids = list(getattr(om, "regions", []))
     district_to_region: dict[int, int] = {}
     for idx, district_id in enumerate(districts):
-        raw_rid = om_region_ids[idx] if idx < len(om_region_ids) else district_id
-        district_to_region[district_id] = _to_int_id(raw_rid, district_id)
+        if idx >= len(om_region_ids):
+            raise ValueError(f"Missing region id for district {district_id}")
+        raw_rid = om_region_ids[idx]
+        district_to_region[district_id] = _to_int_id(raw_rid)
 
     region_metrics = getattr(om, "region_technology_metrics", {}) or {}
     total_metrics: dict[str, dict[str, float]] = {}
@@ -1594,6 +2011,20 @@ def write_cesm_inputs_from_data(
             retain_factor = max(0.0, float(retain_existing_output_factor))
         except NUMERIC_ERRORS:
             retain_factor = None
+
+    retain_schedule: Optional[List[float]] = None
+    if retain_existing_output_schedule:
+        sanitized: List[float] = []
+        for entry in retain_existing_output_schedule:
+            try:
+                val = float(entry)
+            except NUMERIC_ERRORS:
+                continue
+            if math.isnan(val):
+                continue
+            sanitized.append(max(0.0, val))
+        if sanitized:
+            retain_schedule = sanitized
     
     logger.debug(
         "retain_existing_output_factor=%s -> retain_factor=%s",
@@ -1646,23 +2077,34 @@ def write_cesm_inputs_from_data(
                     if name not in conv_procs:
                         conv_procs.append(name)
             continue
+
+        is_central = _is_central_heat_supply(tech.name)
+        if is_central and tech_district is None and len(districts) > 1:
+            for d in districts:
+                name = f"{tech.name}_D{d}"
+                if name not in conv_procs:
+                    conv_procs.append(name)
+            continue
+
         if len(districts) == 1 or tech.commodity_out != demand_commodity:
             name = f"{tech.name}"
             if name not in conv_procs:
                 conv_procs.append(name)
-        else:
-            for i in districts:
-                name = f"{tech.name}_D{i}"
-                if name not in conv_procs:
-                    conv_procs.append(name)
+            continue
+
+        if tech_district is not None:
+            name = tech.name
+            if name not in conv_procs:
+                conv_procs.append(name)
+            continue
+
+        for i in districts:
+            name = f"{tech.name}_D{i}"
+            if name not in conv_procs:
+                conv_procs.append(name)
 
     extra_supply_rows: List[dict[str, Any]] = []
-    # Prices are specified in €/MWh; entries reflect 0.10/0.15/0.25 €/kWh for gas, oil, and hydrogen respectively.
-    supply_price_defaults = {
-        "gas": 100.0,
-        "oil": 150.0,
-        "hydrogen": 250.0,
-    }
+    supply_price_defaults = {k.lower(): float(v) for k, v in supply_prices.items()}
     for commodity in supply_candidates:
         if commodity not in commodity_list:
             commodity_list.append(commodity)
@@ -1752,14 +2194,19 @@ def write_cesm_inputs_from_data(
         districts=districts,
         district_index=district_index,
         heat_names=heat_names,
+        district_heat_in_names=district_heat_in_names,
         district_heat_out_names=district_heat_out_names,
         min_dhn_targets=min_dhn_targets,
         min_heat_grid_targets=min_heat_grid_targets,
+        min_central_cap_targets=min_central_cap_targets,
+        min_central_cap_totals=min_central_cap_totals,
+        min_central_cap_totals_by_co=min_central_cap_totals_by_co,
         district_to_region=district_to_region,
         region_metrics=region_metrics,
         total_metrics=total_metrics,
         retain_factor=retain_factor,
         retain_years_factor=retain_existing_output_years_factor,
+        retain_schedule=retain_schedule,
         elec_price_eur_per_mwh=elec_price_eur_per_mwh,
     )
 
@@ -1780,8 +2227,85 @@ def write_cesm_inputs_from_data(
         convsubproc_rows=len(convsubproc_df),
     )
 
-def write_cesm_inputs_multidistrict_from_data(**kwargs) -> None:
-    return write_cesm_inputs_from_data(**kwargs)
+def _polygons_from_energy_system(es: EnergySystem) -> Optional[gpd.GeoDataFrame]:
+    regions = getattr(es, "regions", []) or []
+    frames: list[gpd.GeoDataFrame] = []
+    for region in regions:
+        poly = getattr(region, "polygon", None)
+        if isinstance(poly, gpd.GeoDataFrame):
+            frames.append(poly.copy())
+    if not frames:
+        return None
+    gdf = pd.concat(frames, ignore_index=True)
+    if "id" not in gdf.columns:
+        gdf["id"] = range(len(gdf))
+    try:
+        if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
+            gdf = gdf.to_crs(3035)
+    except Exception:
+        pass
+    return gdf
+
+
+def write_cesm_inputs_from_energy_system(
+    energy_system: EnergySystem,
+    scenario: Scenario,
+    *,
+    workdir: PathLike,
+    model_name: str,
+    scenario_name: str,
+    tss_name: str,
+    demand_name: str = "residential_heat",
+    technology_registry: TechnologyRegistry | None = None,
+    polygons_gdf: Optional[gpd.GeoDataFrame] = None,
+    retain_existing_output_factor: float | None = None,
+    retain_existing_output_years_factor: float | None = None,
+    retain_existing_output_schedule: Optional[List[float]] = None,
+    **kwargs: Any,
+) -> None:
+    """Generate CESM inputs from an EnergySystem."""
+
+    resolved_schedule = _resolve_retain_schedule(
+        explicit_schedule=retain_existing_output_schedule,
+        scenario=scenario,
+    )
+    if resolved_schedule is None:
+        raise ValueError("retain_existing_output_schedule must be provided via scenario or argument")
+
+    om_ctx = build_om_from_es(energy_system, scenario, demand_name=demand_name)
+    grid_prices, supply_prices, edge_defaults = _commodity_config_from_energy_system(energy_system)
+    logger.debug(
+        "commodity_config extracted: grid_prices=%s (%s), supply_prices=%s (%s), edge_defaults=%s (%s)",
+        grid_prices,
+        type(grid_prices).__name__,
+        supply_prices,
+        type(supply_prices).__name__,
+        edge_defaults,
+        type(edge_defaults).__name__,
+    )
+    if polygons_gdf is None:
+        polygons_gdf = _polygons_from_energy_system(energy_system)
+    _write_cesm_inputs_from_om(
+        om_ctx,
+        workdir=workdir,
+        model_name=model_name,
+        scenario_name=scenario_name,
+        tss_name=tss_name,
+        data_dir=getattr(energy_system, "data_dir", None),
+        grid_prices=grid_prices,
+        supply_prices=supply_prices,
+        edge_defaults=edge_defaults,
+        start_year=getattr(scenario, "start_year", None),
+        end_year=getattr(scenario, "end_year", None),
+        year_gap=getattr(scenario, "year_gap", None),
+        discount_rate=getattr(scenario, "discount_rate", None),
+        polygons_gdf=polygons_gdf,
+        technology_registry=technology_registry,
+        retain_existing_output_factor=retain_existing_output_factor,
+        retain_existing_output_years_factor=retain_existing_output_years_factor,
+        retain_existing_output_schedule=resolved_schedule,
+        **kwargs,
+    )
 
 # Edge helpers ----------------------------------------------------------------
 

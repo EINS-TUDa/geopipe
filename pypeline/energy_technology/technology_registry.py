@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Type
 from .technology import Technology
 from .technology_stage import TechnologyStage, TechnologyCategory
@@ -8,7 +9,6 @@ class TechnologyNotFoundError(Exception):
         super().__init__(f"Technology with name '{name}' not found.")
         self.cls = cls
         self.name = name
-
 
 class TechnologyRegistry:
     def __init__(self):
@@ -60,11 +60,28 @@ class TechnologyRegistry:
         """
         registry = get_default_technology_registry()
         if not registry.get_all():
-            from pypeline.energy_technology.configs import register_default_technologies
+            from .tech_loader import instantiate_all, load_specs_from_package
 
-            register_default_technologies(registry)
+            specs = load_specs_from_package()
+            for tech in instantiate_all(specs):
+                if registry.has_technology(tech.name):
+                    continue
+                registry.register(tech)
         for tech in registry.get_all():
+            if self.has_technology(tech.name):
+                continue
             self.register(tech)
+
+    @classmethod
+    def load_from_file(cls, file_path: str) -> "TechnologyRegistry":
+        """Build from a YAML technology spec file."""
+        from .tech_loader import load_specs_from_file, instantiate_all
+        path = Path(file_path)
+        specs = load_specs_from_file(path)
+        registry = cls()
+        for tech in instantiate_all(specs):
+            registry.register(tech)
+        return registry
 
     def remove(self, name: str):
         """

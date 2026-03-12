@@ -29,12 +29,15 @@ def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[
                     "fernwaerme": CensusTechnology.District_Heating,
                     "kein_energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    columns_sql = ", ".join([f'COALESCE(SUM("{tech}"), 0) AS "{tech}"' for tech in list(census_names.keys())])
+    columns_sql = ", ".join([
+        f"COALESCE(SUM(NULLIF(\"{tech}\", '–')::numeric), 0) AS \"{tech}\""
+        for tech in census_names.keys()
+    ])
 
     sql_text = text(f"""
         SELECT
             {columns_sql}
-        FROM clean_census_energietraeger.shares_2_buildings
+        FROM clean_census_energietraeger.share_2_buildings
         WHERE ST_Within(
             centroid,
             ST_Transform(
@@ -75,7 +78,7 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 
     sql_text = text("""
         SELECT
-            COALESCE(SUM(demand_heating), 0) AS total_demand
+            COALESCE(SUM("heating:demand[Wh]"), 0) AS total_demand
         FROM kwp.buildings_heat_demand
         WHERE ST_Within(
             centroid,
@@ -165,8 +168,7 @@ def _create_default_datasets() -> list:
     """Create and return all default datasets (lazy initialization)."""
     # Create database connection
     ***REMOVED***_conn = DatabaseConnection(
-        host="localhost",
-        # host="ds1.example.com",
+        host="ds1.example.com",
         port=54328,
         database="***REMOVED***",
         user="***REMOVED***",
@@ -194,14 +196,14 @@ def _create_default_datasets() -> list:
     residential_heat_demand_profile_dataset = CSVDataset(
         keys=["residential_heat_demand_profile"],
         file_path="data/D_Heat_Household_J.txt",
-        pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
+        pandas_kwargs={"sep": r"\s+", "decimal": ".", "header": None},
         priority=1,
     )
 
     residential_electricity_demand_profile_dataset = CSVDataset(
         keys=["residential_electricity_demand_profile"],
         file_path="data/corrected_eletricity_demand_2016.txt",
-        pandas_kwargs={"sep": "\s+", "decimal": ".", "header": None},
+        pandas_kwargs={"sep": r"\s+", "decimal": ".", "header": None},
         priority=1,
     )
 
@@ -260,11 +262,11 @@ def get_default_data_registry() -> DataRegistry:
 if __name__ == "__main__":
     # Simple test query for debugging
     test_query_1 = {"key": "heating_shares",
-                "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
+                "region": gpd.read_file("../../examples/neuburg/polygon_neuburg.geojson")}
     test_query_2 = {"key": "residential_heat_demand",
-                "region": gpd.read_file("../../data/polygon_neuburg.geojson")}
+                "region": gpd.read_file("../../examples/neuburg/polygon_neuburg.geojson")}
     test_query_3 = {"key": "residential_heat_demand_profile"}
-    test_query_4 = {"key": "heating_shares", "region": gpd.read_file("../../data/baublock_bensheim_epsg25832.geojson")}
+    test_query_4 = {"key": "heating_shares", "region": gpd.read_file("../../examples/bensheim/baublock_bensheim_epsg25832.geojson")}
 
     registry = get_default_data_registry()
     for ds in registry.get_datasets():
