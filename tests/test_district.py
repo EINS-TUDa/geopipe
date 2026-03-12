@@ -1,15 +1,10 @@
 from pathlib import Path
-
 import geopandas as gpd
 import pytest
-
-from pypeline.data.datasets import (
-    Census2022HeatingType100mGrid,
-    CensusTechnology,
-    WaermeatlasHessen,
-)
+from pypeline.data.datasets import (Census2022HeatingType100mGrid,CensusTechnology,WaermeatlasHessen)
 
 def test_district_from_bounding_box():
+    """Checks district heating share aggregation matches expected regional proportions."""
     region = gpd.read_file(Path("examples/bensheim/wah_bensheim_4_districts.geojson"))
     cen = Census2022HeatingType100mGrid()
     shares = {
@@ -39,6 +34,7 @@ def test_district_from_bounding_box():
 
 
 def test_residential_yearly_heat_demand():
+    """Checks residential annual heat demand query returns expected benchmark value."""
     region = gpd.read_file(Path("examples/bensheim/baublock_bensheim_epsg25832.geojson"))
     wh = WaermeatlasHessen()
     total_heat_demand = wh.query({"region": region, "key": "residential_heat"})

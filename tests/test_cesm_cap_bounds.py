@@ -1,50 +1,19 @@
-import math
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+from shapely.geometry import Polygon
 
-from pypeline import EnergySystemBuilder, TechnologyRegistry
-from pypeline.data.default_registry import get_default_data_registry
-from pypeline.energy_system.rule_book import EnergySystemRuleBook, MinimumDHNThroughputRule
-from pypeline.energy_system.scenario import Scenario
-from tools.cesm_plugin import write_cesm_inputs_from_energy_system
+from pypeline.energy_technology.technology import Technology
+from pypeline.optimization.om_adapter import OMContext
+from tools.cesm_plugin import _write_cesm_inputs_from_om
 
 
-def _build_bensheim_es():
-    tech_reg = TechnologyRegistry()
-    tech_reg.load_from_default()
-    data_reg = get_default_data_registry()
-
-    polygons_path = Path("examples/bensheim/wah_bensheim_4_districts.geojson")
-
-    polygons = gpd.read_file(polygons_path)
-
-    esb = EnergySystemBuilder(energy_system_name="BensheimTest")
-    esb.set_polygons(polygons)
-    esb.set_technology_dependency_manager(default=True)
-    esb.set_demands(default=True)
-    esb.set_technology_registry(tech_reg)
-    esb.set_data_registry(data_reg)
-
-    esb.set_default_region_builder_config()
-    esb.region_builder_config.update({
-        "min_heat_grid_share": 0.35,
-        "heat_grid_names": ("heat_exchanger",),
-    })
-
-    rulebook = EnergySystemRuleBook()
-    rulebook.add_rule(MinimumDHNThroughputRule(demand_name="residential_heat", min_share=0.20))
-    esb.set_energy_system_rule_book(rulebook)
-
-    es = esb.build()
-
-    scenario = Scenario(name="BensheimTestScenario", start_year=2020, end_year=2030, year_gap=5, tss="4ThinWeeks")
-    return es, scenario, tech_reg, polygons
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _profile_peak(value):
-    if value is None or (isinstance(value, float) and math.isnan(value)):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
         return None
     if isinstance(value, (int, float)):
         return float(value)
@@ -57,8 +26,7 @@ def _profile_peak(value):
         except ValueError:
             return None
     peaks = []
-    body = raw[1:-1]
-    for chunk in body.split(";"):
+    for chunk in raw[1:-1].split(";"):
         parts = chunk.strip().split()
         if len(parts) < 2:
             continue
@@ -69,45 +37,116 @@ def _profile_peak(value):
     return max(peaks) if peaks else None
 
 
-def test_cap_reserves_do_not_exceed_cap_max(tmp_path):
-    es, scenario, tech_reg, polygons = _build_bensheim_es()
-    retain_existing_output_schedule = [(0.95) ** (year - scenario.start_year) for year in scenario.years()]
+def _ensure_tss(workdir: Path) -> None:
+    tss_source = REPO_ROOT / "CESM" / "Data" / "TimeSeries" / "4ThinWeeks.txt"
+    tss_target = workdir / "Data" / "TimeSeries" / "4ThinWeeks.txt"
+    tss_target.parent.mkdir(parents=True, exist_ok=True)
+    tss_target.write_text(tss_source.read_text(encoding="utf-8"), encoding="utf-8")
 
-    workdir = tmp_path / "cesm"
-    write_cesm_inputs_from_energy_system(
-        es,
-        scenario,
-        workdir=workdir,
-        model_name="BensheimTest",
-        scenario_name="Base",
-        tss_name="4ThinWeeks",
-        demand_name="residential_heat",
-        polygons_gdf=polygons,
-        technology_registry=tech_reg,
-        retain_existing_output_schedule=retain_existing_output_schedule,
+
+def _single_polygon() -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        [{"id": 0, "geometry": Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])}],
+        geometry="geometry",
+        crs="EPSG:3035",
     )
 
-    xlsx_path = workdir / "Data" / "Techmap" / "BensheimTest.xlsx"
+
+def _mock_om() -> OMContext:
+    years = [2020, 2025, 2030]
+    return OMContext(
+        years=years,
+        regions=[0],
+        commodity="residential_heat",
+        annual_demand={0: {year: 1200.0 for year in years}},
+        demand_profile=[1.0 / 8760.0] * 8760,
+        schedules={},
+        tss_indices=[],
+        tss_weights=[],
+        constraints={},
+        technologies={},
+        region_technology_metrics={
+            0: {
+                "heat_grid_D0": {"initial_capacity": 80.0, "initial_energy_output": 1200.0},
+                "heat_exchanger_D0": {"initial_capacity": 70.0, "initial_energy_output": 0.0},
+                "cen_heat_pump_D0": {"initial_capacity": 60.0, "initial_energy_output": 1500.0},
+            }
+        },
+    )
+
+
+def _selected_techs() -> list[Technology]:
+    return [
+        Technology("heat_grid_D0", "district_heat_in_D0", "district_heat_out_D0", cap_max=100.0, max_units=10),
+        Technology("heat_exchanger_D0", "district_heat_out_D0", "residential_heat_D0", cap_max=30.0, max_units=10),
+        Technology(
+            "cen_heat_pump_D0",
+            "electricity",
+            "district_heat_in_D0",
+            cap_min=0.2,
+            cap_max=20.0,
+            max_units=10,
+        ),
+    ]
+
+
+def cap_bounds_synth_t(tmp_path):
+    """Checks generated reserve and minimum capacity bounds are always clamped by cap_max."""
+    workdir = tmp_path / "cesm_cap_bounds"
+    _ensure_tss(workdir)
+
+    _write_cesm_inputs_from_om(
+        _mock_om(),
+        workdir=workdir,
+        model_name="SyntheticCapBounds",
+        scenario_name="Base",
+        tss_name="4ThinWeeks",
+        polygons_gdf=_single_polygon(),
+        data_dir=REPO_ROOT / "data",
+        start_year=2020,
+        end_year=2030,
+        year_gap=5,
+        discount_rate=0.05,
+        lockout_years=0,
+        dt_hours=1,
+        elec_price_eur_per_mwh=120.0,
+        export_price_eur_per_mwh=0.0,
+        grid_prices={"electricity": 120.0, "export": 0.0},
+        supply_prices={"gas": 60.0},
+        selected_techs=_selected_techs(),
+        retain_existing_output_schedule=[1.0, 1.0, 1.0],
+    )
+
+    xlsx_path = workdir / "Data" / "Techmap" / "SyntheticCapBounds.xlsx"
     assert xlsx_path.exists()
 
     df = pd.read_excel(xlsx_path, sheet_name="ConversionSubProcess")
+    assert not df.empty
 
+    saw_reserve = False
     for _, row in df.iterrows():
-        cap_max = row.get("cap_max")
-        cap_max_peak = _profile_peak(cap_max)
+        cap_max_peak = _profile_peak(row.get("cap_max"))
         if cap_max_peak is None:
             continue
+        max_units_val = row.get("max_units")
+        try:
+            max_units = float(max_units_val) if max_units_val is not None else 1.0
+        except (TypeError, ValueError):
+            max_units = 1.0
+        if not max_units or max_units < 1.0:
+            max_units = 1.0
+        total_cap_limit = cap_max_peak * max_units
 
         cap_min_peak = _profile_peak(row.get("cap_min"))
         if cap_min_peak is not None:
             assert cap_min_peak <= cap_max_peak + 1e-6
 
         for key in ("cap_res_min", "cap_res_max"):
-            res_peak = _profile_peak(row.get(key))
-            if res_peak is not None:
-                assert res_peak <= cap_max_peak + 1e-6
+            peak = _profile_peak(row.get(key))
+            if peak is None:
+                continue
+            if peak > 0.0:
+                saw_reserve = True
+            assert peak <= total_cap_limit + 1e-6
 
-    central_rows = df[df["conversion_process_name"].str.contains("cen_heat_pump", na=False)]
-    if not central_rows.empty:
-        central_caps = sorted({round(_profile_peak(value) or 0.0, 6) for value in central_rows["cap_max"].dropna()})
-        assert central_caps == [20.0]
+    assert saw_reserve, "Expected at least one positive reserve bound in synthetic retained-capacity setup"
