@@ -2,21 +2,19 @@ import re
 import hashlib
 from pathlib import Path
 from typing import Any
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as pe
-import numpy as np
-from matplotlib.patches import Patch
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import Patch, FancyBboxPatch
 from matplotlib.lines import Line2D
 from shapely.geometry import Point
-import matplotlib.cm as cm
 import contextily as ctx
 import geopandas as gpd
 import pandas as pd
 
 from pypeline.energy_system.energy_system import EnergySystem
-from pypeline.optimization.solver import Results
+from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME, HEAT_EXCHANGER_NAMES
 
 
 def plot_streets_colored_by_region(
@@ -271,12 +269,14 @@ class EnergySystemPlotter:
     _DEFAULT_FIGSIZE = (10, 10)
     _UNSUPPLIED_COLOR = "darkgray"
     _COMMODITY_COLORS = {
-        "gas": "#d7301f",
-        "oil": "#050300",
+        "gas": "#cb181d",
+        "heat_pump": "#fec44f",
         "hydrogen": "#2171b5",
-        "biomass": "#238b45",
-        "electricity": "#e8ff51",
-        "other": "#f161db",
+        "oil": "#3b2107",
+        "biomass": "#31a354",
+        "electricity": "#756bb1",
+        "coal": "#636363",
+        "other": "#969696",
     }
 
     def __init__(self, energy_system: EnergySystem):
@@ -305,9 +305,33 @@ class EnergySystemPlotter:
     @staticmethod
     def _commodity_bucket(commodity_in: str | None, tech_name: str) -> str:
         c = str(commodity_in or "").strip().lower()
+        if c.startswith("district_heat_"):
+            return "import"
         if c in {"gas", "oil", "hydrogen", "biomass", "electricity", "coal"}:
             return c
-        return EnergySystemPlotter._technology_family(tech_name, commodity_in)
+        fam = EnergySystemPlotter._technology_family(tech_name, commodity_in)
+        if fam == "other" and c:
+            return c
+        return fam
+
+    def _technology_bucket(self, tech: Any) -> str:
+        tech_name = str(getattr(tech, "name", "") or "")
+        base = self._base_tech_name(tech_name).lower()
+        commodity_in = str(getattr(tech, "commodity_in", "") or "").strip().lower()
+        if (
+            base.startswith("pipe_")
+            or base.startswith("import_")
+            or "import" in base
+            or commodity_in.startswith("district_heat_in")
+            or commodity_in.startswith("district_heat_import")
+            or self._is_heat_exchanger_tech(base)
+        ):
+            return "import"
+        if base.startswith("cen_"):
+            return f"cen_{self._commodity_bucket(commodity_in, tech_name)}"
+        if base.startswith("ind_"):
+            return f"ind_{self._commodity_bucket(commodity_in, tech_name)}"
+        return tech_name
 
     def _build_label_color_map(self, labels: set[str], *, share_view: str) -> dict[str, Any]:
         if share_view == "commodity":
@@ -367,7 +391,7 @@ class EnergySystemPlotter:
             if value <= 0:
                 continue
             label = (
-                r_tech.technology.name
+                self._technology_bucket(r_tech.technology)
                 if share_view == "technology"
                 else self._commodity_bucket(getattr(r_tech.technology, "commodity_in", None), r_tech.technology.name)
             )
@@ -394,18 +418,35 @@ class EnergySystemPlotter:
 
     def _is_heat_exchanger_tech(self, tech_name: str) -> bool:
         base = self._base_tech_name(tech_name).lower()
-        return base in {"heat_exchanger", "ind_district_heating_connection"} or base.startswith("heatexchanger")
+        return base in set(HEAT_EXCHANGER_NAMES) or base.startswith("heatexchanger")
 
     def _is_visual_supply_tech(self, tech: Any, demand_commodity_in: str | None) -> bool:
-        tech_name = getattr(tech, "name", "")
-        base = self._base_tech_name(tech_name)
-        if self._is_heat_exchanger_tech(base):
-            return False
-        if base.startswith("cen_"):
-            return True
+        tech_name = str(getattr(tech, "name", "") or "")
+        base = self._base_tech_name(tech_name).lower()
+        commodity_out = str(getattr(tech, "commodity_out", "") or "").strip().lower()
+
         if demand_commodity_in is None:
             return False
-        return getattr(tech, "commodity_out", None) == demand_commodity_in
+
+        demand_out = str(demand_commodity_in).strip().lower()
+        if commodity_out == demand_out:
+            return True
+
+        if base.startswith("cen_"):
+            return True
+
+        if (
+            self._is_heat_exchanger_tech(base)
+            or base.startswith("pipe_")
+            or base.startswith("import_")
+            or "import" in base
+            or commodity_out.startswith("district_heat_in")
+            or commodity_out.startswith("district_heat_out")
+            or commodity_out.startswith("district_heat_import")
+        ):
+            return True
+
+        return False
 
     def _resolve_cp_key(
         self,
@@ -415,31 +456,51 @@ class EnergySystemPlotter:
         region_idx: int,
         single_region: bool,
     ) -> str | None:
-        candidates: list[str] = [tech_name]
-        if not single_region:
-            candidates.append(f"{tech_name}_D{region_idx}")
-
         m = re.search(r"_D\d+$", tech_name, flags=re.IGNORECASE)
+        base_name = tech_name[:m.start()] if m else tech_name
+
+        raw_candidates: list[str] = []
+        if not single_region:
+            raw_candidates.append(f"{base_name}_D{region_idx}")
+        raw_candidates.append(tech_name)
         if m:
-            candidates.append(tech_name[:m.start()])
+            raw_candidates.append(base_name)
+
+        candidates: list[str] = []
+        seen_candidates: set[str] = set()
+        for candidate in raw_candidates:
+            if candidate in seen_candidates:
+                continue
+            seen_candidates.add(candidate)
+            candidates.append(candidate)
 
         lower_map = {k.lower(): k for k in tech_year_map.keys()}
         norm_map = {self._normalize_cp_name(k): k for k in tech_year_map.keys()}
+        district_key_pattern = re.compile(rf"^{re.escape(base_name)}_d\d+$", re.IGNORECASE)
+        has_district_keys = any(district_key_pattern.match(k) for k in tech_year_map.keys())
 
         for candidate in candidates:
+            if not single_region and has_district_keys and not re.search(r"_D\d+$", candidate, flags=re.IGNORECASE):
+                continue
             if candidate in tech_year_map:
                 return candidate
             candidate_lower = candidate.lower()
             if candidate_lower in lower_map:
-                return lower_map[candidate_lower]
+                matched = lower_map[candidate_lower]
+                if not single_region and has_district_keys and not re.search(r"_D\d+$", matched, flags=re.IGNORECASE):
+                    continue
+                return matched
             candidate_norm = self._normalize_cp_name(candidate)
             if candidate_norm in norm_map:
-                return norm_map[candidate_norm]
+                matched = norm_map[candidate_norm]
+                if not single_region and has_district_keys and not re.search(r"_D\d+$", matched, flags=re.IGNORECASE):
+                    continue
+                return matched
         return None
 
     def plot(
         self,
-        demand_name: str | None = "residential_heat",
+        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
         kind: str = "energy",
         share_view: str = "technology",
         *,
@@ -513,8 +574,15 @@ class EnergySystemPlotter:
         else:
             map_span = 1.0
 
-        demand_values_all = [float(v.get("demand_value", 0.0)) for v in region_plot_data.values()]
-        max_demand_value = max(demand_values_all) if demand_values_all else 0.0
+        area_by_region: dict[int, float] = {}
+        for region_idx, region in enumerate(self.energy_system.regions):
+            poly = region.polygon
+            if poly is None or poly.empty:
+                area_by_region[region_idx] = 0.0
+                continue
+            area_val = float(poly.geometry.iloc[0].area)
+            area_by_region[region_idx] = area_val if area_val > 0.0 else 0.0
+        max_region_area = max(area_by_region.values()) if area_by_region else 0.0
 
         # Plot each region's polygon
         for region_idx, region in enumerate(self.energy_system.regions):
@@ -560,8 +628,8 @@ class EnergySystemPlotter:
                 if isinstance(centroid, Point):
                     x, y = centroid.x, centroid.y
 
-                    demand_norm = (demand_value / max_demand_value) if max_demand_value > 0 else 0.0
-                    pie_radius = map_span * (0.012 + 0.018 * demand_norm)
+                    area_norm = (area_by_region.get(region_idx, 0.0) / max_region_area) if max_region_area > 0 else 0.0
+                    pie_radius = map_span * (0.02 + 0.02 * (area_norm ** 0.5))
 
                     # Total output from all technologies
                     total_output = sum(tech_outputs.values())
@@ -587,7 +655,7 @@ class EnergySystemPlotter:
                         center=(x, y),
                         frame=True,
                         textprops={"fontsize": 6},
-                        wedgeprops={"width": pie_radius / 1.5, 'linewidth': 2, 'edgecolor': 'white'}
+                        wedgeprops={"width": pie_radius / 1.5, 'linewidth': 1.0, 'edgecolor': 'white'}
                     )
 
                     [w.set_zorder(3) for w in wedge]
@@ -681,7 +749,7 @@ class EnergySystemPlotter:
                 value = self._lookup_year_value(tech_year_map.get(cp_key, {}), year)
                 if value > 0:
                     label = (
-                        tech_name
+                        self._technology_bucket(r_tech.technology)
                         if share_view == "technology"
                         else self._commodity_bucket(getattr(r_tech.technology, "commodity_in", None), tech_name)
                     )
@@ -695,7 +763,7 @@ class EnergySystemPlotter:
         optimization_results: dict[str, Any],
         *,
         year: int,
-        demand_name: str | None = "residential_heat",
+        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
         kind: str = "energy",
         share_view: str = "technology",
         show: bool = True,
@@ -725,7 +793,7 @@ class EnergySystemPlotter:
         optimization_results: dict[str, Any],
         *,
         years: list[int],
-        demand_name: str | None = "residential_heat",
+        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
         kind: str = "energy",
         share_view: str = "technology",
         ncols: int = 2,
@@ -791,7 +859,7 @@ class EnergySystemPlotter:
         self,
         output_path: str | Path,
         *,
-        demand_name: str | None = "residential_heat",
+        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
         kind: str = "energy",
         share_view: str = "technology",
         demand_values_by_region: dict[int, float] | None = None,
