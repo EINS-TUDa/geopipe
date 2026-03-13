@@ -1,293 +1,268 @@
 import re
-import hashlib
+import colorsys
+import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patheffects as pe
-from matplotlib.patches import Patch, FancyBboxPatch
-from matplotlib.lines import Line2D
-from shapely.geometry import Point
+from matplotlib import transforms
+from matplotlib.patches import Patch, Circle, Arc
+from matplotlib.textpath import TextPath
+from matplotlib.font_manager import FontProperties
 import contextily as ctx
 import geopandas as gpd
-import pandas as pd
-
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME, HEAT_EXCHANGER_NAMES
 
 
-def plot_streets_colored_by_region(
-    streets_with_region: gpd.GeoDataFrame,
-    polygons: gpd.GeoDataFrame,
-    *,
-    output_path: Path,
-    region_id_column: str = "id",
-    title: str = "Districts by streets",
-    caps_legend: dict[str, Any] | None = None,
-) -> None:
-    """Render a quick topology plot for polygon pipeline outputs.
+class PlotDefaults:
+    KIND = "energy"
+    NCOLS = 2
+    DPI = 300
+    STREET_FIGSIZE = (12, 14)
+    ES_FIGSIZE = (10, 10)
+    REGION_FILL_ALPHA = 0.5
+    REGION_FILL_COLOR = "grey"
+    REGION_BOUNDARY_LINEWIDTH = 2.0
+    PIE_RADIUS_BASE = 0.02
+    PIE_RADIUS_AREA_SCALE = 0.02
+    PIE_LABEL_MAP_SPAN_SCALE = 0.025
+    PIE_LABEL_RADIUS_SCALE = 1.7
+    CENTRAL_EXPLODE_SCALE = 0.25
+    MIN_SLICE_SHARE = 0.001
+    ID_FONT_SIZE = 12.0
+    LABEL_FONT_SIZE = 8.0
+    PIE_MAX_RADIUS_SCALE = 0.04
 
-    Colors street segments by assigned region, computes adjacency-aware colors to
-    reduce clashes between touching regions, and labels regions. Writes a PNG.
-    """
-    s = streets_with_region.copy()
+@dataclass
+class RegionPlotData:
+    demand_value: float
+    tech_outputs: dict[str, float]
 
-    region_ids = [int(rid) for rid in sorted(s[region_id_column].dropna().unique())]
+@dataclass
+class DonutLayout:
+    pie_radius: float
+    label_offset: float
+    label_edge_offset: float
 
-    rg = polygons[[region_id_column, "geometry"]].copy()
-    rg = rg.dropna(subset=[region_id_column]).copy()
-    rg[region_id_column] = rg[region_id_column].astype(int)
-    rg = rg[rg[region_id_column].isin(region_ids)].copy()
-    if rg.crs != s.crs:
-        rg = rg.to_crs(s.crs)
-    adjacency: dict[int, set[int]] = {int(rid): set() for rid in region_ids}
-    if not rg.empty:
-        j = gpd.sjoin(
-            rg[[region_id_column, "geometry"]],
-            rg[[region_id_column, "geometry"]],
-            how="inner",
-            predicate="intersects",
-        )
-        for _, row in j.iterrows():
-            a = int(row[f"{region_id_column}_left"])
-            b = int(row[f"{region_id_column}_right"])
-            if a == b:
-                continue
-            adjacency.setdefault(a, set()).add(b)
-            adjacency.setdefault(b, set()).add(a)
+@dataclass
+class YearPlotInputs:
+    demand_values_by_region: dict[int, float]
+    tech_outputs_by_region: dict[int, dict[str, float]]
 
-    palette: list[tuple[float, float, float, float]] = []
-    for h_idx in range(36):
-        h = float(h_idx) / 36.0
-        for s_val, v_val in ((0.95, 0.95), (0.80, 0.95), (0.95, 0.78)):
-            r, g, b = mcolors.hsv_to_rgb((h, s_val, v_val))
-            palette.append((float(r), float(g), float(b), 1.0))
-    n_colors = len(palette)
-
-    def _rgb_distance(c1: tuple[float, float, float, float], c2: tuple[float, float, float, float]) -> float:
-        return (
-            ((c1[0] - c2[0]) ** 2)
-            + ((c1[1] - c2[1]) ** 2)
-            + ((c1[2] - c2[2]) ** 2)
-        ) ** 0.5
-
-    color_idx_by_region: dict[int, int] = {}
-    used_global: set[int] = set()
-    uncolored = set(region_ids)
-
-    def _neighbor_colors(rid: int) -> set[int]:
-        return {
-            color_idx_by_region[n]
-            for n in adjacency.get(rid, set())
-            if n in color_idx_by_region
-        }
-
-    def _pick_next_region() -> int:
-        return max(
-            uncolored,
-            key=lambda rid: (len(_neighbor_colors(rid)), len(adjacency.get(rid, set())), -rid),
-        )
-
-    while uncolored:
-        rid = _pick_next_region()
-        neighbor_color_idxs = list(_neighbor_colors(rid))
-        assigned_color_idxs = list(color_idx_by_region.values())
-
-        best_idx = 0
-        best_key: tuple[float, float, int, int] | None = None
-
-        candidate_idxs = [ci for ci in range(n_colors) if ci not in set(neighbor_color_idxs)]
-        if not candidate_idxs:
-            candidate_idxs = list(range(n_colors))
-
-        preferred = [ci for ci in candidate_idxs if ci not in used_global]
-        if preferred:
-            candidate_idxs = preferred
-
-        for ci in candidate_idxs:
-            if neighbor_color_idxs:
-                min_neighbor_dist = min(_rgb_distance(palette[ci], palette[nci]) for nci in neighbor_color_idxs)
-            else:
-                min_neighbor_dist = 1.0
-
-            if assigned_color_idxs:
-                min_global_dist = min(_rgb_distance(palette[ci], palette[aci]) for aci in assigned_color_idxs)
-            else:
-                min_global_dist = 1.0
-
-            key = (min_neighbor_dist, min_global_dist, -(ci in used_global), -ci)
-            if best_key is None or key > best_key:
-                best_key = key
-                best_idx = ci
-
-        color_idx_by_region[rid] = best_idx
-        used_global.add(best_idx)
-        uncolored.remove(rid)
-
-    color_map: dict[int, tuple[float, float, float, float]] = {
-        int(rid): palette[color_idx_by_region[rid]] for rid in region_ids
-    }
-
-    demand_col = "annual_demand_mwh"
-    street_len_col = "street_length_m"
-
-    fig, ax = plt.subplots(figsize=(12, 14))
-    for rid, group in s.dropna(subset=[region_id_column]).groupby(region_id_column):
-        color = color_map.get(int(rid), "#666666")
-
-        merged_lines = group.geometry.union_all()
-        gpd.GeoSeries([merged_lines], crs=s.crs).plot(ax=ax, color=color, linewidth=2.2, zorder=2)
-        gpd.GeoSeries([merged_lines], crs=s.crs).plot(ax=ax, color="#202020", linewidth=0.5, zorder=3)
-
-        rp = merged_lines.representative_point()
-        txt = ax.text(
-            rp.x,
-            rp.y,
-            str(int(rid)),
-            fontsize=8,
-            fontweight="bold",
-            color="black",
-            zorder=4,
-        )
-        txt.set_path_effects([
-            pe.Stroke(linewidth=2.2, foreground="white"),
-            pe.Normal(),
-        ])
-
-    unassigned = s[s[region_id_column].isna()]
-    if not unassigned.empty:
-        unassigned.plot(ax=ax, color="#aaaaaa", linewidth=1.0, zorder=1)
-
-    if (
-        region_id_column in polygons.columns
-        and demand_col in polygons.columns
-        and street_len_col in polygons.columns
-    ):
-        top_n = 30
-        stats = polygons[[region_id_column, demand_col, street_len_col]].copy()
-        stats[demand_col] = pd.to_numeric(stats[demand_col], errors="coerce").fillna(0.0)
-        stats[street_len_col] = pd.to_numeric(stats[street_len_col], errors="coerce").fillna(0.0)
-        stats = stats.sort_values(region_id_column, ascending=True).head(top_n).reset_index(drop=True)
-
-        entries: list[tuple[int, float, float]] = []
-        for _, row in stats.iterrows():
-            rid = int(row[region_id_column])
-            demand_mwh = float(row[demand_col])
-            street_km = float(row[street_len_col]) / 1000.0
-            entries.append((rid, demand_mwh, street_km))
-
-        if entries:
-            chunk = 9
-            cols = [entries[i:i + chunk] for i in range(0, len(entries), chunk)]
-            x_pos = [0.02, 0.355, 0.69]
-            y_top = 0.975
-            dy = 0.0155
-            panel_w = 0.285
-            for ci, col_entries in enumerate(cols[:3]):
-                n_rows = len(col_entries)
-                panel_h = dy * (n_rows + 1.7)
-                left = x_pos[ci] - 0.006
-                top = y_top + 0.002
-                bottom = top - panel_h
-                panel = FancyBboxPatch(
-                    (left, bottom),
-                    panel_w,
-                    panel_h,
-                    boxstyle="round,pad=0.006",
-                    transform=fig.transFigure,
-                    facecolor="white",
-                    edgecolor="#bdbdbd",
-                    linewidth=0.9,
-                    alpha=0.94,
-                    zorder=1,
-                )
-                fig.add_artist(panel)
-
-                x0 = left + 0.008
-                x3 = left + panel_w - 0.008
-                id_w = 0.055
-                demand_w = 0.155
-                x1 = x0 + id_w
-                x2 = x1 + demand_w
-                header_y = top - dy
-
-                for xv in (x1, x2):
-                    fig.add_artist(Line2D([xv, xv], [bottom + 0.004, top - 0.004], transform=fig.transFigure, color="#d0d0d0", linewidth=0.8, zorder=2))
-                fig.add_artist(Line2D([x0, x3], [header_y, header_y], transform=fig.transFigure, color="#c6c6c6", linewidth=0.9, zorder=2))
-                for ri in range(1, n_rows + 1):
-                    y_line = header_y - (ri * dy)
-                    fig.add_artist(Line2D([x0, x3], [y_line, y_line], transform=fig.transFigure, color="#e5e5e5", linewidth=0.6, zorder=2))
-
-                fig.text((x0 + x1) / 2, top - (dy * 0.45), "id", ha="center", va="center", fontsize=8.4, family="monospace", fontweight="bold", color="#111111", zorder=3)
-                fig.text((x1 + x2) / 2, top - (dy * 0.45), "demand(MWh)", ha="center", va="center", fontsize=8.4, family="monospace", fontweight="bold", color="#111111", zorder=3)
-                fig.text((x2 + x3) / 2, top - (dy * 0.45), "km", ha="center", va="center", fontsize=8.4, family="monospace", fontweight="bold", color="#111111", zorder=3)
-                for li, (rid, demand_mwh, street_km) in enumerate(col_entries):
-                    y = header_y - ((li + 0.5) * dy)
-                    fig.text((x0 + x1) / 2, y, f"{rid}", ha="center", va="center", fontsize=8.6, family="monospace", fontweight="bold", color=color_map.get(int(rid), "#333333"), zorder=3)
-                    fig.text((x1 + x2) / 2, y, f"{demand_mwh:.1f}", ha="center", va="center", fontsize=8.6, family="monospace", color="#1a1a1a", zorder=3)
-                    fig.text((x2 + x3) / 2, y, f"{street_km:.2f}", ha="center", va="center", fontsize=8.6, family="monospace", color="#1a1a1a", zorder=3)
-
-    ax.set_title(title)
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
-    ax.set_aspect("equal", adjustable="box")
-
-    if caps_legend:
-        legend_lines = []
-        for key, value in caps_legend.items():
-            if value is None:
-                continue
-            legend_lines.append(f"{key}: {value}")
-        if legend_lines:
-            legend_handles = [
-                Line2D([], [], linestyle="none", marker=None, color="none", label=line)
-                for line in legend_lines
-            ]
-            caps_box = ax.legend(
-                handles=legend_handles,
-                title="Topology caps",
-                loc="lower left",
-                frameon=True,
-                facecolor="white",
-                framealpha=0.9,
-                edgecolor="#bdbdbd",
-                fontsize=8,
-                title_fontsize=9,
-                handlelength=0,
-                handletextpad=0,
-                borderpad=0.6,
-            )
-            ax.add_artist(caps_box)
-
-    fig.subplots_adjust(top=0.88)
-    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.88))
-    fig.savefig(output_path, dpi=220)
-    plt.close(fig)
+@dataclass
+class PlotContext:
+    region_plot_data: dict[int, RegionPlotData]
+    used_labels: set[str]
+    color_map: dict[str, Any]
+    map_span: float
+    area_by_region: dict[int, float]
+    max_region_area: float
+    has_unsupplied: bool = False
 
 class EnergySystemPlotter:
-    _DEFAULT_FIGSIZE = (10, 10)
+    _DEFAULT_FIGSIZE = PlotDefaults.ES_FIGSIZE
     _UNSUPPLIED_COLOR = "darkgray"
+    _FAMILY_ORDER = {"gas": 0, "oil": 1, "electricity": 2, "biomass": 3, "hydrogen": 4, "coal": 5, "other": 6, "import": 7}
     _COMMODITY_COLORS = {
-        "gas": "#cb181d",
-        "heat_pump": "#fec44f",
-        "hydrogen": "#2171b5",
-        "oil": "#3b2107",
-        "biomass": "#31a354",
-        "electricity": "#756bb1",
-        "coal": "#636363",
-        "other": "#969696",
+        "gas": "#c40007",
+        "hydrogen": "#43a7ff",
+        "oil": "#4f2b0a",
+        "biomass": "#0f5310",
+        "electricity": "#bfff00",
+        "coal": "#020202",
+        "other": "#FFC3FE"
     }
+
+    @staticmethod
+    def plot_streets_colored_by_region(
+        streets_with_region: gpd.GeoDataFrame,
+        *,
+        output_path: Path,
+        region_id_column: str = "id",
+        title: str = "Districts by streets",
+        caps_legend: dict[str, Any] | None = None,
+    ) -> None:
+        """Render a compact topology plot for polygon pipeline outputs."""
+        s = streets_with_region
+        region_ids = [int(v) for v in sorted(s[region_id_column].dropna().unique())]
+
+        fig, ax = plt.subplots(figsize=PlotDefaults.STREET_FIGSIZE)
+        if region_ids:
+            palette = plt.get_cmap("tab20", len(region_ids))
+            color_map = {rid: palette(idx) for idx, rid in enumerate(region_ids)}
+            for rid, group in s.dropna(subset=[region_id_column]).groupby(region_id_column):
+                rid_int = int(rid)
+                merged_lines = group.geometry.union_all()
+                gs = gpd.GeoSeries([merged_lines], crs=s.crs)
+                gs.plot(ax=ax, color=color_map.get(rid_int, "#666666"), linewidth=2.1, zorder=2)
+                gs.plot(ax=ax, color="#202020", linewidth=0.45, zorder=3)
+                rp = merged_lines.representative_point()
+                txt = ax.text(rp.x, rp.y, str(rid_int), fontsize=8, fontweight="bold", color="black", zorder=4)
+                txt.set_path_effects([pe.Stroke(linewidth=2.0, foreground="white"), pe.Normal()])
+
+        unassigned = s[s[region_id_column].isna()]
+        if not unassigned.empty:
+            unassigned.plot(ax=ax, color="#aaaaaa", linewidth=1.0, zorder=1)
+
+        if caps_legend:
+            lines = [f"{k}: {v}" for k, v in caps_legend.items() if v is not None]
+            if lines:
+                ax.text(
+                    0.02,
+                    0.02,
+                    "Topology caps\n" + "\n".join(lines),
+                    transform=ax.transAxes,
+                    ha="left",
+                    va="bottom",
+                    fontsize=8,
+                    bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "#bdbdbd", "pad": 4.0},
+                )
+
+        ax.set_title(title)
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+        ax.set_aspect("equal", adjustable="box")
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=PlotDefaults.DPI)
+        plt.close(fig)
 
     def __init__(self, energy_system: EnergySystem):
         self.energy_system = energy_system
+
+    def _build_plot_context(
+        self,
+        *,
+        demand_name: str | None,
+        kind: str,
+        demand_values_by_region: dict[int, float] | None,
+        tech_outputs_by_region: dict[int, dict[str, float]] | None,
+    ) -> PlotContext:
+        demand_overrides = demand_values_by_region if demand_values_by_region else None
+        output_overrides = tech_outputs_by_region if tech_outputs_by_region else None
+        regions = self.energy_system.regions
+        aggregate_outputs = self._aggregate_region_outputs
+
+        used_labels: set[str] = set()
+        region_plot_data: dict[int, RegionPlotData] = {}
+        area_by_region: dict[int, float] = {}
+        minx = math.inf
+        miny = math.inf
+        maxx = -math.inf
+        maxy = -math.inf
+
+        for region_idx, region in enumerate(regions):
+            polygon = region.polygon
+            region_geom = polygon.geometry.iloc[0]
+            demand = region.get_demand(demand_name)
+
+            if demand_overrides and region_idx in demand_overrides:
+                demand_value = float(demand_overrides[region_idx])
+            else:
+                demand_value = float(demand.value)
+
+            if output_overrides and region_idx in output_overrides:
+                tech_outputs = {
+                    name: val_f
+                    for name, value in output_overrides[region_idx].items()
+                    if (val_f := float(value)) > 0.0
+                }
+            else:
+                tech_outputs = aggregate_outputs(
+                    region=region,
+                    demand_commodity_in=demand.demand.commodity_in,
+                    kind=kind,
+                )
+
+            if tech_outputs:
+                used_labels.update(tech_outputs.keys())
+            region_plot_data[region_idx] = RegionPlotData(demand_value=demand_value, tech_outputs=tech_outputs)
+
+            bounds = polygon.total_bounds
+            minx = min(minx, float(bounds[0]))
+            miny = min(miny, float(bounds[1]))
+            maxx = max(maxx, float(bounds[2]))
+            maxy = max(maxy, float(bounds[3]))
+            area_by_region[region_idx] = max(float(region_geom.area), 0.0)
+
+        map_span = max(float(maxx - minx), float(maxy - miny), 1.0)
+        max_region_area = max(area_by_region.values())
+        color_map = self._build_label_color_map(used_labels) if used_labels else {}
+        return PlotContext(
+            region_plot_data=region_plot_data,
+            used_labels=used_labels,
+            color_map=color_map,
+            map_span=map_span,
+            area_by_region=area_by_region,
+            max_region_area=max_region_area,
+        )
+
+    def save_optimized_years_grid(
+        self,
+        optimization_results: dict[str, Any],
+        *,
+        years: list[int],
+        plots_dir: str | Path,
+        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
+        kind: str = PlotDefaults.KIND,
+        ncols: int = PlotDefaults.NCOLS,
+        include_initial: bool = False,
+        initial_title: str = "unoptimized",
+        dpi: int = PlotDefaults.DPI,
+    ) -> Path:
+        self.plot_optimized_years_grid(
+            optimization_results,
+            years=years,
+            demand_name=demand_name,
+            kind=kind,
+            ncols=ncols,
+            include_initial=include_initial,
+            initial_title=initial_title,
+            show=False,
+        )
+
+        output_dir = Path(plots_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "technology_mix.png"
+        plt.gcf().savefig(output_path, dpi=dpi)
+        return output_path
+
+    def save_default_mix_plots(
+        self,
+        optimization_results: dict[str, Any],
+        *,
+        years: list[int],
+        plots_dir: str | Path,
+        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
+        kind: str = PlotDefaults.KIND,
+        ncols: int = PlotDefaults.NCOLS,
+        include_initial: bool = True,
+        dpi: int = PlotDefaults.DPI,
+    ) -> dict[str, Path]:
+        return {
+            "technology": self.save_optimized_years_grid(
+                optimization_results,
+                years=years,
+                plots_dir=plots_dir,
+                demand_name=demand_name,
+                kind=kind,
+                ncols=ncols,
+                include_initial=include_initial,
+                initial_title="before optimization (technology mix)",
+                dpi=dpi,
+            )
+        }
 
     @staticmethod
     def _technology_family(label: str, commodity_in: str | None = None) -> str:
         s = str(label or "").lower()
         c = str(commodity_in or "").lower()
+        if "import" in s:
+            return "import"
         if "heat_pump" in s:
-            return "heat_pump"
+            return "electricity"
         if "hydrogen" in s or "hydrogen" in c:
             return "hydrogen"
         if "gas" in s or c == "gas":
@@ -302,22 +277,11 @@ class EnergySystemPlotter:
             return "electricity"
         return "other"
 
-    @staticmethod
-    def _commodity_bucket(commodity_in: str | None, tech_name: str) -> str:
-        c = str(commodity_in or "").strip().lower()
-        if c.startswith("district_heat_"):
-            return "import"
-        if c in {"gas", "oil", "hydrogen", "biomass", "electricity", "coal"}:
-            return c
-        fam = EnergySystemPlotter._technology_family(tech_name, commodity_in)
-        if fam == "other" and c:
-            return c
-        return fam
-
     def _technology_bucket(self, tech: Any) -> str:
         tech_name = str(getattr(tech, "name", "") or "")
         base = self._base_tech_name(tech_name).lower()
         commodity_in = str(getattr(tech, "commodity_in", "") or "").strip().lower()
+        family = self._technology_family(tech_name, commodity_in)
         if (
             base.startswith("pipe_")
             or base.startswith("import_")
@@ -328,52 +292,203 @@ class EnergySystemPlotter:
         ):
             return "import"
         if base.startswith("cen_"):
-            return f"cen_{self._commodity_bucket(commodity_in, tech_name)}"
+            return f"cen_{family}"
         if base.startswith("ind_"):
-            return f"ind_{self._commodity_bucket(commodity_in, tech_name)}"
+            return f"ind_{family}"
         return tech_name
 
-    def _build_label_color_map(self, labels: set[str], *, share_view: str) -> dict[str, Any]:
-        if share_view == "commodity":
-            out: dict[str, Any] = {}
-            for label in labels:
-                key = str(label).lower()
-                out[label] = self._COMMODITY_COLORS.get(key, self._COMMODITY_COLORS["other"])
-            return out
+    @staticmethod
+    def _technology_origin(label: str) -> str:
+        ll = str(label).lower()
+        if ll.startswith("cen_"):
+            return "cen"
+        if ll == "import" or ll.startswith("import"):
+            return "cen"
+        if ll.startswith("ind_"):
+            return "ind"
+        return "other"
 
-        family_cmaps = {
-            "gas": "Reds",
-            "heat_pump": "Wistia",
-            "hydrogen": "Blues",
-            "oil": "YlOrBr",
-            "biomass": "Greens",
-            "electricity": "Purples",
-            "coal": "Greys",
-            "other": "Greys",
-        }
-        out: dict[str, Any] = {}
+    def _order_technology_slices(self, ordered: list[tuple[str, float]]) -> list[tuple[str, float]]:
+        if not ordered:
+            return ordered
+        central_families = {self._technology_family(label).lower() for label, _ in ordered if self._technology_origin(str(label)) == "cen"}
+        if len(central_families) == 1:
+            target_family = next(iter(central_families))
+        elif len(central_families) == 2 and "import" in central_families:
+            target_family = next((f for f in central_families if f != "import"), "import")
+        else:
+            return ordered
+
+        central_block = [item for item in ordered if self._technology_origin(str(item[0])) == "cen" and self._technology_family(str(item[0])).lower() == target_family]
+        if "import" in central_families:
+            central_block += [
+                item for item in ordered
+                if self._technology_origin(str(item[0])) == "cen"
+                and self._technology_family(str(item[0])).lower() == "import"
+            ]
+        if not central_block:
+            return ordered
+
+        central_labels = {str(label) for label, _ in central_block}
+        remainder = [item for item in ordered if str(item[0]) not in central_labels]
+        ind_indices = [idx for idx, (label, _) in enumerate(remainder) if self._technology_origin(str(label)) == "ind" and self._technology_family(label).lower() == target_family]
+        if not ind_indices:
+            return ordered
+        cut = max(ind_indices) + 1
+        return remainder[:cut] + central_block + remainder[cut:]
+
+    def _build_label_color_map(self, labels: set[str]) -> dict[str, Any]:
+        color_map: dict[str, Any] = {}
+        fallback = self._COMMODITY_COLORS["other"]
         for label in sorted(labels):
-            fam = self._technology_family(label)
-            cmap = cm.get_cmap(family_cmaps.get(fam, "Greys"))
-            token = hashlib.md5(str(label).encode("utf-8")).hexdigest()
-            u = (int(token[:8], 16) % 1000) / 999.0
-            val = 0.42 + 0.50 * float(u)
-            out[label] = cmap(float(val))
-        return out
+            family = self._technology_family(label).lower()
+            base_color = self._COMMODITY_COLORS.get(family, fallback)
+            origin = self._technology_origin(str(label))
+            color_map[label] = self._shade_origin_color(base_color, origin=origin) if origin in {"cen", "ind"} else base_color
+        return color_map
 
     @staticmethod
-    def _positive_map(values: dict[str, Any] | None) -> dict[str, float]:
-        if not values:
-            return {}
-        out: dict[str, float] = {}
-        for name, value in values.items():
-            try:
-                val_f = float(value)
-            except (TypeError, ValueError):
-                continue
-            if val_f > 0.0:
-                out[name] = val_f
-        return out
+    def _shade_origin_color(base_color: Any, *, origin: str) -> tuple[float, float, float]:
+        r, g, b = mcolors.to_rgb(base_color)
+        if origin == "ind":
+            return (r, g, b)
+        if origin == "cen":
+            h, s, v = colorsys.rgb_to_hsv(r, g, b)
+            s = min(1.0, s * 1.2)
+            v = max(0.0, min(1.0, v * 0.95))
+            return colorsys.hsv_to_rgb(h, s, v)
+        return (r, g, b)
+
+    def _draw_glyph_centered_text(
+        self,
+        ax: Any,
+        *,
+        x: float,
+        y: float,
+        text: str,
+        fontsize: float,
+        fontweight: str,
+        ha: str = "center",
+        color: str | None = None,
+        zorder: float = 4.0,
+        bbox: dict[str, Any] | None = None,
+    ) -> None:
+        path = TextPath((0.0, 0.0), str(text), size=float(fontsize), prop=FontProperties(weight=fontweight))
+        extents = path.get_extents()
+        shift_points = -0.5 * (float(extents.y0) + float(extents.y1))
+        transform = ax.transData + transforms.ScaledTranslation(0.0, shift_points / 72.0, ax.figure.dpi_scale_trans)
+        ax.text(
+            x,
+            y,
+            text,
+            ha=ha,
+            va="baseline",
+            transform=transform,
+            fontsize=fontsize,
+            fontweight=fontweight,
+            color=color,
+            zorder=zorder,
+            bbox=bbox,
+        )
+
+    def _highlight_central_wedges(
+        self,
+        ax: Any,
+        *,
+        wedges: list[Any],
+        labels: list[str],
+        sizes: list[float],
+        donut: DonutLayout,
+        x: float,
+        y: float,
+    ) -> None:
+        origins = [self._technology_origin(str(label)) for label in labels]
+        central_indices = [idx for idx, origin in enumerate(origins) if origin == "cen"]
+        if not central_indices:
+            return
+        central_wedges = [wedges[idx] for idx in central_indices]
+
+        theta1 = min(float(w.theta1) for w in central_wedges)
+        theta2 = max(float(w.theta2) for w in central_wedges)
+        mid = math.radians((theta1 + theta2) / 2.0)
+        shift = donut.pie_radius * PlotDefaults.CENTRAL_EXPLODE_SCALE
+        cx = x + shift * math.cos(mid)
+        cy = y + shift * math.sin(mid)
+        for wedge in central_wedges:
+            wedge.set_center((cx, cy))
+
+        n_wedges = len(wedges)
+        for idx in central_indices:
+            wedge = wedges[idx]
+            cx_w, cy_w = wedge.center
+            r_out = float(wedge.r)
+            width = float(wedge.width) if wedge.width is not None else 0.0
+            r_in = max(0.0, r_out - width)
+            theta1 = float(wedge.theta1)
+            theta2 = float(wedge.theta2)
+            ax.add_patch(
+                Arc(
+                    (cx_w, cy_w),
+                    2.0 * r_out,
+                    2.0 * r_out,
+                    angle=0.0,
+                    theta1=theta1,
+                    theta2=theta2,
+                    color="white",
+                    linewidth=0.8,
+                    zorder=3.2,
+                )
+            )
+            if r_in > 0.0:
+                ax.add_patch(
+                    Arc(
+                        (cx_w, cy_w),
+                        2.0 * r_in,
+                        2.0 * r_in,
+                        angle=0.0,
+                        theta1=theta1,
+                        theta2=theta2,
+                        color="white",
+                        linewidth=0.8,
+                        zorder=3.2,
+                    )
+                )
+
+            prev_is_cen = origins[(idx - 1) % n_wedges] == "cen"
+            next_is_cen = origins[(idx + 1) % n_wedges] == "cen"
+            if not prev_is_cen:
+                a1 = math.radians(theta1)
+                ax.plot(
+                    [cx_w + r_in * math.cos(a1), cx_w + r_out * math.cos(a1)],
+                    [cy_w + r_in * math.sin(a1), cy_w + r_out * math.sin(a1)],
+                    color="white",
+                    linewidth=0.8,
+                    zorder=3.2,
+                )
+            if not next_is_cen:
+                a2 = math.radians(theta2)
+                ax.plot(
+                    [cx_w + r_in * math.cos(a2), cx_w + r_out * math.cos(a2)],
+                    [cy_w + r_in * math.sin(a2), cy_w + r_out * math.sin(a2)],
+                    color="white",
+                    linewidth=0.8,
+                    zorder=3.2,
+                )
+
+        central_share = sum(float(sizes[idx]) for idx in central_indices)
+        if central_share < PlotDefaults.MIN_SLICE_SHARE:
+            return
+        dhn_top_edge = max(float(w.center[1]) + float(w.r) for w in central_wedges)
+        self._draw_glyph_centered_text(
+            ax,
+            x=x,
+            y=dhn_top_edge + donut.label_offset,
+            text=f"DHN {central_share * 100:.1f}%",
+            fontsize=PlotDefaults.LABEL_FONT_SIZE,
+            fontweight="bold",
+            color="white",
+            zorder=6,
+        )
 
     def _aggregate_region_outputs(
         self,
@@ -381,36 +496,17 @@ class EnergySystemPlotter:
         region: Any,
         demand_commodity_in: str | None,
         kind: str,
-        share_view: str,
     ) -> dict[str, float]:
         outputs: dict[str, float] = {}
         for r_tech in region.region_technologies:
             if not self._is_visual_supply_tech(r_tech.technology, demand_commodity_in):
                 continue
-            value = float(r_tech.initial_energy_output) if kind == "energy" else float(r_tech.initial_capacity)
+            value = float(r_tech.initial_energy_output) if kind == PlotDefaults.KIND else float(r_tech.initial_capacity)
             if value <= 0:
                 continue
-            label = (
-                self._technology_bucket(r_tech.technology)
-                if share_view == "technology"
-                else self._commodity_bucket(getattr(r_tech.technology, "commodity_in", None), r_tech.technology.name)
-            )
+            label = self._technology_bucket(r_tech.technology)
             outputs[label] = outputs.get(label, 0.0) + value
         return outputs
-
-    @staticmethod
-    def _lookup_year_value(series: Any, year: int) -> float:
-        if not isinstance(series, dict):
-            return 0.0
-        val = series.get(str(year), series.get(year, 0.0))
-        try:
-            return float(val or 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    @staticmethod
-    def _normalize_cp_name(name: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "", name.lower())
 
     @staticmethod
     def _base_tech_name(name: str) -> str:
@@ -448,61 +544,10 @@ class EnergySystemPlotter:
 
         return False
 
-    def _resolve_cp_key(
-        self,
-        tech_year_map: dict[str, Any],
-        tech_name: str,
-        *,
-        region_idx: int,
-        single_region: bool,
-    ) -> str | None:
-        m = re.search(r"_D\d+$", tech_name, flags=re.IGNORECASE)
-        base_name = tech_name[:m.start()] if m else tech_name
-
-        raw_candidates: list[str] = []
-        if not single_region:
-            raw_candidates.append(f"{base_name}_D{region_idx}")
-        raw_candidates.append(tech_name)
-        if m:
-            raw_candidates.append(base_name)
-
-        candidates: list[str] = []
-        seen_candidates: set[str] = set()
-        for candidate in raw_candidates:
-            if candidate in seen_candidates:
-                continue
-            seen_candidates.add(candidate)
-            candidates.append(candidate)
-
-        lower_map = {k.lower(): k for k in tech_year_map.keys()}
-        norm_map = {self._normalize_cp_name(k): k for k in tech_year_map.keys()}
-        district_key_pattern = re.compile(rf"^{re.escape(base_name)}_d\d+$", re.IGNORECASE)
-        has_district_keys = any(district_key_pattern.match(k) for k in tech_year_map.keys())
-
-        for candidate in candidates:
-            if not single_region and has_district_keys and not re.search(r"_D\d+$", candidate, flags=re.IGNORECASE):
-                continue
-            if candidate in tech_year_map:
-                return candidate
-            candidate_lower = candidate.lower()
-            if candidate_lower in lower_map:
-                matched = lower_map[candidate_lower]
-                if not single_region and has_district_keys and not re.search(r"_D\d+$", matched, flags=re.IGNORECASE):
-                    continue
-                return matched
-            candidate_norm = self._normalize_cp_name(candidate)
-            if candidate_norm in norm_map:
-                matched = norm_map[candidate_norm]
-                if not single_region and has_district_keys and not re.search(r"_D\d+$", matched, flags=re.IGNORECASE):
-                    continue
-                return matched
-        return None
-
     def plot(
         self,
         demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
-        kind: str = "energy",
-        share_view: str = "technology",
+        kind: str = PlotDefaults.KIND,
         *,
         demand_values_by_region: dict[int, float] | None = None,
         tech_outputs_by_region: dict[int, dict[str, float]] | None = None,
@@ -511,189 +556,136 @@ class EnergySystemPlotter:
         show: bool = True,
         block: bool = True,
         draw_basemap: bool = True,
-        region_fill_alpha: float = 0.5,
-        region_fill_color: str = "grey",
+        region_fill_alpha: float = PlotDefaults.REGION_FILL_ALPHA,
+        region_fill_color: str = PlotDefaults.REGION_FILL_COLOR,
         draw_region_ids: bool = False,
-        region_boundary_linewidth: float = 2.0,
+        region_boundary_linewidth: float = PlotDefaults.REGION_BOUNDARY_LINEWIDTH,
     ) -> None:
-        if kind not in {"energy", "power"}:
-            raise ValueError("kind must be either 'energy' or 'power'")
-        if share_view not in {"technology", "commodity"}:
-            raise ValueError("share_view must be 'technology' or 'commodity'")
-        if not self.energy_system.regions:
-            raise ValueError("EnergySystem has no regions to plot")
-
-        # Create a figure and axis
         created_new_figure = ax is None
         if ax is None:
             _, ax = plt.subplots(figsize=self._DEFAULT_FIGSIZE)
 
-        has_unsupplied = False
-        used_labels: set[str] = set()
+        context = self._build_plot_context(
+            demand_name=demand_name,
+            kind=kind,
+            demand_values_by_region=demand_values_by_region,
+            tech_outputs_by_region=tech_outputs_by_region,
+        )
+        inv_max_region_area = 1.0 / context.max_region_area
 
-        region_plot_data: dict[int, dict[str, Any]] = {}
-        if demand_name:
-            for region_idx, region in enumerate(self.energy_system.regions):
-                demand = region.get_demand(demand_name)
-                if not demand:
-                    continue
-
-                demand_value = (
-                    float(demand_values_by_region[region_idx])
-                    if demand_values_by_region and region_idx in demand_values_by_region
-                    else float(demand.value)
-                )
-
-                tech_outputs = (
-                    self._positive_map(tech_outputs_by_region[region_idx])
-                    if tech_outputs_by_region and region_idx in tech_outputs_by_region
-                    else self._aggregate_region_outputs(
-                        region=region,
-                        demand_commodity_in=demand.demand.commodity_in,
-                        kind=kind,
-                        share_view=share_view,
-                    )
-                )
-
-                if tech_outputs:
-                    used_labels.update(tech_outputs.keys())
-                region_plot_data[region_idx] = {
-                    "demand_value": demand_value,
-                    "tech_outputs": tech_outputs,
-                }
-
-        color_map = self._build_label_color_map(used_labels, share_view=share_view) if used_labels else {}
-
-        all_bounds = [region.polygon.total_bounds for region in self.energy_system.regions if region.polygon is not None]
-        if all_bounds:
-            minx = min((b[0] for b in all_bounds))
-            miny = min((b[1] for b in all_bounds))
-            maxx = max((b[2] for b in all_bounds))
-            maxy = max((b[3] for b in all_bounds))
-            map_span = max(float(maxx - minx), float(maxy - miny), 1.0)
-        else:
-            map_span = 1.0
-
-        area_by_region: dict[int, float] = {}
         for region_idx, region in enumerate(self.energy_system.regions):
-            poly = region.polygon
-            if poly is None or poly.empty:
-                area_by_region[region_idx] = 0.0
-                continue
-            area_val = float(poly.geometry.iloc[0].area)
-            area_by_region[region_idx] = area_val if area_val > 0.0 else 0.0
-        max_region_area = max(area_by_region.values()) if area_by_region else 0.0
-
-        # Plot each region's polygon
-        for region_idx, region in enumerate(self.energy_system.regions):
-            region.polygon.boundary.plot(
-                ax=ax,
-                edgecolor="black",
-                linewidth=float(region_boundary_linewidth),
-                zorder=2,
-            )
+            region_geom = region.polygon.geometry.iloc[0]
+            region_id = getattr(region, "id_", region_idx)
+            region.polygon.boundary.plot(ax=ax, edgecolor="black", linewidth=float(region_boundary_linewidth), zorder=2)
             if float(region_fill_alpha) > 0:
-                region.polygon.plot(
-                    ax=ax,
-                    alpha=float(region_fill_alpha),
-                    color=region_fill_color,
-                    zorder=1,
-                )
+                region.polygon.plot(ax=ax, alpha=float(region_fill_alpha), color=region_fill_color, zorder=1)
 
             if draw_region_ids:
-                centroid = region.polygon.geometry.iloc[0].representative_point()
-                if isinstance(centroid, Point):
-                    ax.text(
-                        centroid.x,
-                        centroid.y,
-                        str(getattr(region, "id_", region_idx)),
-                        ha="center",
-                        va="center",
-                        fontsize=8,
-                        zorder=5,
-                        bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 1.0},
-                    )
-
-            # If demand_name is provided, process the demand data
-            if demand_name:
-                region_data = region_plot_data.get(region_idx)
-                if not region_data:
-                    continue
-
-                demand_value = float(region_data["demand_value"])
-                tech_outputs = region_data["tech_outputs"]
-
-                # Get the centroid of the polygon for pie chart placement
-                centroid = region.polygon.geometry.iloc[0].centroid
-                if isinstance(centroid, Point):
-                    x, y = centroid.x, centroid.y
-
-                    area_norm = (area_by_region.get(region_idx, 0.0) / max_region_area) if max_region_area > 0 else 0.0
-                    pie_radius = map_span * (0.02 + 0.02 * (area_norm ** 0.5))
-
-                    # Total output from all technologies
-                    total_output = sum(tech_outputs.values())
-
-                    # If there are technologies supplying this demand with non-zero output
-                    if total_output > 0:
-                        # Normalize the outputs for the pie chart
-                        tech_outputs_normalized = {k: v / total_output for k, v in tech_outputs.items()}
-                        ordered = sorted(tech_outputs_normalized.items(), key=lambda kv: kv[0])
-                        sizes = [v for _, v in ordered]
-                        colors = [color_map.get(label, self._UNSUPPLIED_COLOR) for label, _ in ordered]
-                    else:
-                        # If no technology supplies this demand, show a single-colored pie
-                        sizes = [1]
-                        colors = [self._UNSUPPLIED_COLOR]
-                        has_unsupplied = True
-
-                    # Draw the pie chart
-                    wedge, _ = ax.pie(
-                        sizes,
-                        colors=colors,
-                        radius=pie_radius,
-                        center=(x, y),
-                        frame=True,
-                        textprops={"fontsize": 6},
-                        wedgeprops={"width": pie_radius / 1.5, 'linewidth': 1.0, 'edgecolor': 'white'}
-                    )
-
-                    [w.set_zorder(3) for w in wedge]
-
-                    # Add the demand value as text below the pie chart
-                    ax.text(
-                        x,
-                        y - pie_radius - 10,
-                        f"Demand: {demand_value / 1000:.0f} MWh" if kind == "energy" else f"Demand: {demand_value:.2f} kW",
-                        ha="center",
-                        fontsize=10,
-                        zorder=4,
-                    )
-
-        # Add OpenStreetMap basemap
-        if draw_basemap:
-            try:
-                ctx.add_basemap(
-                    ax,
-                    crs=self.energy_system.regions[0].polygon.crs,
-                    source=ctx.providers.OpenStreetMap.Mapnik,
-                    alpha=0.7,
-                    zorder=0,
+                rp = region_geom.representative_point()
+                ax.text(
+                    rp.x,
+                    rp.y,
+                    str(region_id),
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                    zorder=5,
+                    bbox={"facecolor": "white", "alpha": 0.7, "edgecolor": "none", "pad": 1.0},
                 )
-            except Exception as e:
-                print(f"Warning: Could not add basemap: {e}")
 
-        # Add a legend for the technologies
-        legend_techs = sorted(used_labels)
-        legend_elements = [Patch(facecolor=color_map.get(tech, self._UNSUPPLIED_COLOR), label=tech) for tech in legend_techs]
-        if demand_name and has_unsupplied:
-            # Add a legend entry for demands without technology supply
+            data = context.region_plot_data[region_idx]
+            demand_value = data.demand_value
+            tech_outputs = data.tech_outputs
+            centroid = region_geom.centroid
+            x, y = centroid.x, centroid.y
+            area_norm = context.area_by_region[region_idx] * inv_max_region_area
+            pie_radius = context.map_span * (PlotDefaults.PIE_RADIUS_BASE + PlotDefaults.PIE_RADIUS_AREA_SCALE * (area_norm ** 0.5))
+            demand_offset = max(
+                context.map_span * PlotDefaults.PIE_LABEL_MAP_SPAN_SCALE,
+                pie_radius * PlotDefaults.PIE_LABEL_RADIUS_SCALE,
+            )
+            label_offset = demand_offset * PlotDefaults.CENTRAL_EXPLODE_SCALE
+            donut = DonutLayout(
+                pie_radius=pie_radius,
+                label_offset=label_offset,
+                label_edge_offset=pie_radius + label_offset,
+            )
+
+            total_output = sum(tech_outputs.values())
+            ordered: list[tuple[str, float]] = []
+            if total_output > 0:
+                normalized = {k: v / total_output for k, v in tech_outputs.items() if (v / total_output) >= PlotDefaults.MIN_SLICE_SHARE}
+                if normalized:
+                    inv_filtered_total = 1.0 / sum(normalized.values())
+                    origin_order = {"cen": 0, "ind": 1, "other": 2}
+                    ordered = self._order_technology_slices(
+                        sorted(
+                            ((k, v * inv_filtered_total) for k, v in normalized.items()),
+                            key=lambda kv: (
+                                origin_order.get(self._technology_origin(str(kv[0])), 99),
+                                self._FAMILY_ORDER.get(self._technology_family(str(kv[0])).lower(), 99),
+                                str(kv[0]).lower(),
+                            ),
+                        )
+                    )
+            if ordered:
+                labels = [label for label, _ in ordered]
+                sizes = [value for _, value in ordered]
+                colors = [context.color_map.get(label, self._UNSUPPLIED_COLOR) for label in labels]
+            else:
+                labels = []
+                sizes = [1.0]
+                colors = [self._UNSUPPLIED_COLOR]
+                context.has_unsupplied = True
+
+            wedges, _ = ax.pie(
+                sizes,
+                colors=colors,
+                explode=[0.0] * len(sizes),
+                radius=donut.pie_radius,
+                center=(x, y),
+                frame=True,
+                textprops={"fontsize": 6},
+                wedgeprops={"width": donut.pie_radius / 1.5, "linewidth": 0.0, "edgecolor": "none"},
+            )
+            for wedge in wedges:
+                wedge.set_edgecolor("none")
+                wedge.set_linewidth(0.0)
+                wedge.set_zorder(3)
+
+            if labels:
+                self._highlight_central_wedges(
+                    ax,
+                    wedges=wedges,
+                    labels=labels,
+                    sizes=sizes,
+                    donut=donut,
+                    x=x,
+                    y=y,
+                )
+
+            ax.add_patch(Circle((x, y), radius=donut.pie_radius / 2.0, facecolor="white", edgecolor="none", zorder=3.5))
+            pie_scale = donut.pie_radius / (context.map_span * PlotDefaults.PIE_MAX_RADIUS_SCALE)
+            self._draw_glyph_centered_text(ax, x=x, y=y, text=str(region_id), fontsize=PlotDefaults.ID_FONT_SIZE * pie_scale, fontweight="bold", zorder=4.2)
+
+            demand_label = f"{demand_value / 1000:.1f} MWh" if kind == PlotDefaults.KIND else f"{demand_value:.1f} kW"
+            self._draw_glyph_centered_text(ax, x=x, y=y - donut.label_edge_offset, text=demand_label, fontsize=PlotDefaults.LABEL_FONT_SIZE, fontweight="normal", zorder=4, bbox={"facecolor": "white", "edgecolor": "black", "linewidth": 1.0, "pad": 1.5})
+
+        if draw_basemap:
+            ctx.add_basemap(ax, crs=self.energy_system.regions[0].polygon.crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7, zorder=0)
+
+        merged_legend: dict[str, Any] = {}
+        for tech in context.used_labels:
+            label = "import" if str(tech).lower() == "import" else self._technology_family(tech).lower()
+            if label not in merged_legend:
+                merged_legend[label] = self._COMMODITY_COLORS["other"] if label == "import" else self._COMMODITY_COLORS.get(label, self._COMMODITY_COLORS["other"])
+        legend_techs = sorted(merged_legend.keys(), key=lambda k: self._FAMILY_ORDER.get(k, 99))
+        legend_elements = [Patch(facecolor=merged_legend[label], label=label) for label in legend_techs]
+        if demand_name and context.has_unsupplied:
             legend_elements.append(Patch(facecolor=self._UNSUPPLIED_COLOR, label="Unsupplied Demand"))
         if legend_elements:
-            legend_title = "Technologies" if share_view == "technology" else "Commodities"
-            ax.legend(handles=legend_elements, loc="upper right", title=legend_title)
+            ax.legend(handles=legend_elements, loc="upper right", title="Technologies")
 
-        # Set axis labels and title
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         title = (
@@ -705,7 +697,6 @@ class EnergySystemPlotter:
             title = f"{title} ({title_suffix})"
         ax.set_title(title)
 
-        # Show the plot
         if show and created_new_figure:
             plt.show(block=block)
 
@@ -716,76 +707,85 @@ class EnergySystemPlotter:
         year: int,
         demand_name: str | None,
         kind: str,
-        share_view: str,
-    ) -> tuple[dict[int, float], dict[int, dict[str, float]]]:
+    ) -> YearPlotInputs:
         kpis = optimization_results.get("kpis", {}) if isinstance(optimization_results, dict) else {}
-        metric_key = "energy_by_tech_year" if kind == "energy" else "cap_active_by_tech_year"
+        metric_key = "energy_by_tech_year" if kind == PlotDefaults.KIND else "cap_active_by_tech_year"
         tech_year_map = kpis.get(metric_key, {}) if isinstance(kpis, dict) else {}
+
+        is_visual_supply_tech = self._is_visual_supply_tech
+        technology_bucket = self._technology_bucket
+        district_suffix = re.compile(r"_D\d+$", re.IGNORECASE)
+
+        def normalize_cp_name(name: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", str(name).lower())
+
+        map_keys = tuple(tech_year_map.keys())
+        lower_map = {str(k).lower(): k for k in map_keys}
+        norm_map = {normalize_cp_name(str(k)): k for k in map_keys}
+        has_district_keys_cache: dict[str, bool] = {}
+
+        def resolve_cp_key(tech_name: str, *, region_idx: int, single_region: bool) -> str | None:
+            m = district_suffix.search(tech_name)
+            base_name = tech_name[:m.start()] if m else tech_name
+            has_district_keys = has_district_keys_cache.get(base_name)
+            if has_district_keys is None:
+                district_pattern = re.compile(rf"^{re.escape(base_name)}_d\d+$", re.IGNORECASE)
+                has_district_keys = any(district_pattern.match(str(k)) for k in map_keys)
+                has_district_keys_cache[base_name] = has_district_keys
+
+            candidates = ([f"{base_name}_D{region_idx}"] if not single_region else []) + [tech_name] + ([base_name] if m else [])
+
+            def is_valid(name: str) -> bool:
+                return single_region or not has_district_keys or bool(district_suffix.search(name))
+
+            for candidate in dict.fromkeys(candidates):
+                if not is_valid(candidate):
+                    continue
+                for matched in (candidate, lower_map.get(candidate.lower()), norm_map.get(normalize_cp_name(candidate))):
+                    if matched and is_valid(str(matched)):
+                        return str(matched)
+            return None
+
+        year_value_cache: dict[str, float] = {}
+
+        def cached_year_value(cp_key: str) -> float:
+            if cp_key in year_value_cache:
+                return year_value_cache[cp_key]
+            series = tech_year_map.get(cp_key, {})
+            value = float(series.get(str(year), series.get(year, 0.0)) or 0.0)
+            year_value_cache[cp_key] = value
+            return value
+
         demand_values_by_region: dict[int, float] = {}
         tech_outputs_by_region: dict[int, dict[str, float]] = {}
-        single_region = len(self.energy_system.regions) == 1
+        regions = self.energy_system.regions
+        single_region = len(regions) == 1
 
-        for idx, region in enumerate(self.energy_system.regions):
+        for idx, region in enumerate(regions):
             demand_cp = "HeatDemand" if single_region else f"HeatDemand_D{idx}"
-            demand_values_by_region[idx] = self._lookup_year_value(tech_year_map.get(demand_cp, {}), year)
+            demand_values_by_region[idx] = cached_year_value(demand_cp)
             demand = region.get_demand(demand_name) if demand_name else None
             demand_commodity_in = demand.demand.commodity_in if demand else None
 
             per_region: dict[str, float] = {}
             for r_tech in region.region_technologies:
                 tech_name = r_tech.technology.name
-                if not self._is_visual_supply_tech(r_tech.technology, demand_commodity_in):
+                if not is_visual_supply_tech(r_tech.technology, demand_commodity_in):
                     continue
 
-                cp_key = self._resolve_cp_key(
-                    tech_year_map,
-                    tech_name,
-                    region_idx=idx,
-                    single_region=single_region,
-                )
+                cp_key = resolve_cp_key(tech_name, region_idx=idx, single_region=single_region)
                 if cp_key is None:
                     continue
 
-                value = self._lookup_year_value(tech_year_map.get(cp_key, {}), year)
+                value = cached_year_value(cp_key)
                 if value > 0:
-                    label = (
-                        self._technology_bucket(r_tech.technology)
-                        if share_view == "technology"
-                        else self._commodity_bucket(getattr(r_tech.technology, "commodity_in", None), tech_name)
-                    )
+                    label = technology_bucket(r_tech.technology)
                     per_region[label] = per_region.get(label, 0.0) + value
             tech_outputs_by_region[idx] = per_region
 
-        return demand_values_by_region, tech_outputs_by_region
-
-    def plot_optimized_year(
-        self,
-        optimization_results: dict[str, Any],
-        *,
-        year: int,
-        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
-        kind: str = "energy",
-        share_view: str = "technology",
-        show: bool = True,
-        block: bool = True,
-    ) -> None:
-        demand_values_by_region, tech_outputs_by_region = self._build_optimized_plot_data(
-            optimization_results,
-            year=year,
-            demand_name=demand_name,
-            kind=kind,
-            share_view=share_view,
-        )
-
-        self.plot(
-            demand_name=demand_name,
-            kind=kind,
-            share_view=share_view,
+        return YearPlotInputs(
             demand_values_by_region=demand_values_by_region,
             tech_outputs_by_region=tech_outputs_by_region,
-            title_suffix=f"optimized {year}",
-            show=show,
-            block=block,
         )
 
     def plot_optimized_years_grid(
@@ -794,19 +794,13 @@ class EnergySystemPlotter:
         *,
         years: list[int],
         demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
-        kind: str = "energy",
-        share_view: str = "technology",
-        ncols: int = 2,
+        kind: str = PlotDefaults.KIND,
+        ncols: int = PlotDefaults.NCOLS,
         include_initial: bool = False,
         initial_title: str = "unoptimized",
         show: bool = True,
         block: bool = True,
     ) -> None:
-        if not years:
-            raise ValueError("years must not be empty")
-        if ncols <= 0:
-            raise ValueError("ncols must be > 0")
-
         total_panels = len(years) + (1 if include_initial else 0)
         nrows = (total_panels + ncols - 1) // ncols
         fig, axes = plt.subplots(
@@ -822,7 +816,6 @@ class EnergySystemPlotter:
             self.plot(
                 demand_name=demand_name,
                 kind=kind,
-                share_view=share_view,
                 title_suffix=initial_title,
                 ax=axes_flat[0],
                 show=False,
@@ -830,19 +823,17 @@ class EnergySystemPlotter:
             offset = 1
 
         for idx, year in enumerate(years):
-            demand_values_by_region, tech_outputs_by_region = self._build_optimized_plot_data(
+            plot_inputs = self._build_optimized_plot_data(
                 optimization_results,
                 year=year,
                 demand_name=demand_name,
                 kind=kind,
-                share_view=share_view,
             )
             self.plot(
                 demand_name=demand_name,
                 kind=kind,
-                share_view=share_view,
-                demand_values_by_region=demand_values_by_region,
-                tech_outputs_by_region=tech_outputs_by_region,
+                demand_values_by_region=plot_inputs.demand_values_by_region,
+                tech_outputs_by_region=plot_inputs.tech_outputs_by_region,
                 title_suffix=f"optimized {year}",
                 ax=axes_flat[idx + offset],
                 show=False,
@@ -854,38 +845,3 @@ class EnergySystemPlotter:
         fig.tight_layout()
         if show:
             plt.show(block=block)
-
-    def plot_to_file(
-        self,
-        output_path: str | Path,
-        *,
-        demand_name: str | None = DEFAULT_HEAT_GRID_DEMAND_NAME,
-        kind: str = "energy",
-        share_view: str = "technology",
-        demand_values_by_region: dict[int, float] | None = None,
-        tech_outputs_by_region: dict[int, dict[str, float]] | None = None,
-        title_suffix: str | None = None,
-        dpi: int = 200,
-        draw_basemap: bool = True,
-        region_fill_alpha: float = 0.5,
-        region_fill_color: str = "grey",
-        draw_region_ids: bool = False,
-        region_boundary_linewidth: float = 2.0,
-    ) -> None:
-        """Renders a single energy-system map plot"""
-        self.plot(
-            demand_name=demand_name,
-            kind=kind,
-            share_view=share_view,
-            demand_values_by_region=demand_values_by_region,
-            tech_outputs_by_region=tech_outputs_by_region,
-            title_suffix=title_suffix,
-            show=False,
-            draw_basemap=draw_basemap,
-            region_fill_alpha=region_fill_alpha,
-            region_fill_color=region_fill_color,
-            draw_region_ids=draw_region_ids,
-            region_boundary_linewidth=region_boundary_linewidth,
-        )
-        plt.gcf().savefig(Path(output_path), dpi=dpi)
-        plt.close(plt.gcf())

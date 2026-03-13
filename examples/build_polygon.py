@@ -7,7 +7,7 @@ import geopandas as gpd
 import pandas as pd
 
 from pypeline.energy_system.region_topology import build_region_topology
-from pypeline.plot.plotter import plot_streets_colored_by_region
+from pypeline.plot.plotter import EnergySystemPlotter
 
 
 def _resolve_subfolder(examples_root: Path, dataset: str) -> Path:
@@ -48,6 +48,7 @@ def build_for_subfolder(
     demand_value_column: str = "annual_demand_mwh",
     demand_street_indicator_column: str = "total_heat_demand",
     demand_street_indicator_min: float = 0.0,
+    plots_subdir: str = "plots",
 ) -> tuple[Path, Path]:
     """Build district polygons for one dataset folder.
 
@@ -108,13 +109,15 @@ def build_for_subfolder(
 
     polygons_out = subfolder / f"polygon_{name}.geojson"
     streets_out = subfolder / f"street_segments_{name}.geojson"
-    plot_out = subfolder / f"district_topology_{name}.png"
+    plots_dir = subfolder / plots_subdir
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    plot_suffix = "_polynesia" if polynesia else ""
+    plot_out = plots_dir / f"district_topology_{name}{plot_suffix}.png"
 
     polygons.drop(columns=["_street_members", "_demand_street_members"], errors="ignore").to_file(polygons_out, driver="GeoJSON")
     streets_with_region.to_file(streets_out, driver="GeoJSON")
-    plot_streets_colored_by_region(
+    EnergySystemPlotter.plot_streets_colored_by_region(
         streets_with_region=streets_with_region,
-        polygons=polygons,
         output_path=plot_out,
         region_id_column=region_id_column,
         title=f"District topology: {name}",

@@ -24,6 +24,9 @@ def must_exist(p: Path, what: str) -> None:
 def main():
     tech_reg = TechnologyRegistry()
     tech_reg.load_from_default()
+    bensheim_folder = project_root / "examples" / "bensheim"
+    plots_dir = bensheim_folder / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
     polygons_path = project_root / "examples" / "bensheim" / "wah_bensheim_4_districts.geojson"
     polygons = gpd.read_file(polygons_path)
 
@@ -100,32 +103,14 @@ def main():
     print(f"Techmaps in CESM/Data/Techmap: {visible}")
     print(solution.results)
 
-    # plot commodity supply mix
     years = list(range(int(scenario.start_year), int(scenario.end_year) + 1, int(scenario.year_gap)))
-    es_plotter.plot_optimized_years_grid(
+    mix_plot_paths = es_plotter.save_default_mix_plots(
         solution.results,
         years=years,
-        demand_name="residential_heat",
-        kind="energy",
-        share_view="commodity",
-        ncols=2,
-        include_initial=True,
-        initial_title="before optimization (commodity mix)",
-        show=False,
+        plots_dir=plots_dir,
     )
-
-    # plot technology mix
-    es_plotter.plot_optimized_years_grid(
-        solution.results,
-        years=years,
-        demand_name="residential_heat",
-        kind="energy",
-        share_view="technology",
-        ncols=2,
-        include_initial=True,
-        initial_title="before optimization (technology mix)",
-        show=False,
-    )
+    technology_plot_path = mix_plot_paths["technology"]
+    print(f"Saved technology plot: {technology_plot_path}")
     plt.show()
 
     from cesm.core.plotter import Plotter, PlotType
