@@ -46,6 +46,7 @@ dependencies = [
     "psycopg2>=2.9.11",
     "gurobipy<13.0",
     "contextily>=1.7.0",
+    "mkdocs>=1.6.1",
 ]
 
 [project.optional-dependencies]
