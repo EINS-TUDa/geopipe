@@ -1,7 +1,4 @@
-# README
-
-## PYPELINE
-
+# PYPELINE 
 PYthon-based data piPELINe for Energy system modeling
 
 ## How to run with CESM
@@ -22,8 +19,9 @@ PYthon-based data piPELINe for Energy system modeling
    ```
    uv sync
    ```
-## Documentation
-Documentation can be found [here](https://github.com/CaroAy/data-pipeline-esm.git).
+   
+
+## Deply this documentation
 To build the documentation, use:
 ```
 uv run mkdocs gh-deploy --remote-name github

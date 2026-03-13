@@ -5,3 +5,4 @@ scripts/
 *.egg-info/
 *.DS_Store
 .vscode
+site/
