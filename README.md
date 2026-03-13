@@ -23,7 +23,7 @@ PYthon-based data piPELINe for Energy system modeling
    uv sync
    ```
 ## Documentation
-Documentation can be found [here](https://github.com/CaroAy/data-pipeline-esm.git).
+Documentation can be found [here](https://CaroAy.github.io/data-pipeline-esm/).
 To build the documentation, use:
 ```
 uv run mkdocs gh-deploy --remote-name github
