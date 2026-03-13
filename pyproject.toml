@@ -47,6 +47,7 @@ dependencies = [
     "gurobipy<13.0",
     "contextily>=1.7.0",
     "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.5",
 ]
 
 [project.optional-dependencies]
