@@ -1,4 +1,5 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Any
 from collections import deque
 import heapq
@@ -6,194 +7,347 @@ from itertools import combinations
 import math
 import geopandas as gpd
 import pandas as pd
-from shapely.ops import substring, unary_union
-from shapely.geometry import Point
+from shapely.ops import substring, unary_union, polygonize, snap
+from shapely.geometry import Point, Polygon, LineString
 _JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE = 4
 
+
+@dataclass(frozen=True)
+class RegionCaps:
+    max_demand_mwh: float | None
+    max_street_length_km: float | None
+    max_nondemand_street_km: float | None = None
+
+    def as_polygon_builder_caps(self) -> dict[str, float | None]:
+        return {
+            'max_demand_mwh': None if self.max_demand_mwh is None else float(self.max_demand_mwh),
+            'max_street_length_km': None if self.max_street_length_km is None else float(self.max_street_length_km),
+            'max_nondemand_street_km': None if self.max_nondemand_street_km is None else float(self.max_nondemand_street_km),
+        }
+
+
+@dataclass(frozen=True)
+class RegionTopologyConfig:
+    max_demand_mwh: float
+    max_street_length_km: float
+    demand_share_pct: float
+    city_column: str | None
+    city_value: str | None
+    clip_buffer_m: float
+    connect_tolerance_m: float
+    polynesia: bool
+    small_islands: bool
+    small_islands_max_segments: int
+    segment_streets_by_building_projections: bool
+    segment_projection_buffer_m: float
+    region_id_column: str
+    street_id_column: str
+    building_id_column: str
+    demand_building_column: str
+    demand_value_column: str
+    demand_street_indicator_column: str | None
+    demand_street_indicator_min: float
+
+    @classmethod
+    def from_required_caps(
+        cls,
+        *,
+        max_demand_mwh: float,
+        max_street_length_km: float,
+        demand_share_pct: float,
+        city_column: str | None=None,
+        city_value: str | None=None,
+        clip_buffer_m: float | None=None,
+        connect_tolerance_m: float | None=None,
+        polynesia: bool | None=None,
+        small_islands: bool | None=None,
+        small_islands_max_segments: int | None=None,
+        segment_streets_by_building_projections: bool | None=None,
+        segment_projection_buffer_m: float | None=None,
+        region_id_column: str | None=None,
+        street_id_column: str | None=None,
+        building_id_column: str | None=None,
+        demand_building_column: str | None=None,
+        demand_value_column: str | None=None,
+        demand_street_indicator_column: str | None=None,
+        demand_street_indicator_min: float | None=None,
+    ) -> 'RegionTopologyConfig':
+        defaults = REGION_TOPOLOGY_DEFAULTS
+        return cls(
+            max_demand_mwh=float(max_demand_mwh),
+            max_street_length_km=float(max_street_length_km),
+            demand_share_pct=float(demand_share_pct),
+            city_column=defaults.city_column if city_column is None else city_column,
+            city_value=defaults.city_value if city_value is None else city_value,
+            clip_buffer_m=defaults.clip_buffer_m if clip_buffer_m is None else float(clip_buffer_m),
+            connect_tolerance_m=defaults.connect_tolerance_m if connect_tolerance_m is None else float(connect_tolerance_m),
+            polynesia=defaults.polynesia if polynesia is None else bool(polynesia),
+            small_islands=defaults.small_islands if small_islands is None else bool(small_islands),
+            small_islands_max_segments=defaults.small_islands_max_segments if small_islands_max_segments is None else int(small_islands_max_segments),
+            segment_streets_by_building_projections=defaults.segment_streets_by_building_projections if segment_streets_by_building_projections is None else bool(segment_streets_by_building_projections),
+            segment_projection_buffer_m=defaults.segment_projection_buffer_m if segment_projection_buffer_m is None else float(segment_projection_buffer_m),
+            region_id_column=defaults.region_id_column if region_id_column is None else region_id_column,
+            street_id_column=defaults.street_id_column if street_id_column is None else street_id_column,
+            building_id_column=defaults.building_id_column if building_id_column is None else building_id_column,
+            demand_building_column=defaults.demand_building_column if demand_building_column is None else demand_building_column,
+            demand_value_column=defaults.demand_value_column if demand_value_column is None else demand_value_column,
+            demand_street_indicator_column=defaults.demand_street_indicator_column if demand_street_indicator_column is None else demand_street_indicator_column,
+            demand_street_indicator_min=defaults.demand_street_indicator_min if demand_street_indicator_min is None else float(demand_street_indicator_min),
+        )
+
+
+@dataclass(frozen=True)
+class RegionTopologyDefaults:
+    city_column: str | None = None
+    city_value: str | None = None
+    clip_buffer_m: float = 250.0
+    connect_tolerance_m: float = 10.0
+    polynesia: bool = True
+    small_islands: bool = True
+    small_islands_max_segments: int = 60
+    segment_streets_by_building_projections: bool = True
+    segment_projection_buffer_m: float = 12.0
+    region_id_column: str = 'id'
+    street_id_column: str = 'street_id'
+    building_id_column: str = 'building_objectid'
+    demand_building_column: str = 'building_objectid'
+    demand_value_column: str = 'annual_demand_mwh'
+    demand_street_indicator_column: str | None = 'total_heat_demand'
+    demand_street_indicator_min: float = 0.0
+
+
+REGION_TOPOLOGY_DEFAULTS = RegionTopologyDefaults()
+
+
+class RegionTopologyBase:
+
+    @staticmethod
+    def to_float(value: Any, default: float=0.0) -> float:
+        num = pd.to_numeric(pd.Series([value]), errors='coerce').fillna(float(default)).iloc[0]
+        return float(num)
+
+    @staticmethod
+    def owner_map_from_assigned(assigned: pd.DataFrame, *, street_key_col: str, region_id_col: str) -> dict[int, int]:
+        return {int(r[street_key_col]): int(r[region_id_col]) for _, r in assigned[[street_key_col, region_id_col]].iterrows()}
+
+    @staticmethod
+    def trace_prev_chain(prev: dict[int, int | None], start: int | None) -> list[int]:
+        path: list[int] = []
+        cur = None if start is None else int(start)
+        while cur is not None:
+            path.append(int(cur))
+            cur = prev.get(int(cur))
+        return path
+
+    @staticmethod
+    def connected_components(adjacency: dict[int, set[int]], nodes: set[int] | None=None) -> list[set[int]]:
+        remaining = set(adjacency.keys()) if nodes is None else set(nodes)
+        out: list[set[int]] = []
+        while remaining:
+            seed = next(iter(remaining))
+            stack = [seed]
+            comp: set[int] = set()
+            while stack:
+                cur = stack.pop()
+                if cur in comp:
+                    continue
+                comp.add(cur)
+                stack.extend((n for n in adjacency.get(cur, set()) if n in remaining and n not in comp))
+            out.append(comp)
+            remaining -= comp
+        return out
+
+    @staticmethod
+    def max_nondemand_to_demand_ratio_from_share(demand_share_pct: float | None) -> float | None:
+        if demand_share_pct is None:
+            return None
+        share = float(demand_share_pct)
+        if share <= 0.0 or share >= 100.0:
+            raise ValueError('demand_share_pct must be between 0 and 100')
+        return (100.0 - share) / share
+
+
+class RegionTopologyGeometry(RegionTopologyBase):
+
+    @staticmethod
+    def iter_intersection_points(geom: Any) -> list[Point]:
+        if geom is None or geom.is_empty:
+            return []
+        gtype = geom.geom_type
+        if gtype == 'Point':
+            return [geom]
+        if gtype == 'MultiPoint':
+            return [g for g in geom.geoms if g is not None and (not g.is_empty) and (g.geom_type == 'Point')]
+        if gtype == 'GeometryCollection':
+            out: list[Point] = []
+            for gg in geom.geoms:
+                out.extend(RegionTopologyGeometry.iter_intersection_points(gg))
+            return out
+        return []
+
+    @staticmethod
+    def line_tangent_angle_at_point(line: Any, pt: Point) -> float | None:
+        if line is None or line.is_empty or pt is None or pt.is_empty:
+            return None
+        if line.geom_type == 'MultiLineString':
+            parts = [g for g in line.geoms if g is not None and (not g.is_empty)]
+            if not parts:
+                return None
+            line = min(parts, key=lambda g: float(g.distance(pt)))
+        if line.geom_type != 'LineString':
+            return None
+        length = float(line.length)
+        if length <= 1e-09:
+            return None
+        d = float(line.project(pt))
+        eps = min(max(length * 1e-06, 0.01), max(length * 0.49, 0.01))
+        d1 = max(0.0, d - eps)
+        d2 = min(length, d + eps)
+        if d2 <= d1:
+            return None
+        p1 = line.interpolate(d1)
+        p2 = line.interpolate(d2)
+        dx = float(p2.x) - float(p1.x)
+        dy = float(p2.y) - float(p1.y)
+        if abs(dx) <= 1e-12 and abs(dy) <= 1e-12:
+            return None
+        ang = math.atan2(dy, dx)
+        if ang < 0:
+            ang += 2.0 * math.pi
+        return float(ang)
+
+    @staticmethod
+    def street_intersection_context(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float) -> tuple[dict[int, Any], set[tuple[int, int]], dict[tuple[float, float], set[int]], dict[tuple[float, float], Point]]:
+        base = streets[[street_key_col, 'geometry']].copy()
+        base = base.dropna(subset=[street_key_col, 'geometry'])
+        if base.empty:
+            return ({}, set(), {}, {})
+        base[street_key_col] = base[street_key_col].astype(int)
+        geom_by_sid: dict[int, Any] = {int(r[street_key_col]): r.geometry for _, r in base.iterrows()}
+        probe = base[[street_key_col, 'geometry']].copy()
+        if float(tolerance_m) > 0:
+            probe['geometry'] = probe.geometry.buffer(float(tolerance_m))
+        joined = gpd.sjoin(probe[[street_key_col, 'geometry']], probe[[street_key_col, 'geometry']], how='inner', predicate='intersects')
+        candidate_edges: set[tuple[int, int]] = set()
+        for _, row in joined.iterrows():
+            a = int(row[f'{street_key_col}_left'])
+            b = int(row[f'{street_key_col}_right'])
+            if a == b:
+                continue
+            if a > b:
+                a, b = (b, a)
+            candidate_edges.add((a, b))
+        if not candidate_edges:
+            return (geom_by_sid, set(), {}, {})
+        junction_segments: dict[tuple[float, float], set[int]] = {}
+        point_geom_by_key: dict[tuple[float, float], Point] = {}
+        for a, b in candidate_edges:
+            ga = geom_by_sid.get(int(a))
+            gb = geom_by_sid.get(int(b))
+            if ga is None or gb is None or ga.is_empty or gb.is_empty:
+                continue
+            try:
+                inter = ga.intersection(gb)
+            except Exception:
+                continue
+            for pt in RegionTopologyGeometry.iter_intersection_points(inter):
+                key = (round(float(pt.x), 3), round(float(pt.y), 3))
+                point_geom_by_key[key] = pt
+                junction_segments.setdefault(key, set()).update({int(a), int(b)})
+        return (geom_by_sid, candidate_edges, junction_segments, point_geom_by_key)
+
+    @staticmethod
+    def build_street_adjacency(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float, junction_neighbor_only_min_degree: int=_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE) -> dict[int, set[int]]:
+        if streets.empty:
+            return {}
+        base = streets[[street_key_col, 'geometry']].copy().dropna(subset=[street_key_col, 'geometry'])
+        if base.empty:
+            return {}
+        base[street_key_col] = base[street_key_col].astype(int)
+        adjacency: dict[int, set[int]] = {int(v): set() for v in base[street_key_col].tolist()}
+        geom_by_sid, candidate_edges, junction_segments, point_geom_by_key = RegionTopologyGeometry.street_intersection_context(base, street_key_col=street_key_col, tolerance_m=float(tolerance_m))
+        if not candidate_edges:
+            return adjacency
+        forbidden_edges: set[tuple[int, int]] = set()
+        for key, segs in junction_segments.items():
+            if len(segs) < int(junction_neighbor_only_min_degree):
+                continue
+            pt = point_geom_by_key.get(key)
+            if pt is None:
+                continue
+            angle_by_sid: dict[int, float] = {}
+            for sid in sorted((int(v) for v in segs)):
+                ang = RegionTopologyGeometry.line_tangent_angle_at_point(geom_by_sid.get(int(sid)), pt)
+                if ang is None:
+                    continue
+                angle_by_sid[int(sid)] = float(ang)
+            if len(angle_by_sid) < int(junction_neighbor_only_min_degree):
+                continue
+            ordered = sorted(angle_by_sid.keys(), key=lambda sid: angle_by_sid[sid])
+            n = len(ordered)
+            neighbor_pairs: set[tuple[int, int]] = set()
+            for i in range(n):
+                a = int(ordered[i])
+                b = int(ordered[(i + 1) % n])
+                if a > b:
+                    a, b = (b, a)
+                neighbor_pairs.add((a, b))
+            for a, b in combinations(sorted(segs), 2):
+                aa, bb = (int(a), int(b))
+                if aa > bb:
+                    aa, bb = (bb, aa)
+                if (aa, bb) not in neighbor_pairs:
+                    forbidden_edges.add((aa, bb))
+        for a, b in candidate_edges:
+            if (int(a), int(b)) in forbidden_edges:
+                continue
+            adjacency[int(a)].add(int(b))
+            adjacency[int(b)].add(int(a))
+        return adjacency
+
+    @staticmethod
+    def build_overloaded_junction_segments(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float, min_degree: int=_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE) -> list[set[int]]:
+        if streets.empty:
+            return []
+        base = streets[[street_key_col, 'geometry']].copy().dropna(subset=[street_key_col, 'geometry'])
+        if base.empty:
+            return []
+        base[street_key_col] = base[street_key_col].astype(int)
+        _, candidate_edges, junction_segments, _ = RegionTopologyGeometry.street_intersection_context(base, street_key_col=street_key_col, tolerance_m=float(tolerance_m))
+        if not candidate_edges:
+            return []
+        return [set((int(v) for v in segs)) for segs in junction_segments.values() if len(segs) >= int(min_degree)]
+
 def _to_float(value: Any, default: float=0.0) -> float:
-    num = pd.to_numeric(pd.Series([value]), errors='coerce').fillna(float(default)).iloc[0]
-    return float(num)
+    return RegionTopologyBase.to_float(value, default)
 
 def _owner_map_from_assigned(assigned: pd.DataFrame, *, street_key_col: str, region_id_col: str) -> dict[int, int]:
-    return {int(r[street_key_col]): int(r[region_id_col]) for _, r in assigned[[street_key_col, region_id_col]].iterrows()}
+    return RegionTopologyBase.owner_map_from_assigned(assigned, street_key_col=street_key_col, region_id_col=region_id_col)
 
 def _trace_prev_chain(prev: dict[int, int | None], start: int | None) -> list[int]:
-    path: list[int] = []
-    cur = None if start is None else int(start)
-    while cur is not None:
-        path.append(int(cur))
-        cur = prev.get(int(cur))
-    return path
+    return RegionTopologyBase.trace_prev_chain(prev, start)
 
 def _connected_components(adjacency: dict[int, set[int]], nodes: set[int] | None=None) -> list[set[int]]:
     """Return connected components for an undirected adjacency map."""
-    remaining = set(adjacency.keys()) if nodes is None else set(nodes)
-    out: list[set[int]] = []
-    while remaining:
-        seed = next(iter(remaining))
-        stack = [seed]
-        comp: set[int] = set()
-        while stack:
-            cur = stack.pop()
-            if cur in comp:
-                continue
-            comp.add(cur)
-            stack.extend((n for n in adjacency.get(cur, set()) if n in remaining and n not in comp))
-        out.append(comp)
-        remaining -= comp
-    return out
+    return RegionTopologyBase.connected_components(adjacency, nodes)
 
 def _max_nondemand_to_demand_ratio_from_share(demand_share_pct: float | None) -> float | None:
-    if demand_share_pct is None:
-        return None
-    share = float(demand_share_pct)
-    if share <= 0.0 or share >= 100.0:
-        raise ValueError('demand_share_pct must be between 0 and 100')
-    return (100.0 - share) / share
+    return RegionTopologyBase.max_nondemand_to_demand_ratio_from_share(demand_share_pct)
 
 def _iter_intersection_points(geom: Any) -> list[Point]:
-    if geom is None or geom.is_empty:
-        return []
-    gtype = geom.geom_type
-    if gtype == 'Point':
-        return [geom]
-    if gtype == 'MultiPoint':
-        return [g for g in geom.geoms if g is not None and (not g.is_empty) and (g.geom_type == 'Point')]
-    if gtype == 'GeometryCollection':
-        out: list[Point] = []
-        for gg in geom.geoms:
-            out.extend(_iter_intersection_points(gg))
-        return out
-    return []
+    return RegionTopologyGeometry.iter_intersection_points(geom)
 
 def _line_tangent_angle_at_point(line: Any, pt: Point) -> float | None:
-    if line is None or line.is_empty or pt is None or pt.is_empty:
-        return None
-    if line.geom_type == 'MultiLineString':
-        parts = [g for g in line.geoms if g is not None and (not g.is_empty)]
-        if not parts:
-            return None
-        line = min(parts, key=lambda g: float(g.distance(pt)))
-    if line.geom_type != 'LineString':
-        return None
-    length = float(line.length)
-    if length <= 1e-09:
-        return None
-    d = float(line.project(pt))
-    eps = min(max(length * 1e-06, 0.01), max(length * 0.49, 0.01))
-    d1 = max(0.0, d - eps)
-    d2 = min(length, d + eps)
-    if d2 <= d1:
-        return None
-    p1 = line.interpolate(d1)
-    p2 = line.interpolate(d2)
-    dx = float(p2.x) - float(p1.x)
-    dy = float(p2.y) - float(p1.y)
-    if abs(dx) <= 1e-12 and abs(dy) <= 1e-12:
-        return None
-    ang = math.atan2(dy, dx)
-    if ang < 0:
-        ang += 2.0 * math.pi
-    return float(ang)
+    return RegionTopologyGeometry.line_tangent_angle_at_point(line, pt)
 
 def _street_intersection_context(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float) -> tuple[dict[int, Any], set[tuple[int, int]], dict[tuple[float, float], set[int]], dict[tuple[float, float], Point]]:
-    base = streets[[street_key_col, 'geometry']].copy()
-    base = base.dropna(subset=[street_key_col, 'geometry'])
-    if base.empty:
-        return ({}, set(), {}, {})
-    base[street_key_col] = base[street_key_col].astype(int)
-    geom_by_sid: dict[int, Any] = {int(r[street_key_col]): r.geometry for _, r in base.iterrows()}
-    probe = base[[street_key_col, 'geometry']].copy()
-    if float(tolerance_m) > 0:
-        probe['geometry'] = probe.geometry.buffer(float(tolerance_m))
-    joined = gpd.sjoin(probe[[street_key_col, 'geometry']], probe[[street_key_col, 'geometry']], how='inner', predicate='intersects')
-    candidate_edges: set[tuple[int, int]] = set()
-    for _, row in joined.iterrows():
-        a = int(row[f'{street_key_col}_left'])
-        b = int(row[f'{street_key_col}_right'])
-        if a == b:
-            continue
-        if a > b:
-            a, b = (b, a)
-        candidate_edges.add((a, b))
-    if not candidate_edges:
-        return (geom_by_sid, set(), {}, {})
-    junction_segments: dict[tuple[float, float], set[int]] = {}
-    point_geom_by_key: dict[tuple[float, float], Point] = {}
-    for a, b in candidate_edges:
-        ga = geom_by_sid.get(int(a))
-        gb = geom_by_sid.get(int(b))
-        if ga is None or gb is None or ga.is_empty or gb.is_empty:
-            continue
-        try:
-            inter = ga.intersection(gb)
-        except Exception:
-            continue
-        for pt in _iter_intersection_points(inter):
-            key = (round(float(pt.x), 3), round(float(pt.y), 3))
-            point_geom_by_key[key] = pt
-            junction_segments.setdefault(key, set()).update({int(a), int(b)})
-    return (geom_by_sid, candidate_edges, junction_segments, point_geom_by_key)
+    return RegionTopologyGeometry.street_intersection_context(streets, street_key_col=street_key_col, tolerance_m=tolerance_m)
 
 def _build_street_adjacency(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float, junction_neighbor_only_min_degree: int=_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE) -> dict[int, set[int]]:
-    if streets.empty:
-        return {}
-    base = streets[[street_key_col, 'geometry']].copy().dropna(subset=[street_key_col, 'geometry'])
-    if base.empty:
-        return {}
-    base[street_key_col] = base[street_key_col].astype(int)
-    adjacency: dict[int, set[int]] = {int(v): set() for v in base[street_key_col].tolist()}
-    geom_by_sid, candidate_edges, junction_segments, point_geom_by_key = _street_intersection_context(base, street_key_col=street_key_col, tolerance_m=float(tolerance_m))
-    if not candidate_edges:
-        return adjacency
-    forbidden_edges: set[tuple[int, int]] = set()
-    for key, segs in junction_segments.items():
-        if len(segs) < int(junction_neighbor_only_min_degree):
-            continue
-        pt = point_geom_by_key.get(key)
-        if pt is None:
-            continue
-        angle_by_sid: dict[int, float] = {}
-        for sid in sorted((int(v) for v in segs)):
-            ang = _line_tangent_angle_at_point(geom_by_sid.get(int(sid)), pt)
-            if ang is None:
-                continue
-            angle_by_sid[int(sid)] = float(ang)
-        if len(angle_by_sid) < int(junction_neighbor_only_min_degree):
-            continue
-        ordered = sorted(angle_by_sid.keys(), key=lambda sid: angle_by_sid[sid])
-        n = len(ordered)
-        neighbor_pairs: set[tuple[int, int]] = set()
-        for i in range(n):
-            a = int(ordered[i])
-            b = int(ordered[(i + 1) % n])
-            if a > b:
-                a, b = (b, a)
-            neighbor_pairs.add((a, b))
-        for a, b in combinations(sorted(segs), 2):
-            aa, bb = (int(a), int(b))
-            if aa > bb:
-                aa, bb = (bb, aa)
-            if (aa, bb) not in neighbor_pairs:
-                forbidden_edges.add((aa, bb))
-    for a, b in candidate_edges:
-        if (int(a), int(b)) in forbidden_edges:
-            continue
-        adjacency[int(a)].add(int(b))
-        adjacency[int(b)].add(int(a))
-    return adjacency
+    return RegionTopologyGeometry.build_street_adjacency(streets, street_key_col=street_key_col, tolerance_m=tolerance_m, junction_neighbor_only_min_degree=junction_neighbor_only_min_degree)
 
 def _build_overloaded_junction_segments(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float, min_degree: int=_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE) -> list[set[int]]:
-    if streets.empty:
-        return []
-    base = streets[[street_key_col, 'geometry']].copy().dropna(subset=[street_key_col, 'geometry'])
-    if base.empty:
-        return []
-    base[street_key_col] = base[street_key_col].astype(int)
-    _, candidate_edges, junction_segments, _ = _street_intersection_context(base, street_key_col=street_key_col, tolerance_m=float(tolerance_m))
-    if not candidate_edges:
-        return []
-    return [set((int(v) for v in segs)) for segs in junction_segments.values() if len(segs) >= int(min_degree)]
+    return RegionTopologyGeometry.build_overloaded_junction_segments(streets, street_key_col=street_key_col, tolerance_m=tolerance_m, min_degree=min_degree)
 
 def _segment_streets_by_building_projections(streets: gpd.GeoDataFrame, buildings: gpd.GeoDataFrame, *, street_id_column: str, projection_buffer_m: float) -> gpd.GeoDataFrame:
     if streets.empty or buildings.empty or projection_buffer_m <= 0:
@@ -260,8 +414,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         raise ValueError('polygon_builder requires non-empty streets')
     if street_id_column not in streets.columns:
         raise ValueError(f"Missing '{street_id_column}' in streets")
-    if demand_street_indicator_column and demand_street_indicator_column not in streets.columns:
-        raise ValueError(f"Missing '{demand_street_indicator_column}' in streets")
+    indicator_col = demand_street_indicator_column if (demand_street_indicator_column and demand_street_indicator_column in streets.columns) else None
     b = buildings.copy()
     s = streets.copy()
     if crs:
@@ -274,8 +427,10 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
     if b.crs != s.crs:
         s = s.to_crs(b.crs)
     s_cols = [street_id_column, 'geometry']
-    if demand_street_indicator_column:
-        s_cols.append(demand_street_indicator_column)
+    if id_column in s.columns:
+        s_cols.append(id_column)
+    if indicator_col:
+        s_cols.append(indicator_col)
     s_work = s[s_cols].copy().explode(index_parts=False).reset_index(drop=True)
     if segment_streets_by_building_projections:
         seg_buffer_m = float(street_buffer_m if segment_projection_buffer_m is None else segment_projection_buffer_m)
@@ -334,9 +489,843 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
     min_demand_indicator = float(demand_street_indicator_min)
     street_lengths_m = s_work.set_index(street_key_col).geometry.length.fillna(0.0)
     demand_indicator_by_street = None
-    if demand_street_indicator_column and demand_street_indicator_column in s_work.columns:
-        demand_indicator_by_street = pd.to_numeric(s_work[demand_street_indicator_column], errors='coerce').fillna(0.0)
+    if indicator_col and indicator_col in s_work.columns:
+        demand_indicator_by_street = pd.to_numeric(s_work[indicator_col], errors='coerce').fillna(0.0)
         demand_indicator_by_street.index = s_work[street_key_col].astype(int)
+
+    def _iter_polys(geom: Any) -> list[Any]:
+        if geom is None or geom.is_empty:
+            return []
+        if geom.geom_type == 'Polygon':
+            return [geom]
+        if geom.geom_type == 'MultiPolygon':
+            return [g for g in geom.geoms if g is not None and (not g.is_empty)]
+        return []
+
+    def _line_endpoints(geom: Any) -> list[Point]:
+        if geom is None or geom.is_empty:
+            return []
+        if geom.geom_type == 'LineString':
+            coords = list(geom.coords)
+            if len(coords) < 2:
+                return []
+            return [Point(coords[0]), Point(coords[-1])]
+        if geom.geom_type == 'MultiLineString':
+            pts: list[Point] = []
+            for part in geom.geoms:
+                pts.extend(_line_endpoints(part))
+            return pts
+        return []
+
+    def _interior_holes_as_polys(geom: Any) -> list[Any]:
+        holes: list[Any] = []
+        for poly in _iter_polys(geom):
+            try:
+                for ring in getattr(poly, 'interiors', []):
+                    hp = Polygon(ring)
+                    if hp is not None and (not hp.is_empty) and float(hp.area) > 0.0:
+                        holes.append(hp)
+            except Exception:
+                continue
+        return holes
+
+    def _merge_touching_or_overlapping_faces(polys: list[Any], *, merge_within_m: float=0.0) -> list[Any]:
+        clean = [p.buffer(0) for p in polys if p is not None and (not p.is_empty)]
+        clean = [p for p in clean if p is not None and (not p.is_empty)]
+        n = len(clean)
+        if n <= 1:
+            return clean
+        parent = list(range(n))
+
+        def _find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def _union(i: int, j: int) -> None:
+            ri = _find(i)
+            rj = _find(j)
+            if ri != rj:
+                parent[rj] = ri
+
+        for i in range(n):
+            pi = clean[i]
+            for j in range(i + 1, n):
+                pj = clean[j]
+                try:
+                    if pi.overlaps(pj) or pi.touches(pj) or pi.intersects(pj) or (float(merge_within_m) > 0.0 and float(pi.distance(pj)) <= float(merge_within_m)):
+                        _union(i, j)
+                except Exception:
+                    continue
+
+        groups: dict[int, list[Any]] = {}
+        for idx, poly in enumerate(clean):
+            root = _find(idx)
+            groups.setdefault(root, []).append(poly)
+
+        merged: list[Any] = []
+        for grp in groups.values():
+            try:
+                if float(merge_within_m) > 0.0:
+                    grow = float(merge_within_m) / 2.0
+                    ug = unary_union([g.buffer(grow) for g in grp]).buffer(0).buffer(-grow).buffer(0)
+                else:
+                    ug = unary_union(grp).buffer(0)
+            except Exception:
+                ug = None
+            if ug is None or ug.is_empty:
+                merged.extend(grp)
+            else:
+                merged.extend(_iter_polys(ug) or grp)
+        return [p for p in merged if p is not None and (not p.is_empty)]
+
+    def _enclosed_area_from_lines_exact(lines: list[Any]) -> Any:
+        clean_lines = [g for g in lines if g is not None and (not g.is_empty)]
+        if not clean_lines:
+            return None
+        try:
+            merged_lines = unary_union(clean_lines)
+        except Exception:
+            merged_lines = clean_lines
+        try:
+            snap_tol = 1.0
+            snapped_lines = [snap(g, merged_lines, snap_tol) for g in clean_lines]
+            merged_lines = unary_union(snapped_lines)
+        except Exception:
+            pass
+        try:
+            faces = [p for p in polygonize(merged_lines) if p is not None and (not p.is_empty)]
+        except Exception:
+            faces = []
+        if not faces:
+            return None
+        min_face_area = max(0.01, float(street_buffer_m) * float(street_buffer_m) * 0.01)
+        faces = [p.buffer(0) for p in faces if p is not None and (not p.is_empty) and float(p.area) >= min_face_area]
+        faces = [p for p in faces if p is not None and (not p.is_empty)]
+        if not faces:
+            return None
+        faces = _merge_touching_or_overlapping_faces(faces)
+        if not faces:
+            return None
+        try:
+            return unary_union(faces).buffer(0)
+        except Exception:
+            return None
+
+    preassigned_district_mode = bool(id_column in s_work.columns and s_work[id_column].notna().any())
+    if preassigned_district_mode:
+        assigned_streets = s_work.dropna(subset=[id_column]).copy()
+        assigned_streets[id_column] = assigned_streets[id_column].astype(int)
+        assigned_touch = assigned_streets[[street_key_col, id_column, 'geometry']].copy().dropna(subset=['geometry'])
+        assigned_touch[street_key_col] = assigned_touch[street_key_col].astype(int)
+        assigned_touch[id_column] = assigned_touch[id_column].astype(int)
+        assigned_sindex = assigned_touch.sindex
+        all_assigned_union = unary_union([g for g in assigned_touch.geometry.tolist() if g is not None and (not g.is_empty)]) if not assigned_touch.empty else None
+        dead_end_touch_tol = max(0.25, float(street_connect_tolerance_m))
+
+        street_to_region = {int(r[street_key_col]): int(r[id_column]) for _, r in assigned_streets[[street_key_col, id_column]].iterrows()}
+        b_region = b[assignment_col].map(lambda sid: street_to_region.get(int(sid)) if pd.notna(sid) else None)
+        cluster_rows: list[dict[str, Any]] = []
+        line_keep_buffer = max(0.25, float(street_connect_tolerance_m) * 0.15)
+        street_base_buffer = max(line_keep_buffer, float(street_buffer_m), float(street_corridor_buffer_m))
+
+        district_lines: dict[int, list[Any]] = {}
+        district_sids: dict[int, list[int]] = {}
+        district_base_poly: dict[int, Any] = {}
+        district_center: dict[int, Point] = {}
+        for rid, grp in assigned_streets.groupby(id_column, dropna=False):
+            rid_i = int(rid)
+            reg_street_keys = sorted((int(v) for v in grp[street_key_col].astype(int).tolist()))
+            reg_lines = [g for g in grp.geometry.tolist() if g is not None and (not g.is_empty)]
+            if not reg_lines:
+                continue
+            district_lines[rid_i] = reg_lines
+            district_sids[rid_i] = reg_street_keys
+            base_parts = [g.buffer(street_base_buffer, cap_style=2, join_style=2) for g in reg_lines]
+            base_poly = unary_union(base_parts).buffer(0) if base_parts else None
+            district_base_poly[rid_i] = base_poly
+            try:
+                lu = unary_union(reg_lines)
+                district_center[rid_i] = lu.centroid if lu is not None and (not lu.is_empty) else Point(0.0, 0.0)
+            except Exception:
+                district_center[rid_i] = Point(0.0, 0.0)
+
+        district_ids = sorted((int(v) for v in district_sids.keys()))
+        neighbor_map: dict[int, set[int]] = {int(r): set() for r in district_ids}
+        district_union_lines: dict[int, Any] = {}
+        for rid_i in district_ids:
+            try:
+                district_union_lines[rid_i] = unary_union(district_lines.get(rid_i, []))
+            except Exception:
+                district_union_lines[rid_i] = None
+        for i in range(len(district_ids)):
+            a = int(district_ids[i])
+            ga = district_union_lines.get(a)
+            if ga is None or ga.is_empty:
+                continue
+            for j in range(i + 1, len(district_ids)):
+                b_rid = int(district_ids[j])
+                gb = district_union_lines.get(b_rid)
+                if gb is None or gb.is_empty:
+                    continue
+                try:
+                    if bool(ga.intersects(gb)) or float(ga.distance(gb)) <= float(dead_end_touch_tol):
+                        neighbor_map[a].add(b_rid)
+                        neighbor_map[b_rid].add(a)
+                except Exception:
+                    continue
+
+        order: list[int] = []
+        if district_ids:
+            start = max(district_ids, key=lambda r: (len(neighbor_map.get(int(r), set())), -int(r)))
+            q: deque[int] = deque([int(start)])
+            seen: set[int] = set()
+            while q:
+                cur = int(q.popleft())
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                order.append(cur)
+                nbs = sorted((int(v) for v in neighbor_map.get(cur, set()) if int(v) not in seen), key=lambda r: (-len(neighbor_map.get(r, set())), int(r)))
+                for nb in nbs:
+                    q.append(nb)
+            for rid_i in district_ids:
+                if rid_i not in seen:
+                    order.append(rid_i)
+
+        def _endpoint_touches_other_assigned(endpoint: Point, sid: int) -> bool:
+            if endpoint is None or endpoint.is_empty:
+                return False
+            try:
+                probe = endpoint.buffer(float(dead_end_touch_tol))
+                cand_idx = list(assigned_sindex.intersection(probe.bounds))
+            except Exception:
+                cand_idx = []
+            for idx in cand_idx:
+                try:
+                    row = assigned_touch.iloc[int(idx)]
+                except Exception:
+                    continue
+                other_sid = int(row[street_key_col])
+                if int(other_sid) == int(sid):
+                    continue
+                og = row.geometry
+                if og is None or og.is_empty:
+                    continue
+                try:
+                    if float(endpoint.distance(og)) <= float(dead_end_touch_tol):
+                        return True
+                except Exception:
+                    continue
+            return False
+
+        def _district_red_green(rid_i: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+            red: list[dict[str, Any]] = []
+            green: list[dict[str, Any]] = []
+            rows = assigned_touch[assigned_touch[id_column] == int(rid_i)]
+            center = district_center.get(int(rid_i), Point(0.0, 0.0))
+            for _, row in rows.iterrows():
+                sid = int(row[street_key_col])
+                eps = _line_endpoints(row.geometry)
+                for eidx, ep in enumerate(eps):
+                    rec = {
+                        'sid': int(sid),
+                        'eidx': int(eidx),
+                        'pt': ep,
+                        'dist_center': float(ep.distance(center)) if center is not None and (not center.is_empty) else 0.0,
+                        'ang': float(math.atan2(float(ep.y) - float(center.y), float(ep.x) - float(center.x))) if center is not None and (not center.is_empty) else 0.0,
+                    }
+                    if _endpoint_touches_other_assigned(ep, int(sid)):
+                        green.append(rec)
+                    else:
+                        red.append(rec)
+            return (red, green)
+
+        connector_lines_by_rid: dict[int, list[Any]] = {int(r): [] for r in order}
+        connector_lines_global: list[Any] = []
+        final_pass_count_by_rid: dict[int, int] = {int(r): 0 for r in order}
+        total_districts = int(len(order))
+        print(f"[polygon_builder] preassigned mode: processing {total_districts} districts", flush=True)
+
+        for rid_pos, rid_i in enumerate(order, start=1):
+            red, green = _district_red_green(int(rid_i))
+            print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): red={len(red)} green={len(green)}", flush=True)
+            if not red:
+                print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): skipped (no red endpoints)", flush=True)
+                continue
+            foreign_lines = [g for rr, lines in district_lines.items() if int(rr) != int(rid_i) for g in lines]
+            foreign_union = unary_union(foreign_lines) if foreign_lines else None
+            for rec in red:
+                if foreign_union is not None and (not foreign_union.is_empty):
+                    try:
+                        rec['dist_foreign'] = float(rec['pt'].distance(foreign_union))
+                    except Exception:
+                        rec['dist_foreign'] = float('inf')
+                else:
+                    rec['dist_foreign'] = float('inf')
+
+            clockwise = sorted(red, key=lambda r: float(r['ang']), reverse=True)
+            start_pool = [r for r in clockwise if float(r.get('dist_foreign', float('inf'))) <= 200.0]
+            if start_pool:
+                start_red = min(start_pool, key=lambda r: float(r.get('dist_foreign', float('inf'))))
+            else:
+                start_red = max(clockwise, key=lambda r: float(r.get('dist_center', 0.0)))
+            start_idx = next((i for i, r in enumerate(clockwise) if int(r['sid']) == int(start_red['sid']) and int(r['eidx']) == int(start_red['eidx'])), 0)
+            ordered = clockwise[start_idx:] + clockwise[:start_idx]
+            if not start_pool:
+                ordered = sorted(ordered, key=lambda r: float(r.get('dist_center', 0.0)), reverse=True)
+
+            reg_lines_i = district_lines.get(int(rid_i), [])
+            other_boundaries = [district_base_poly.get(int(rr)).boundary for rr in district_ids if int(rr) != int(rid_i) and district_base_poly.get(int(rr)) is not None and (not district_base_poly.get(int(rr)).is_empty)]
+            other_border_union = unary_union(other_boundaries) if other_boundaries else None
+            connection_count: dict[tuple[int, int], int] = {(int(rr['sid']), int(rr['eidx'])): 0 for rr in ordered}
+            blocked_sources: set[tuple[int, int]] = set()
+            legal_static_cache: dict[tuple[float, float, float, float], bool] = {}
+
+            def _pair_key(a: Point, b: Point) -> tuple[float, float, float, float]:
+                ax, ay = float(a.x), float(a.y)
+                bx, by = float(b.x), float(b.y)
+                if (ax, ay) <= (bx, by):
+                    return (round(ax, 3), round(ay, 3), round(bx, 3), round(by, 3))
+                return (round(bx, 3), round(by, 3), round(ax, 3), round(ay, 3))
+
+            def _emit_scope_geom() -> Any:
+                conn_now = connector_lines_by_rid.get(int(rid_i), [])
+                enclosed_now = _enclosed_area_from_lines_exact(reg_lines_i + conn_now)
+                parts_now: list[Any] = []
+                if enclosed_now is not None and (not enclosed_now.is_empty):
+                    shell_parts: list[Any] = []
+                    for poly in _iter_polys(enclosed_now):
+                        try:
+                            shell_parts.append(Polygon(poly.exterior))
+                        except Exception:
+                            continue
+                    if shell_parts:
+                        try:
+                            parts_now.append(unary_union(shell_parts).buffer(0))
+                        except Exception:
+                            parts_now.extend(shell_parts)
+                if not parts_now:
+                    return None
+                try:
+                    return unary_union(parts_now).buffer(0)
+                except Exception:
+                    return None
+
+            def _scope_geom_from_lines(lines_now: list[Any]) -> Any:
+                enclosed_now = _enclosed_area_from_lines_exact(lines_now)
+                if enclosed_now is None or enclosed_now.is_empty:
+                    return None
+                shell_parts: list[Any] = []
+                for poly in _iter_polys(enclosed_now):
+                    try:
+                        shell_parts.append(Polygon(poly.exterior))
+                    except Exception:
+                        continue
+                if not shell_parts:
+                    return None
+                try:
+                    return unary_union(shell_parts).buffer(0)
+                except Exception:
+                    return None
+
+            def _enclosed_area_value(lines_now: list[Any]) -> float:
+                enclosed_now = _enclosed_area_from_lines_exact(lines_now)
+                if enclosed_now is None or enclosed_now.is_empty:
+                    return 0.0
+                try:
+                    return float(enclosed_now.area)
+                except Exception:
+                    return 0.0
+
+            def _new_enclosed_area_gain(lines_before: list[Any], seg: Any, *, before_geom: Any | None=None) -> float:
+                if seg is None or seg.is_empty:
+                    return 0.0
+                if before_geom is None:
+                    before_geom = _enclosed_area_from_lines_exact(lines_before)
+                after_geom = _enclosed_area_from_lines_exact(lines_before + [seg])
+                if after_geom is None or after_geom.is_empty:
+                    return 0.0
+                if before_geom is None or before_geom.is_empty:
+                    try:
+                        return float(after_geom.area)
+                    except Exception:
+                        return 0.0
+                try:
+                    newly = after_geom.difference(before_geom).buffer(0)
+                    if newly is None or newly.is_empty:
+                        return 0.0
+                    return max(0.0, float(newly.area))
+                except Exception:
+                    try:
+                        return max(0.0, float(after_geom.area) - float(before_geom.area))
+                    except Exception:
+                        return 0.0
+
+            def _is_enclosed_point(pt: Point, scope_geom: Any) -> bool:
+                if pt is None or pt.is_empty or scope_geom is None or scope_geom.is_empty:
+                    return False
+                try:
+                    if bool(scope_geom.contains(pt)):
+                        return True
+                    if bool(scope_geom.covers(pt)):
+                        bnd = scope_geom.boundary
+                        if bnd is None or bnd.is_empty:
+                            return True
+                        return float(pt.distance(bnd)) > 1.0
+                    return False
+                except Exception:
+                    return False
+
+            def _legal(a: Point, b: Point) -> bool:
+                try:
+                    seg = LineString([(float(a.x), float(a.y)), (float(b.x), float(b.y))])
+                except Exception:
+                    return False
+                if seg is None or seg.is_empty or float(seg.length) <= 1e-06 or float(seg.length) > 800.0:
+                    return False
+                endpoint_mask = a.buffer(float(dead_end_touch_tol)).union(b.buffer(float(dead_end_touch_tol)))
+                body = seg.difference(endpoint_mask)
+                if body is None or body.is_empty:
+                    return True
+                key = _pair_key(a, b)
+                static_ok = legal_static_cache.get(key)
+                if static_ok is None:
+                    static_ok = True
+                    try:
+                        cand_idx = list(assigned_sindex.intersection(body.bounds))
+                    except Exception:
+                        cand_idx = []
+                    try:
+                        for idx in cand_idx:
+                            og = assigned_touch.iloc[int(idx)].geometry
+                            if og is None or og.is_empty:
+                                continue
+                            if bool(body.intersects(og)):
+                                static_ok = False
+                                break
+                    except Exception:
+                        static_ok = False
+                    if static_ok:
+                        try:
+                            if other_border_union is not None and (not other_border_union.is_empty) and bool(body.intersects(other_border_union)):
+                                static_ok = False
+                        except Exception:
+                            static_ok = False
+                    legal_static_cache[key] = bool(static_ok)
+                if not static_ok:
+                    return False
+                try:
+                    for cseg in connector_lines_global:
+                        if cseg is None or cseg.is_empty:
+                            continue
+                        if bool(body.intersects(cseg)):
+                            return False
+                except Exception:
+                    return False
+                return True
+
+            def _status_sets() -> tuple[set[tuple[int, int]], set[tuple[int, int]], bool]:
+                scope_geom = _emit_scope_geom()
+                enclosed_keys: set[tuple[int, int]] = set()
+                target_keys: set[tuple[int, int]] = set()
+                source_keys: set[tuple[int, int]] = set()
+                for rr in ordered:
+                    key_rr = (int(rr['sid']), int(rr['eidx']))
+                    is_enclosed = False
+                    if scope_geom is not None and (not scope_geom.is_empty):
+                        is_enclosed = _is_enclosed_point(rr['pt'], scope_geom)
+                    if is_enclosed:
+                        enclosed_keys.add(key_rr)
+                        blocked_sources.discard(key_rr)
+                        continue
+                    target_keys.add(key_rr)
+                    if int(connection_count.get(key_rr, 0)) < 2 and key_rr not in blocked_sources:
+                        source_keys.add(key_rr)
+                all_done = True
+                for rr in ordered:
+                    key_rr = (int(rr['sid']), int(rr['eidx']))
+                    if key_rr in enclosed_keys:
+                        continue
+                    if int(connection_count.get(key_rr, 0)) >= 2:
+                        continue
+                    if key_rr in blocked_sources:
+                        continue
+                    all_done = False
+                    break
+                return (source_keys, target_keys, all_done)
+
+            iter_guard = 0
+            iter_guard_max = max(100, len(ordered) * 20)
+            while True:
+                iter_guard += 1
+                if iter_guard > iter_guard_max:
+                    break
+                source_keys, target_red_keys, all_done = _status_sets()
+                if all_done:
+                    break
+                if not source_keys or not target_red_keys:
+                    break
+
+                source_order = [rr for rr in sorted(ordered, key=lambda r: float(r.get('dist_center', 0.0)), reverse=True) if (int(rr['sid']), int(rr['eidx'])) in source_keys]
+                red_best: tuple[float, int, dict[str, Any], dict[str, Any]] | None = None
+                green_best: tuple[float, dict[str, Any], dict[str, Any]] | None = None
+                dead_sources_now: list[tuple[int, int]] = []
+
+                for src in source_order:
+                    src_key = (int(src['sid']), int(src['eidx']))
+                    src_idx = next((ii for ii, rr in enumerate(ordered) if int(rr['sid']) == int(src['sid']) and int(rr['eidx']) == int(src['eidx'])), -1)
+                    if src_idx < 0:
+                        continue
+                    local_red: tuple[float, int, dict[str, Any], dict[str, Any]] | None = None
+                    local_green: tuple[float, dict[str, Any], dict[str, Any]] | None = None
+                    n_ord = len(ordered)
+                    for step in range(1, n_ord):
+                        dst = ordered[(src_idx + step) % n_ord]
+                        dst_key = (int(dst['sid']), int(dst['eidx']))
+                        if dst_key == src_key:
+                            continue
+                        if dst_key not in target_red_keys:
+                            continue
+                        dist = float(src['pt'].distance(dst['pt']))
+                        if dist > 800.0:
+                            continue
+                        if not _legal(src['pt'], dst['pt']):
+                            continue
+                        if local_red is None or dist > local_red[0] or (abs(dist - local_red[0]) <= 1e-06 and int(step) < local_red[1]):
+                            local_red = (dist, int(step), src, dst)
+
+                    for gg in green:
+                        distg = float(src['pt'].distance(gg['pt']))
+                        if distg > 800.0:
+                            continue
+                        if not _legal(src['pt'], gg['pt']):
+                            continue
+                        if local_green is None or distg > local_green[0]:
+                            local_green = (distg, src, gg)
+
+                    if local_red is not None:
+                        red_best = local_red
+                        break
+                    if green_best is None and local_green is not None:
+                        green_best = local_green
+                    if local_red is None and local_green is None:
+                        dead_sources_now.append(src_key)
+
+                if red_best is not None:
+                    for key_dead in dead_sources_now:
+                        blocked_sources.add(key_dead)
+                    src = red_best[2]
+                    dst = red_best[3]
+                    src_key = (int(src['sid']), int(src['eidx']))
+                    dst_key = (int(dst['sid']), int(dst['eidx']))
+                    seg = LineString([(float(src['pt'].x), float(src['pt'].y)), (float(dst['pt'].x), float(dst['pt'].y))])
+                    connector_lines_by_rid[int(rid_i)].append(seg)
+                    connector_lines_global.append(seg)
+                    connection_count[src_key] = int(connection_count.get(src_key, 0)) + 1
+                    connection_count[dst_key] = int(connection_count.get(dst_key, 0)) + 1
+                    continue
+
+                if green_best is not None:
+                    for key_dead in dead_sources_now:
+                        blocked_sources.add(key_dead)
+                    src = green_best[1]
+                    gg = green_best[2]
+                    src_key = (int(src['sid']), int(src['eidx']))
+                    seg = LineString([(float(src['pt'].x), float(src['pt'].y)), (float(gg['pt'].x), float(gg['pt'].y))])
+                    connector_lines_by_rid[int(rid_i)].append(seg)
+                    connector_lines_global.append(seg)
+                    connection_count[src_key] = int(connection_count.get(src_key, 0)) + 1
+                    continue
+
+                for key_dead in dead_sources_now:
+                    blocked_sources.add(key_dead)
+
+                break
+
+            final_pass_added = 0
+            all_dot_points: list[Point] = []
+            for rr in ordered:
+                all_dot_points.append(rr['pt'])
+            for gg in green:
+                all_dot_points.append(gg['pt'])
+
+            def _enclosed_dot_count(scope_geom: Any) -> int:
+                if scope_geom is None or scope_geom.is_empty:
+                    return 0
+                c = 0
+                for pt in all_dot_points:
+                    if _is_enclosed_point(pt, scope_geom):
+                        c += 1
+                return int(c)
+
+            final_blocked_sources: set[tuple[int, int]] = set()
+            bridge_pool_limit = 40
+            final_efficiency_ref: float | None = None
+            final_efficiency_floor_ratio = 0.01
+            final_neighbor_k = 18
+            endpoint_records: list[dict[str, Any]] = []
+            for rr in ordered:
+                endpoint_records.append(rr)
+            for gg in green:
+                endpoint_records.append(gg)
+            neighbor_targets_by_source: dict[tuple[int, int], list[tuple[tuple[int, int], float]]] = {}
+            for rec_i in endpoint_records:
+                key_i = (int(rec_i['sid']), int(rec_i['eidx']))
+                near: list[tuple[tuple[int, int], float]] = []
+                for rec_j in endpoint_records:
+                    key_j = (int(rec_j['sid']), int(rec_j['eidx']))
+                    if key_i >= key_j:
+                        continue
+                    dist_ij = float(rec_i['pt'].distance(rec_j['pt']))
+                    if dist_ij <= 800.0:
+                        near.append((key_j, dist_ij))
+                near.sort(key=lambda t: t[1])
+                if len(near) > final_neighbor_k:
+                    near = near[:final_neighbor_k]
+                neighbor_targets_by_source[key_i] = near
+            final_iter_guard = 0
+            final_iter_max = max(20, (len(ordered) + len(green)) * 3)
+            while final_iter_guard < final_iter_max:
+                final_iter_guard += 1
+                if final_iter_guard % 25 == 0:
+                    print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): final-pass iter {final_iter_guard}/{final_iter_max}", flush=True)
+                conn_now = connector_lines_by_rid.get(int(rid_i), [])
+                lines_before = reg_lines_i + conn_now
+                before_geom = _enclosed_area_from_lines_exact(lines_before)
+                scope_before = _scope_geom_from_lines(lines_before)
+                enclosed_before = _enclosed_dot_count(scope_before)
+
+                target_candidates: list[dict[str, Any]] = []
+                source_candidates: list[dict[str, Any]] = []
+                for rr in ordered:
+                    key = (int(rr['sid']), int(rr['eidx']))
+                    if _is_enclosed_point(rr['pt'], scope_before):
+                        final_blocked_sources.add(key)
+                        continue
+                    target_candidates.append(rr)
+                    if key not in final_blocked_sources:
+                        source_candidates.append(rr)
+                for gg in green:
+                    key = (int(gg['sid']), int(gg['eidx']))
+                    if _is_enclosed_point(gg['pt'], scope_before):
+                        final_blocked_sources.add(key)
+                        continue
+                    target_candidates.append(gg)
+                    if key not in final_blocked_sources:
+                        source_candidates.append(gg)
+
+                if len(target_candidates) < 2 or not source_candidates:
+                    break
+
+                target_by_key: dict[tuple[int, int], dict[str, Any]] = {(int(x['sid']), int(x['eidx'])): x for x in target_candidates}
+
+                best_area_gain = 0.0
+                best_dot_gain = -10**9
+                best_dist = float('inf')
+                best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
+                legal_pairs_now: list[tuple[dict[str, Any], dict[str, Any], Any, float, float]] = []
+                area_tie_eps = 1e-06
+
+                n_c = len(source_candidates)
+                for i in range(n_c):
+                    src = source_candidates[i]
+                    src_key = (int(src['sid']), int(src['eidx']))
+                    src_has_legal = False
+                    for dst_key, dist in neighbor_targets_by_source.get(src_key, []):
+                        dst = target_by_key.get(dst_key)
+                        if dst is None:
+                            continue
+                        if not _legal(src['pt'], dst['pt']):
+                            continue
+                        src_has_legal = True
+                        seg = LineString([(float(src['pt'].x), float(src['pt'].y)), (float(dst['pt'].x), float(dst['pt'].y))])
+                        if scope_before is not None and (not scope_before.is_empty):
+                            try:
+                                if bool(scope_before.covers(seg)):
+                                    legal_pairs_now.append((src, dst, seg, dist, 0.0))
+                                    continue
+                            except Exception:
+                                pass
+                        area_gain = _new_enclosed_area_gain(lines_before, seg, before_geom=before_geom)
+                        legal_pairs_now.append((src, dst, seg, dist, area_gain))
+                        if area_gain <= 1e-06:
+                            continue
+                        if area_gain > best_area_gain + area_tie_eps:
+                            best_area_gain = area_gain
+                            best_dot_gain = -10**9
+                            best_dist = dist
+                            best_pair = (src, dst)
+                            continue
+                        if abs(area_gain - best_area_gain) <= area_tie_eps:
+                            scope_after = _scope_geom_from_lines(lines_before + [seg])
+                            enclosed_after = _enclosed_dot_count(scope_after)
+                            dot_gain = int(enclosed_after - enclosed_before)
+                            if dot_gain > best_dot_gain or (dot_gain == best_dot_gain and dist < best_dist):
+                                best_area_gain = area_gain
+                                best_dot_gain = dot_gain
+                                best_dist = dist
+                                best_pair = (src, dst)
+                    if not src_has_legal:
+                        final_blocked_sources.add(src_key)
+
+                if best_pair is None or best_area_gain <= 1e-06:
+                    bridge_best_total = 0.0
+                    bridge_best_dist = float('inf')
+                    bridge_best_first: tuple[dict[str, Any], dict[str, Any], Any] | None = None
+                    if legal_pairs_now:
+                        positive_pool = [t for t in legal_pairs_now if float(t[4]) > 1e-06]
+                        zero_pool = [t for t in legal_pairs_now if float(t[4]) <= 1e-06]
+                        positive_pool.sort(key=lambda t: (float(t[4]), -float(t[3])), reverse=True)
+                        zero_pool.sort(key=lambda t: float(t[3]))
+                        bridge_pool: list[tuple[dict[str, Any], dict[str, Any], Any, float, float]] = []
+                        pos_keep = max(8, int(bridge_pool_limit * 0.6))
+                        zero_keep = max(8, bridge_pool_limit - pos_keep)
+                        bridge_pool.extend(positive_pool[:pos_keep])
+                        bridge_pool.extend(zero_pool[:zero_keep])
+                        if len(bridge_pool) > bridge_pool_limit:
+                            bridge_pool = bridge_pool[:bridge_pool_limit]
+
+                        seg_key_by_pair: dict[tuple[int, int, int, int], tuple[Any, Any, Any]] = {}
+                        for src_x, dst_x, seg_x, _dist_x, _gx in bridge_pool:
+                            key_x = (int(src_x['sid']), int(src_x['eidx']), int(dst_x['sid']), int(dst_x['eidx']))
+                            endpoint_mask_x = src_x['pt'].buffer(float(dead_end_touch_tol)).union(dst_x['pt'].buffer(float(dead_end_touch_tol)))
+                            body_x = seg_x.difference(endpoint_mask_x)
+                            seg_key_by_pair[key_x] = (seg_x, body_x, endpoint_mask_x)
+
+                        for src1, dst1, seg1, _dist1, g1 in bridge_pool:
+                            connector_lines_global.append(seg1)
+                            second_best = 0.0
+                            second_best_dist = float('inf')
+                            conn_plus_first = conn_now + [seg1]
+                            before_geom_after_first = _enclosed_area_from_lines_exact(reg_lines_i + conn_plus_first)
+                            key1 = (int(src1['sid']), int(src1['eidx']), int(dst1['sid']), int(dst1['eidx']))
+                            seg1_geom, _body1, _mask1 = seg_key_by_pair.get(key1, (seg1, None, None))
+                            for src2, dst2, seg2, _dist2, _g2 in bridge_pool:
+                                if (int(src1['sid']), int(src1['eidx']), int(dst1['sid']), int(dst1['eidx'])) == (int(src2['sid']), int(src2['eidx']), int(dst2['sid']), int(dst2['eidx'])):
+                                    continue
+                                key2 = (int(src2['sid']), int(src2['eidx']), int(dst2['sid']), int(dst2['eidx']))
+                                _seg2_geom, body2, _mask2 = seg_key_by_pair.get(key2, (seg2, None, None))
+                                if body2 is not None and (not body2.is_empty):
+                                    try:
+                                        if bool(body2.intersects(seg1_geom)):
+                                            continue
+                                    except Exception:
+                                        if not _legal(src2['pt'], dst2['pt']):
+                                            continue
+                                elif not _legal(src2['pt'], dst2['pt']):
+                                    continue
+                                g_after_first = _new_enclosed_area_gain(reg_lines_i + conn_plus_first, seg2, before_geom=before_geom_after_first)
+                                if g_after_first > second_best + 1e-06 or (abs(g_after_first - second_best) <= 1e-06 and float(_dist2) < second_best_dist):
+                                    second_best = g_after_first
+                                    second_best_dist = float(_dist2)
+                            connector_lines_global.pop()
+                            total_two_step = float(g1) + float(second_best)
+                            total_two_step_dist = float(_dist1) + (0.0 if not math.isfinite(second_best_dist) else float(second_best_dist))
+                            if total_two_step > bridge_best_total + 1e-06 or (abs(total_two_step - bridge_best_total) <= 1e-06 and total_two_step_dist < bridge_best_dist):
+                                bridge_best_total = total_two_step
+                                bridge_best_dist = total_two_step_dist
+                                bridge_best_first = (src1, dst1, seg1)
+                    if bridge_best_first is None or bridge_best_total <= 1e-06:
+                        break
+                    if final_efficiency_ref is not None and math.isfinite(bridge_best_dist) and bridge_best_dist > 1e-06:
+                        bridge_eff = float(bridge_best_total) / float(bridge_best_dist)
+                        if bridge_eff < float(final_efficiency_ref) * float(final_efficiency_floor_ratio):
+                            break
+                    src_b, dst_b, seg_b = bridge_best_first
+                    src_b_key = (int(src_b['sid']), int(src_b['eidx']))
+                    dst_b_key = (int(dst_b['sid']), int(dst_b['eidx']))
+                    connector_lines_by_rid[int(rid_i)].append(seg_b)
+                    connector_lines_global.append(seg_b)
+                    connection_count[src_b_key] = int(connection_count.get(src_b_key, 0)) + 1
+                    connection_count[dst_b_key] = int(connection_count.get(dst_b_key, 0)) + 1
+                    final_pass_added += 1
+                    continue
+
+                if math.isfinite(best_dist) and best_dist > 1e-06:
+                    pair_eff = float(best_area_gain) / float(best_dist)
+                    if final_efficiency_ref is None:
+                        final_efficiency_ref = pair_eff
+                    elif pair_eff < float(final_efficiency_ref) * float(final_efficiency_floor_ratio) and best_dot_gain <= 0:
+                        break
+
+                src = best_pair[0]
+                dst = best_pair[1]
+                src_key = (int(src['sid']), int(src['eidx']))
+                dst_key = (int(dst['sid']), int(dst['eidx']))
+                seg = LineString([(float(src['pt'].x), float(src['pt'].y)), (float(dst['pt'].x), float(dst['pt'].y))])
+                connector_lines_by_rid[int(rid_i)].append(seg)
+                connector_lines_global.append(seg)
+                connection_count[src_key] = int(connection_count.get(src_key, 0)) + 1
+                connection_count[dst_key] = int(connection_count.get(dst_key, 0)) + 1
+                final_pass_added += 1
+
+            final_pass_count_by_rid[int(rid_i)] = int(final_pass_added)
+            print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): connectors={len(connector_lines_by_rid.get(int(rid_i), []))} final_pass_added={int(final_pass_added)}", flush=True)
+
+        print("[polygon_builder] assembling output polygons", flush=True)
+        for rid_pos, rid_i in enumerate(order, start=1):
+            reg_street_keys = district_sids.get(int(rid_i), [])
+            reg_lines = district_lines.get(int(rid_i), [])
+            if not reg_street_keys or not reg_lines:
+                continue
+            base_poly = district_base_poly.get(int(rid_i))
+            conn_lines = connector_lines_by_rid.get(int(rid_i), [])
+            enclosed = _enclosed_area_from_lines_exact(reg_lines + conn_lines)
+            holes = _interior_holes_as_polys(base_poly)
+            enclosed_from_holes = unary_union(holes).buffer(0) if holes else None
+
+            parts: list[Any] = []
+            if base_poly is not None and (not base_poly.is_empty):
+                parts.append(base_poly)
+            if enclosed is not None and (not enclosed.is_empty):
+                parts.append(enclosed)
+            if enclosed_from_holes is not None and (not enclosed_from_holes.is_empty):
+                parts.append(enclosed_from_holes)
+            emit_geom = unary_union(parts).buffer(0) if parts else None
+            if emit_geom is None or emit_geom.is_empty:
+                continue
+
+            reg_buildings = b[b_region == int(rid_i)]
+            total_demand = float(reg_buildings[polygon_demand_column].sum()) if polygon_demand_column in reg_buildings.columns else 0.0
+            total_len_m = float(sum((float(street_lengths_m.get(int(sid), 0.0)) for sid in reg_street_keys)))
+            dead_end_members: list[int] = []
+            rows_sid = assigned_touch[assigned_touch[id_column] == int(rid_i)]
+            for _, rrow in rows_sid.iterrows():
+                sid = int(rrow[street_key_col])
+                eps = _line_endpoints(rrow.geometry)
+                if any((not _endpoint_touches_other_assigned(ep, int(sid))) for ep in eps):
+                    dead_end_members.append(int(sid))
+            dead_end_members = sorted(set(dead_end_members))
+            print(f"[polygon_builder] emit {rid_pos}/{total_districts} (id={int(rid_i)}): demand_mwh={float(total_demand):.2f} streets={len(reg_street_keys)}", flush=True)
+
+            out_row: dict[str, Any] = {
+                street_id_column: '|'.join(map(str, list(dict.fromkeys((street_key_to_raw_id.get(sid) for sid in reg_street_keys))))),
+                'street_count': len(reg_street_keys),
+                'street_length_m': total_len_m,
+                'nondemand_street_length_m': total_len_m,
+                'building_count': int(len(reg_buildings)),
+                'dead_end_count': int(len(dead_end_members)),
+                'connector_count': int(len(conn_lines)),
+                'final_pass_connector_count': int(final_pass_count_by_rid.get(int(rid_i), 0)),
+                polygon_demand_column: total_demand,
+                '_street_members': reg_street_keys,
+                '_demand_street_members': [],
+                '_dead_end_street_members': dead_end_members,
+                'geometry': emit_geom,
+                id_column: int(rid_i),
+            }
+            cluster_rows.append(out_row)
+
+        polygons_pre = gpd.GeoDataFrame(cluster_rows, geometry='geometry', crs=b.crs)
+        if polygons_pre.empty:
+            raise ValueError('polygon_builder preassigned mode produced no polygons')
+        polygons_pre = polygons_pre.sort_values(id_column).reset_index(drop=True)
+        if not keep_internal_columns and '_street_members' in polygons_pre.columns:
+            polygons_pre = polygons_pre.drop(columns=['_street_members', '_dead_end_street_members'], errors='ignore')
+        return polygons_pre
+
     group_cols = [assignment_col]
     if district_column and district_column in b.columns:
         group_cols.append(district_column)
@@ -1292,12 +2281,10 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
         members_from_s = sorted((int(v) for v in s.loc[s[region_id_column] == rid_i, '_street_key'].dropna().astype(int).tolist()))
         if not members_from_s:
             continue
-        seg_geoms = [g for g in base.loc[base['_street_key'].isin(members_from_s), 'geometry'].tolist() if g is not None and (not g.is_empty)]
-        if not seg_geoms:
+        poly_geoms = [g for g in grp.geometry.tolist() if g is not None and (not g.is_empty)] if 'geometry' in grp.columns else []
+        if not poly_geoms:
             continue
-        corridor_buffer_m = max(20.0, 2.0 * float(tolerance_m))
-        geoms = [g.buffer(corridor_buffer_m) for g in seg_geoms]
-        row['geometry'] = unary_union(geoms).convex_hull.buffer(0)
+        row['geometry'] = unary_union(poly_geoms).buffer(0)
         row['_street_members'] = members_from_s
         row['_demand_street_members'] = sorted((int(v) for v in s.loc[(s[region_id_column] == rid_i) & (s['_is_demand_street'] == True), '_street_key'].dropna().astype(int).tolist()))
         row['street_count'] = float(len(members_from_s))
@@ -1311,7 +2298,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
     p_out = gpd.GeoDataFrame(rows, geometry='geometry', crs=p.crs).sort_values(region_id_column).reset_index(drop=True)
     return (p_out, s)
 
-def build_region_topology(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame, city_column: str | None=None, city_value: str | None=None, clip_buffer_m: float=250.0, connect_tolerance_m: float=10.0, max_demand_mwh: float=30000.0, max_street_length_km: float=15.0, demand_share_pct: float=80.0, polynesia: bool=True, small_islands: bool=True, small_islands_max_segments: int=60, segment_streets_by_building_projections: bool=True, segment_projection_buffer_m: float=12.0, region_id_column: str='id', street_id_column: str='street_id', building_id_column: str='building_objectid', demand_building_column: str='building_objectid', demand_value_column: str='annual_demand_mwh', demand_street_indicator_column: str | None='total_heat_demand', demand_street_indicator_min: float=0.0) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, dict[str, int]]:
+def build_region_topology(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame, config: RegionTopologyConfig) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, dict[str, int]]:
     """Build region polygons from street/building demand inputs.
 
     Optionally filters to one city, clips the street network to relevant buildings,
@@ -1319,19 +2306,56 @@ def build_region_topology(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFr
     maps region IDs back to street segments, merges tiny disconnected islands with
     graph constraints and returns polygons.
     """
+    cfg = config
+    caps = RegionCaps(max_demand_mwh=cfg.max_demand_mwh, max_street_length_km=cfg.max_street_length_km, max_nondemand_street_km=None)
+
     b, s = (buildings.copy(), streets.copy())
-    if city_column and city_column in b.columns and (city_column in s.columns):
-        if city_value is None:
-            vals = b[city_column].dropna().astype(str)
+    if cfg.city_column and cfg.city_column in b.columns and (cfg.city_column in s.columns):
+        city_value_resolved = cfg.city_value
+        if city_value_resolved is None:
+            vals = b[cfg.city_column].dropna().astype(str)
             if vals.empty:
-                raise ValueError(f"No values in city column '{city_column}'")
-            city_value = str(vals.mode().iloc[0])
-        b = b[b[city_column].astype(str) == str(city_value)].copy()
-        s = s[s[city_column].astype(str) == str(city_value)].copy()
-    s = filter_streets_for_buildings(b, s, clip_buffer_m=float(clip_buffer_m))
-    polygons = polygon_builder(buildings=b, streets=s, demand_data=demand_data, demand_value_column=demand_value_column, street_id_column=street_id_column, segment_streets_by_building_projections=segment_streets_by_building_projections, segment_projection_buffer_m=segment_projection_buffer_m, demand_street_indicator_column=demand_street_indicator_column, demand_street_indicator_min=float(demand_street_indicator_min), building_street_column=None, building_id_column=building_id_column, demand_building_column=demand_building_column, id_column=region_id_column, caps={'max_demand_mwh': float(max_demand_mwh), 'max_street_length_km': float(max_street_length_km), 'max_nondemand_street_km': None}, demand_share_pct=float(demand_share_pct) if demand_share_pct is not None else None, enforce_demand_gt_nondemand=False, max_inter_region_connector_m=600.0, street_connect_tolerance_m=float(connect_tolerance_m), street_corridor_buffer_m=20.0, enforce_contiguous_polygons=True, keep_internal_columns=True)
-    streets_with_region = _street_segments_with_region(streets=s, polygons=polygons, buildings=b, segment_streets_by_building_projections=segment_streets_by_building_projections, segment_projection_buffer_m=segment_projection_buffer_m, region_id_column=region_id_column, street_id_column=street_id_column)
-    polygons, streets_with_region = _merge_small_regions_by_street_graph(polygons=polygons, streets_with_region=streets_with_region, region_id_column=region_id_column, small_islands_max_segments=int(small_islands_max_segments), tolerance_m=float(connect_tolerance_m), max_connector_m=600.0, max_demand_mwh=float(max_demand_mwh) if max_demand_mwh is not None else None, max_street_length_km=float(max_street_length_km) if max_street_length_km is not None else None, demand_share_pct=float(demand_share_pct) if demand_share_pct is not None else None, enable_final_resort=not bool(polynesia))
-    mantra = {'raw_street_ids_split_across_regions': int((streets_with_region.dropna(subset=[region_id_column]).groupby(street_id_column)[region_id_column].nunique() > 1).sum()), 'unassigned_street_segments': int(streets_with_region[region_id_column].isna().sum()), 'cross_region_crossings': 0, 'junction_overload_points': 0, 'disconnected_regions': int(_count_disconnected_regions(streets=s, polygons=polygons, tolerance_m=connect_tolerance_m, buildings=b, segment_streets_by_building_projections=segment_streets_by_building_projections, segment_projection_buffer_m=segment_projection_buffer_m, street_id_column=street_id_column))}
+                raise ValueError(f"No values in city column '{cfg.city_column}'")
+            city_value_resolved = str(vals.mode().iloc[0])
+        b = b[b[cfg.city_column].astype(str) == str(city_value_resolved)].copy()
+        s = s[s[cfg.city_column].astype(str) == str(city_value_resolved)].copy()
+    s = filter_streets_for_buildings(b, s, clip_buffer_m=float(cfg.clip_buffer_m))
+    polygons = polygon_builder(buildings=b, streets=s, demand_data=demand_data, demand_value_column=cfg.demand_value_column, street_id_column=cfg.street_id_column, segment_streets_by_building_projections=cfg.segment_streets_by_building_projections, segment_projection_buffer_m=cfg.segment_projection_buffer_m, demand_street_indicator_column=cfg.demand_street_indicator_column, demand_street_indicator_min=float(cfg.demand_street_indicator_min), building_street_column=None, building_id_column=cfg.building_id_column, demand_building_column=cfg.demand_building_column, id_column=cfg.region_id_column, caps=caps.as_polygon_builder_caps(), demand_share_pct=float(cfg.demand_share_pct) if cfg.demand_share_pct is not None else None, enforce_demand_gt_nondemand=False, max_inter_region_connector_m=600.0, street_connect_tolerance_m=float(cfg.connect_tolerance_m), street_corridor_buffer_m=20.0, enforce_contiguous_polygons=True, keep_internal_columns=True)
+    streets_with_region = _street_segments_with_region(streets=s, polygons=polygons, buildings=b, segment_streets_by_building_projections=cfg.segment_streets_by_building_projections, segment_projection_buffer_m=cfg.segment_projection_buffer_m, region_id_column=cfg.region_id_column, street_id_column=cfg.street_id_column)
+    polygons, streets_with_region = _merge_small_regions_by_street_graph(polygons=polygons, streets_with_region=streets_with_region, region_id_column=cfg.region_id_column, small_islands_max_segments=int(cfg.small_islands_max_segments), tolerance_m=float(cfg.connect_tolerance_m), max_connector_m=600.0, max_demand_mwh=float(cfg.max_demand_mwh) if cfg.max_demand_mwh is not None else None, max_street_length_km=float(cfg.max_street_length_km) if cfg.max_street_length_km is not None else None, demand_share_pct=float(cfg.demand_share_pct) if cfg.demand_share_pct is not None else None, enable_final_resort=not bool(cfg.polynesia))
+    mantra = {'raw_street_ids_split_across_regions': int((streets_with_region.dropna(subset=[cfg.region_id_column]).groupby(cfg.street_id_column)[cfg.region_id_column].nunique() > 1).sum()), 'unassigned_street_segments': int(streets_with_region[cfg.region_id_column].isna().sum()), 'cross_region_crossings': 0, 'junction_overload_points': 0, 'disconnected_regions': int(_count_disconnected_regions(streets=s, polygons=polygons, tolerance_m=cfg.connect_tolerance_m, buildings=b, segment_streets_by_building_projections=cfg.segment_streets_by_building_projections, segment_projection_buffer_m=cfg.segment_projection_buffer_m, street_id_column=cfg.street_id_column))}
     return (polygons, streets_with_region, mantra)
+
+
+class RegionTopologyEngine(RegionTopologyGeometry):
+
+    @staticmethod
+    def build(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame, config: RegionTopologyConfig) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, dict[str, int]]:
+        return build_region_topology(buildings=buildings, streets=streets, demand_data=demand_data, config=config)
+
+    @staticmethod
+    def build_polygons_from_assigned_streets(*, buildings: gpd.GeoDataFrame, assigned_streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame | None, caps: RegionCaps, config: RegionTopologyConfig) -> gpd.GeoDataFrame:
+        return polygon_builder(
+            buildings=buildings,
+            streets=assigned_streets,
+            demand_data=demand_data,
+            demand_value_column=config.demand_value_column,
+            street_id_column=config.street_id_column,
+            segment_streets_by_building_projections=False,
+            segment_projection_buffer_m=12.0,
+            demand_street_indicator_column=config.demand_street_indicator_column,
+            demand_street_indicator_min=float(config.demand_street_indicator_min),
+            building_street_column=None,
+            building_id_column=config.building_id_column,
+            demand_building_column=config.demand_building_column,
+            id_column=config.region_id_column,
+            caps=caps.as_polygon_builder_caps(),
+            demand_share_pct=float(config.demand_share_pct),
+            enforce_demand_gt_nondemand=False,
+            max_inter_region_connector_m=600.0,
+            street_connect_tolerance_m=float(config.connect_tolerance_m),
+            street_corridor_buffer_m=20.0,
+            enforce_contiguous_polygons=True,
+            keep_internal_columns=True,
+        )
 

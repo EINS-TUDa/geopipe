@@ -3,7 +3,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.energy_system.region_topology import _iter_intersection_points, build_region_topology
+from pypeline.energy_system.region_topology import _iter_intersection_points, build_region_topology, RegionTopologyConfig
 
 
 def _count_overloaded_junction_multi_region_violations(streets_with_region: gpd.GeoDataFrame, *, tolerance_m: float = 10.0) -> int:
@@ -63,8 +63,8 @@ def _count_overloaded_junction_multi_region_violations(streets_with_region: gpd.
 def neuburg_topology_t() -> None:
     """Checks generated Neuburg regions respect multi-region overloaded junction constraints."""
     root = Path(__file__).resolve().parents[2]
-    buildings = gpd.read_file(root / "examples/neuburg/debug_demand.geojson")
-    streets = gpd.read_file(root / "examples/neuburg/linear_heat_density.geojson")
+    buildings = gpd.read_file(root / "examples/neuburg/buildings_heat_demand.geojson")
+    streets = gpd.read_file(root / "examples/neuburg/street_segments_neuburg.geojson")
 
     demand = pd.DataFrame(
         {
@@ -73,29 +73,33 @@ def neuburg_topology_t() -> None:
         }
     )
 
-    _, streets_with_region, _ = build_region_topology(
-        buildings=buildings,
-        streets=streets,
-        demand_data=demand,
-        city_column="gemeindeschluessel",
-        city_value=None,
-        clip_buffer_m=200.0,
-        connect_tolerance_m=10.0,
-        max_demand_mwh=30000.0,
-        max_street_length_km=15.0,
-        demand_share_pct=80.0,
-        polynesia=False,
-        small_islands=True,
-        small_islands_max_segments=60,
-        segment_streets_by_building_projections=True,
-        segment_projection_buffer_m=12.0,
-        region_id_column="id",
-        street_id_column="street_id",
-        building_id_column="building_objectid",
-        demand_building_column="building_objectid",
-        demand_value_column="annual_demand_mwh",
-        demand_street_indicator_column="total_heat_demand",
-        demand_street_indicator_min=0.0,
-    )
+        cfg = RegionTopologyConfig(
+            max_demand_mwh=30000.0,
+            max_street_length_km=15.0,
+            demand_share_pct=80.0,
+            city_column="gemeindeschluessel",
+            city_value=None,
+            clip_buffer_m=200.0,
+            connect_tolerance_m=10.0,
+            polynesia=False,
+            small_islands=True,
+            small_islands_max_segments=60,
+            segment_streets_by_building_projections=True,
+            segment_projection_buffer_m=12.0,
+            region_id_column="id",
+            street_id_column="street_id",
+            building_id_column="building_objectid",
+            demand_building_column="building_objectid",
+            demand_value_column="annual_demand_mwh",
+            demand_street_indicator_column="total_heat_demand",
+            demand_street_indicator_min=0.0,
+        )
+
+        _, streets_with_region, _ = build_region_topology(
+            buildings=buildings,
+            streets=streets,
+            demand_data=demand,
+            config=cfg,
+        )
 
     assert int(_count_overloaded_junction_multi_region_violations(streets_with_region, tolerance_m=10.0)) == 0

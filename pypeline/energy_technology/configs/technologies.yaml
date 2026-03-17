@@ -97,7 +97,7 @@ cen_biomass_woodpellets:
   cap_max: 450
 
 heat_grid:
-  efficiency: 0.855
+  efficiency: 0.86
   technical_lifetime: 40.0
   cap_min: 1000000.0
   cap_max: 1000000.0
@@ -121,10 +121,10 @@ grid_hydrogen:
 #############################
 
 heat_pipe:
-  efficiency: 0.955
+  efficiency: 0.96
   technical_lifetime: 40.0
   opex_cost_power: 0.0
   opex_cost_energy: 1.44
-  pipe_capex_eur_per_km: 1000000.0
+  pipe_capex_eur_per_km: 1000000.0 # €/km
   cap_min: 100000.0
   cap_max: 100000.0

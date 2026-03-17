@@ -13,6 +13,8 @@ from matplotlib.textpath import TextPath
 from matplotlib.font_manager import FontProperties
 import contextily as ctx
 import geopandas as gpd
+import pandas as pd
+from shapely.geometry import Point
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME, HEAT_EXCHANGER_NAMES
 
@@ -25,16 +27,16 @@ class PlotDefaults:
     ES_FIGSIZE = (10, 10)
     REGION_FILL_ALPHA = 0.5
     REGION_FILL_COLOR = "grey"
-    REGION_BOUNDARY_LINEWIDTH = 2.0
-    PIE_RADIUS_BASE = 0.02
+    REGION_BOUNDARY_LINEWIDTH = 0.8
+    PIE_RADIUS_BASE = 0.005
     PIE_RADIUS_AREA_SCALE = 0.02
     PIE_LABEL_MAP_SPAN_SCALE = 0.025
     PIE_LABEL_RADIUS_SCALE = 1.7
     CENTRAL_EXPLODE_SCALE = 0.25
     MIN_SLICE_SHARE = 0.001
-    ID_FONT_SIZE = 12.0
-    LABEL_FONT_SIZE = 8.0
-    PIE_MAX_RADIUS_SCALE = 0.04
+    ID_FONT_SIZE = 10.0
+    LABEL_FONT_SIZE = 2.0
+    PIE_MAX_RADIUS_SCALE = 0.05
 
 @dataclass
 class RegionPlotData:
@@ -77,10 +79,174 @@ class EnergySystemPlotter:
     }
 
     @staticmethod
+    def _build_region_id_color_map(region_ids: list[int]) -> dict[int, Any]:
+        ids = sorted({int(v) for v in region_ids})
+        if not ids:
+            return {}
+        palette = plt.get_cmap("tab20", len(ids))
+        return {rid: palette(idx) for idx, rid in enumerate(ids)}
+
+    @staticmethod
+    def _find_pie_center_inside_polygon(
+        region_geom: Any,
+        *,
+        preferred_x: float,
+        preferred_y: float,
+        pie_radius: float,
+        map_span: float,
+        other_region_geoms: list[Any] | None = None,
+    ) -> tuple[float, float]:
+        if region_geom is None or region_geom.is_empty:
+            return (preferred_x, preferred_y)
+
+        boundary = region_geom.boundary
+        rep = region_geom.representative_point()
+        preferred = Point(float(preferred_x), float(preferred_y))
+        min_eps = max(1e-6, pie_radius * 0.02)
+
+        other_geoms = [g for g in (other_region_geoms or []) if g is not None and (not g.is_empty)]
+
+        def _valid(pt: Point, clearance: float) -> bool:
+            if pt is None or pt.is_empty:
+                return False
+            if not bool(region_geom.contains(pt)):
+                return False
+            if not (float(pt.distance(boundary)) > float(clearance)):
+                return False
+            pie_circle = pt.buffer(float(pie_radius))
+            if pie_circle is None or pie_circle.is_empty:
+                return False
+            if not bool(pie_circle.within(region_geom)):
+                return False
+            for og in other_geoms:
+                if pie_circle.intersects(og):
+                    return False
+            return True
+
+        clearances = [pie_radius + min_eps]
+
+        bx0, by0, bx1, by1 = region_geom.bounds
+        diag = math.hypot(float(bx1 - bx0), float(by1 - by0))
+        max_r = max(diag, pie_radius * 8.0, map_span * 0.15)
+        step_r = max(pie_radius * 0.5, map_span * 0.0025, 0.5)
+        angle_step_deg = 12
+        max_ring_steps = 120
+
+        for clearance in clearances:
+            if _valid(preferred, clearance):
+                return (float(preferred.x), float(preferred.y))
+            if _valid(rep, clearance):
+                return (float(rep.x), float(rep.y))
+
+            rr = step_r
+            ring_steps = 0
+            while rr <= max_r and ring_steps < max_ring_steps:
+                for deg in range(0, 360, angle_step_deg):
+                    theta = math.radians(float(deg))
+                    cand = Point(float(preferred.x) + rr * math.cos(theta), float(preferred.y) + rr * math.sin(theta))
+                    if _valid(cand, clearance):
+                        return (float(cand.x), float(cand.y))
+                rr += step_r
+                ring_steps += 1
+
+        return (float(preferred.x), float(preferred.y))
+
+    @staticmethod
+    def _pie_radius_fits_polygon(
+        region_geom: Any,
+        *,
+        preferred_x: float,
+        preferred_y: float,
+        pie_radius: float,
+        map_span: float,
+        other_region_geoms: list[Any] | None = None,
+    ) -> bool:
+        if region_geom is None or region_geom.is_empty:
+            return False
+        x, y = EnergySystemPlotter._find_pie_center_inside_polygon(
+            region_geom,
+            preferred_x=float(preferred_x),
+            preferred_y=float(preferred_y),
+            pie_radius=float(pie_radius),
+            map_span=float(map_span),
+            other_region_geoms=other_region_geoms,
+        )
+        pt = Point(float(x), float(y))
+        if not (pt.within(region_geom) or pt.touches(region_geom)):
+            return False
+        pie_circle = pt.buffer(float(pie_radius))
+        if pie_circle is None or pie_circle.is_empty:
+            return False
+        if not bool(pie_circle.within(region_geom)):
+            return False
+        for og in [g for g in (other_region_geoms or []) if g is not None and (not g.is_empty)]:
+            if pie_circle.intersects(og):
+                return False
+        boundary = region_geom.boundary
+        if boundary is None or boundary.is_empty:
+            return True
+        eps = max(1e-6, float(pie_radius) * 0.01)
+        return float(pt.distance(boundary)) + eps >= float(pie_radius)
+
+    @staticmethod
+    def _cap_pie_radius_to_polygon_fit(
+        region_geom: Any,
+        *,
+        preferred_x: float,
+        preferred_y: float,
+        proposed_radius: float,
+        base_radius: float,
+        map_span: float,
+        other_region_geoms: list[Any] | None = None,
+    ) -> float:
+        proposed = max(0.0, float(proposed_radius))
+        base = max(0.0, float(base_radius))
+        if proposed <= base + 1e-9:
+            return proposed
+
+        if EnergySystemPlotter._pie_radius_fits_polygon(
+            region_geom,
+            preferred_x=float(preferred_x),
+            preferred_y=float(preferred_y),
+            pie_radius=proposed,
+            map_span=float(map_span),
+            other_region_geoms=other_region_geoms,
+        ):
+            return proposed
+
+        if not EnergySystemPlotter._pie_radius_fits_polygon(
+            region_geom,
+            preferred_x=float(preferred_x),
+            preferred_y=float(preferred_y),
+            pie_radius=base,
+            map_span=float(map_span),
+            other_region_geoms=other_region_geoms,
+        ):
+            return base
+
+        lo = base
+        hi = proposed
+        for _ in range(10):
+            mid = 0.5 * (lo + hi)
+            if EnergySystemPlotter._pie_radius_fits_polygon(
+                region_geom,
+                preferred_x=float(preferred_x),
+                preferred_y=float(preferred_y),
+                pie_radius=mid,
+                map_span=float(map_span),
+                other_region_geoms=other_region_geoms,
+            ):
+                lo = mid
+            else:
+                hi = mid
+        return float(lo)
+
+    @staticmethod
     def plot_streets_colored_by_region(
         streets_with_region: gpd.GeoDataFrame,
         *,
         output_path: Path,
+        polygons: gpd.GeoDataFrame | None = None,
         region_id_column: str = "id",
         title: str = "Districts by streets",
         caps_legend: dict[str, Any] | None = None,
@@ -91,8 +257,7 @@ class EnergySystemPlotter:
 
         fig, ax = plt.subplots(figsize=PlotDefaults.STREET_FIGSIZE)
         if region_ids:
-            palette = plt.get_cmap("tab20", len(region_ids))
-            color_map = {rid: palette(idx) for idx, rid in enumerate(region_ids)}
+            color_map = EnergySystemPlotter._build_region_id_color_map(region_ids)
             for rid, group in s.dropna(subset=[region_id_column]).groupby(region_id_column):
                 rid_int = int(rid)
                 merged_lines = group.geometry.union_all()
@@ -106,6 +271,81 @@ class EnergySystemPlotter:
         unassigned = s[s[region_id_column].isna()]
         if not unassigned.empty:
             unassigned.plot(ax=ax, color="#aaaaaa", linewidth=1.0, zorder=1)
+
+        table_rows: list[int] = []
+        length_km_by_region: dict[int, float] = {}
+        demand_mwh_by_region: dict[int, float] = {}
+        if region_ids:
+            length_km_by_region = (
+                s.dropna(subset=[region_id_column])
+                .assign(_rid=lambda df: df[region_id_column].astype(int), _len_km=lambda df: df.geometry.length / 1000.0)
+                .groupby("_rid")["_len_km"]
+                .sum()
+                .to_dict()
+            )
+            if polygons is not None and (not polygons.empty):
+                p = polygons
+                if region_id_column in p.columns:
+                    if "annual_demand_mwh" in p.columns:
+                        demand_mwh_by_region = (
+                            p.dropna(subset=[region_id_column])
+                            .assign(_rid=lambda df: df[region_id_column].astype(int), _demand=lambda df: pd.to_numeric(df["annual_demand_mwh"], errors="coerce").fillna(0.0))
+                            .groupby("_rid")["_demand"]
+                            .sum()
+                            .to_dict()
+                        )
+            table_rows = sorted(set((int(v) for v in region_ids)))[:50]
+
+        has_top_panel = bool(table_rows)
+        top_panel_h = 0.0
+        if has_top_panel:
+            # Reserve figure space above the map for district tables only.
+            rows_per_table = min(25, len(table_rows))
+            top_panel_h = min(0.42, max(0.20, 0.12 + 0.012 * (rows_per_table + 1)))
+            fig.subplots_adjust(top=1.0 - top_panel_h - 0.02)
+
+        if table_rows:
+            left_rows = table_rows[:25]
+            right_rows = table_rows[25:50]
+            table_specs = [
+                (left_rows, [0.04, 1.0 - top_panel_h + 0.01, 0.42, top_panel_h - 0.02]),
+                (right_rows, [0.54, 1.0 - top_panel_h + 0.01, 0.42, top_panel_h - 0.02]),
+            ]
+
+            for rows, rect in table_specs:
+                if not rows:
+                    continue
+                table_ax = fig.add_axes(rect)
+                table_ax.axis("off")
+                cell_rows = [
+                    [
+                        f"{int(rid)}",
+                        f"{float(demand_mwh_by_region.get(int(rid), 0.0)):.1f}",
+                        f"{float(length_km_by_region.get(int(rid), 0.0)):.2f}",
+                    ]
+                    for rid in rows
+                ]
+                table = table_ax.table(
+                    cellText=cell_rows,
+                    colLabels=["ID", "MWh", "KM"],
+                    cellLoc="center",
+                    colLoc="center",
+                    bbox=[0.0, 0.0, 1.0, 1.0],
+                )
+                table.auto_set_font_size(False)
+                table.set_fontsize(7.0)
+                for (r, c), cell in table.get_celld().items():
+                    cell.set_edgecolor("#bdbdbd")
+                    cell.set_linewidth(0.8)
+                    if r == 0:
+                        cell.set_text_props(fontweight="bold", ha="center", va="center")
+                        cell.set_facecolor("#f7f7f7")
+                    else:
+                        cell.set_text_props(ha="center", va="center")
+                for row_idx, rid in enumerate(rows, start=1):
+                    id_text = table[(row_idx, 0)].get_text()
+                    id_text.set_color(color_map.get(int(rid), "#666666"))
+                    id_text.set_fontweight("bold")
 
         if caps_legend:
             lines = [f"{k}: {v}" for k, v in caps_legend.items() if v is not None]
@@ -125,7 +365,8 @@ class EnergySystemPlotter:
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
         ax.set_aspect("equal", adjustable="box")
-        fig.tight_layout()
+        if not has_top_panel:
+            fig.tight_layout()
         fig.savefig(output_path, dpi=PlotDefaults.DPI)
         plt.close(fig)
 
@@ -401,11 +642,11 @@ class EnergySystemPlotter:
         donut: DonutLayout,
         x: float,
         y: float,
-    ) -> None:
+    ) -> float:
         origins = [self._technology_origin(str(label)) for label in labels]
         central_indices = [idx for idx, origin in enumerate(origins) if origin == "cen"]
         if not central_indices:
-            return
+            return 0.0
         central_wedges = [wedges[idx] for idx in central_indices]
 
         theta1 = min(float(w.theta1) for w in central_wedges)
@@ -477,18 +718,8 @@ class EnergySystemPlotter:
 
         central_share = sum(float(sizes[idx]) for idx in central_indices)
         if central_share < PlotDefaults.MIN_SLICE_SHARE:
-            return
-        dhn_top_edge = max(float(w.center[1]) + float(w.r) for w in central_wedges)
-        self._draw_glyph_centered_text(
-            ax,
-            x=x,
-            y=dhn_top_edge + donut.label_offset,
-            text=f"DHN {central_share * 100:.1f}%",
-            fontsize=PlotDefaults.LABEL_FONT_SIZE,
-            fontweight="bold",
-            color="white",
-            zorder=6,
-        )
+            return 0.0
+        return float(central_share)
 
     def _aggregate_region_outputs(
         self,
@@ -572,13 +803,19 @@ class EnergySystemPlotter:
             tech_outputs_by_region=tech_outputs_by_region,
         )
         inv_max_region_area = 1.0 / context.max_region_area
+        region_ids = [int(getattr(region, "id_", idx)) for idx, region in enumerate(self.energy_system.regions)]
+        region_color_map = self._build_region_id_color_map(region_ids)
+        region_geoms = [region.polygon.geometry.iloc[0] for region in self.energy_system.regions]
 
         for region_idx, region in enumerate(self.energy_system.regions):
-            region_geom = region.polygon.geometry.iloc[0]
+            region_geom = region_geoms[region_idx]
+            other_region_geoms = [g for j, g in enumerate(region_geoms) if j != region_idx]
+            region_draw = gpd.GeoSeries([region_geom], crs=region.polygon.crs)
             region_id = getattr(region, "id_", region_idx)
-            region.polygon.boundary.plot(ax=ax, edgecolor="black", linewidth=float(region_boundary_linewidth), zorder=2)
+            region_color = region_color_map.get(int(region_id), "#666666")
+            region_draw.boundary.plot(ax=ax, edgecolor="black", linewidth=float(region_boundary_linewidth), zorder=2)
             if float(region_fill_alpha) > 0:
-                region.polygon.plot(ax=ax, alpha=float(region_fill_alpha), color=region_fill_color, zorder=1)
+                region_draw.plot(ax=ax, alpha=float(region_fill_alpha), color=region_color, zorder=1)
 
             if draw_region_ids:
                 rp = region_geom.representative_point()
@@ -597,9 +834,26 @@ class EnergySystemPlotter:
             demand_value = data.demand_value
             tech_outputs = data.tech_outputs
             centroid = region_geom.centroid
-            x, y = centroid.x, centroid.y
             area_norm = context.area_by_region[region_idx] * inv_max_region_area
-            pie_radius = context.map_span * (PlotDefaults.PIE_RADIUS_BASE + PlotDefaults.PIE_RADIUS_AREA_SCALE * (area_norm ** 0.5))
+            base_radius = context.map_span * PlotDefaults.PIE_RADIUS_BASE
+            proposed_radius = context.map_span * (PlotDefaults.PIE_RADIUS_BASE + PlotDefaults.PIE_RADIUS_AREA_SCALE * (area_norm ** 0.5))
+            pie_radius = self._cap_pie_radius_to_polygon_fit(
+                region_geom,
+                preferred_x=float(centroid.x),
+                preferred_y=float(centroid.y),
+                proposed_radius=float(proposed_radius),
+                base_radius=float(base_radius),
+                map_span=float(context.map_span),
+                other_region_geoms=other_region_geoms,
+            )
+            x, y = self._find_pie_center_inside_polygon(
+                region_geom,
+                preferred_x=float(centroid.x),
+                preferred_y=float(centroid.y),
+                pie_radius=float(pie_radius),
+                map_span=float(context.map_span),
+                other_region_geoms=other_region_geoms,
+            )
             demand_offset = max(
                 context.map_span * PlotDefaults.PIE_LABEL_MAP_SPAN_SCALE,
                 pie_radius * PlotDefaults.PIE_LABEL_RADIUS_SCALE,
@@ -653,8 +907,9 @@ class EnergySystemPlotter:
                 wedge.set_linewidth(0.0)
                 wedge.set_zorder(3)
 
+            dhn_share = 0.0
             if labels:
-                self._highlight_central_wedges(
+                dhn_share = self._highlight_central_wedges(
                     ax,
                     wedges=wedges,
                     labels=labels,
@@ -668,8 +923,19 @@ class EnergySystemPlotter:
             pie_scale = donut.pie_radius / (context.map_span * PlotDefaults.PIE_MAX_RADIUS_SCALE)
             self._draw_glyph_centered_text(ax, x=x, y=y, text=str(region_id), fontsize=PlotDefaults.ID_FONT_SIZE * pie_scale, fontweight="bold", zorder=4.2)
 
-            demand_label = f"{demand_value / 1000:.1f} MWh" if kind == PlotDefaults.KIND else f"{demand_value:.1f} kW"
-            self._draw_glyph_centered_text(ax, x=x, y=y - donut.label_edge_offset, text=demand_label, fontsize=PlotDefaults.LABEL_FONT_SIZE, fontweight="normal", zorder=4, bbox={"facecolor": "white", "edgecolor": "black", "linewidth": 1.0, "pad": 1.5})
+            demand_value_text = f"{demand_value / 1000:.1f} MWh" if kind == PlotDefaults.KIND else f"{demand_value:.1f} kW"
+            dhn_percent = max(0.0, min(100.0, float(dhn_share) * 100.0))
+            demand_label = rf"$\mathbf{{{demand_value_text}}}\ \mathit{{({dhn_percent:.1f}\%\ DHN)}}$"
+            ax.text(
+                x,
+                y - donut.label_edge_offset,
+                demand_label,
+                ha="center",
+                va="center",
+                fontsize=PlotDefaults.LABEL_FONT_SIZE,
+                zorder=4,
+                bbox={"facecolor": "white", "edgecolor": "black", "linewidth": 1.0, "pad": 1.5},
+            )
 
         if draw_basemap:
             ctx.add_basemap(ax, crs=self.energy_system.regions[0].polygon.crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7, zorder=0)
