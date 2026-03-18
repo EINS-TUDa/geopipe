@@ -11,7 +11,6 @@ from shapely.ops import substring, unary_union, polygonize, snap
 from shapely.geometry import Point, Polygon, LineString
 _JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE = 4
 
-
 @dataclass(frozen=True)
 class RegionCaps:
     max_demand_mwh: float | None
@@ -24,7 +23,6 @@ class RegionCaps:
             'max_street_length_km': None if self.max_street_length_km is None else float(self.max_street_length_km),
             'max_nondemand_street_km': None if self.max_nondemand_street_km is None else float(self.max_nondemand_street_km),
         }
-
 
 @dataclass(frozen=True)
 class RegionTopologyConfig:
@@ -95,6 +93,52 @@ class RegionTopologyConfig:
             demand_street_indicator_min=defaults.demand_street_indicator_min if demand_street_indicator_min is None else float(demand_street_indicator_min),
         )
 
+    def build_caps(self) -> RegionCaps:
+        return RegionCaps(
+            max_demand_mwh=self.max_demand_mwh,
+            max_street_length_km=self.max_street_length_km,
+            max_nondemand_street_km=None,
+        )
+
+    def polygon_builder_kwargs(
+        self,
+        *,
+        caps: RegionCaps,
+        segment_streets_by_building_projections: bool | None=None,
+        keep_internal_columns: bool=True,
+    ) -> dict[str, Any]:
+        segment_street_flags = self.segment_streets_by_building_projections if segment_streets_by_building_projections is None else bool(segment_streets_by_building_projections)
+        return {
+            'demand_value_column': self.demand_value_column,
+            'street_id_column': self.street_id_column,
+            'segment_streets_by_building_projections': bool(segment_street_flags),
+            'segment_projection_buffer_m': self.segment_projection_buffer_m,
+            'demand_street_indicator_column': self.demand_street_indicator_column,
+            'demand_street_indicator_min': float(self.demand_street_indicator_min),
+            'building_street_column': None,
+            'building_id_column': self.building_id_column,
+            'demand_building_column': self.demand_building_column,
+            'id_column': self.region_id_column,
+            'caps': caps.as_polygon_builder_caps(),
+            'demand_share_pct': float(self.demand_share_pct),
+            'max_inter_region_connector_m': 600.0,
+            'street_connect_tolerance_m': float(self.connect_tolerance_m),
+            'street_corridor_buffer_m': 20.0,
+            'enforce_contiguous_polygons': True,
+            'keep_internal_columns': bool(keep_internal_columns),
+        }
+
+    def small_island_merge_kwargs(self, *, enable_final_resort: bool) -> dict[str, Any]:
+        return {
+            'region_id_column': self.region_id_column,
+            'small_islands_max_segments': int(self.small_islands_max_segments),
+            'tolerance_m': float(self.connect_tolerance_m),
+            'max_connector_m': 600.0,
+            'max_demand_mwh': float(self.max_demand_mwh) if self.max_demand_mwh is not None else None,
+            'max_street_length_km': float(self.max_street_length_km) if self.max_street_length_km is not None else None,
+            'demand_share_pct': float(self.demand_share_pct) if self.demand_share_pct is not None else None,
+            'enable_final_resort': bool(enable_final_resort),
+        }
 
 @dataclass(frozen=True)
 class RegionTopologyDefaults:
@@ -115,9 +159,7 @@ class RegionTopologyDefaults:
     demand_street_indicator_column: str | None = 'total_heat_demand'
     demand_street_indicator_min: float = 0.0
 
-
 REGION_TOPOLOGY_DEFAULTS = RegionTopologyDefaults()
-
 
 class RegionTopologyBase:
 
@@ -165,7 +207,6 @@ class RegionTopologyBase:
         if share <= 0.0 or share >= 100.0:
             raise ValueError('demand_share_pct must be between 0 and 100')
         return (100.0 - share) / share
-
 
 class RegionTopologyGeometry(RegionTopologyBase):
 
@@ -318,37 +359,6 @@ class RegionTopologyGeometry(RegionTopologyBase):
             return []
         return [set((int(v) for v in segs)) for segs in junction_segments.values() if len(segs) >= int(min_degree)]
 
-def _to_float(value: Any, default: float=0.0) -> float:
-    return RegionTopologyBase.to_float(value, default)
-
-def _owner_map_from_assigned(assigned: pd.DataFrame, *, street_key_col: str, region_id_col: str) -> dict[int, int]:
-    return RegionTopologyBase.owner_map_from_assigned(assigned, street_key_col=street_key_col, region_id_col=region_id_col)
-
-def _trace_prev_chain(prev: dict[int, int | None], start: int | None) -> list[int]:
-    return RegionTopologyBase.trace_prev_chain(prev, start)
-
-def _connected_components(adjacency: dict[int, set[int]], nodes: set[int] | None=None) -> list[set[int]]:
-    """Return connected components for an undirected adjacency map."""
-    return RegionTopologyBase.connected_components(adjacency, nodes)
-
-def _max_nondemand_to_demand_ratio_from_share(demand_share_pct: float | None) -> float | None:
-    return RegionTopologyBase.max_nondemand_to_demand_ratio_from_share(demand_share_pct)
-
-def _iter_intersection_points(geom: Any) -> list[Point]:
-    return RegionTopologyGeometry.iter_intersection_points(geom)
-
-def _line_tangent_angle_at_point(line: Any, pt: Point) -> float | None:
-    return RegionTopologyGeometry.line_tangent_angle_at_point(line, pt)
-
-def _street_intersection_context(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float) -> tuple[dict[int, Any], set[tuple[int, int]], dict[tuple[float, float], set[int]], dict[tuple[float, float], Point]]:
-    return RegionTopologyGeometry.street_intersection_context(streets, street_key_col=street_key_col, tolerance_m=tolerance_m)
-
-def _build_street_adjacency(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float, junction_neighbor_only_min_degree: int=_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE) -> dict[int, set[int]]:
-    return RegionTopologyGeometry.build_street_adjacency(streets, street_key_col=street_key_col, tolerance_m=tolerance_m, junction_neighbor_only_min_degree=junction_neighbor_only_min_degree)
-
-def _build_overloaded_junction_segments(streets: gpd.GeoDataFrame, *, street_key_col: str, tolerance_m: float, min_degree: int=_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE) -> list[set[int]]:
-    return RegionTopologyGeometry.build_overloaded_junction_segments(streets, street_key_col=street_key_col, tolerance_m=tolerance_m, min_degree=min_degree)
-
 def _segment_streets_by_building_projections(streets: gpd.GeoDataFrame, buildings: gpd.GeoDataFrame, *, street_id_column: str, projection_buffer_m: float) -> gpd.GeoDataFrame:
     if streets.empty or buildings.empty or projection_buffer_m <= 0:
         return streets
@@ -407,7 +417,185 @@ def _segment_streets_by_building_projections(streets: gpd.GeoDataFrame, building
             out_rows.append(attrs)
     return gpd.GeoDataFrame(out_rows, geometry='geometry', crs=streets.crs)
 
-def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, demand_data: pd.DataFrame | gpd.GeoDataFrame | None=None, demand_value_column: str='annual_demand_mwh', street_id_column: str='street_id', building_street_column: str | None=None, building_id_column: str | None=None, demand_street_column: str | None=None, demand_building_column: str | None=None, district_column: str | None=None, crs: str | None=None, id_column: str='id', building_buffer_m: float=2.0, street_buffer_m: float=8.0, segment_streets_by_building_projections: bool=False, segment_projection_buffer_m: float | None=None, demand_street_indicator_column: str | None=None, demand_street_indicator_min: float=0.0, street_corridor_buffer_m: float=15.0, caps: dict[str, float | None] | None=None, demand_share_pct: float | None=None, enforce_demand_gt_nondemand: bool=False, max_inter_region_connector_m: float | None=100.0, street_connect_tolerance_m: float=3.0, enforce_contiguous_polygons: bool=False, smooth_distance_m: float=0.0, keep_internal_columns: bool=False, min_seed_demand_mwh: float=1e-09) -> gpd.GeoDataFrame:
+@dataclass(frozen=True)
+class _PolygonBuilderGeometryFactory:
+    street_buffer_m: float
+
+    def iter_polys(self, geom: Any) -> list[Any]:
+        if geom is None or geom.is_empty:
+            return []
+        if geom.geom_type == 'Polygon':
+            return [geom]
+        if geom.geom_type == 'MultiPolygon':
+            return [g for g in geom.geoms if g is not None and (not g.is_empty)]
+        return []
+
+    def line_endpoints(self, geom: Any) -> list[Point]:
+        if geom is None or geom.is_empty:
+            return []
+        if geom.geom_type == 'LineString':
+            coords = list(geom.coords)
+            if len(coords) < 2:
+                return []
+            return [Point(coords[0]), Point(coords[-1])]
+        if geom.geom_type == 'MultiLineString':
+            pts: list[Point] = []
+            for part in geom.geoms:
+                pts.extend(self.line_endpoints(part))
+            return pts
+        return []
+
+    def interior_holes_as_polys(self, geom: Any) -> list[Any]:
+        holes: list[Any] = []
+        for poly in self.iter_polys(geom):
+            try:
+                for ring in getattr(poly, 'interiors', []):
+                    hp = Polygon(ring)
+                    if hp is not None and (not hp.is_empty) and float(hp.area) > 0.0:
+                        holes.append(hp)
+            except Exception:
+                continue
+        return holes
+
+    def merge_touching_or_overlapping_faces(self, polys: list[Any], *, merge_within_m: float=0.0) -> list[Any]:
+        clean = [p.buffer(0) for p in polys if p is not None and (not p.is_empty)]
+        clean = [p for p in clean if p is not None and (not p.is_empty)]
+        n = len(clean)
+        if n <= 1:
+            return clean
+        parent = list(range(n))
+
+        def _find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def _union(i: int, j: int) -> None:
+            ri = _find(i)
+            rj = _find(j)
+            if ri != rj:
+                parent[rj] = ri
+        for i in range(n):
+            pi = clean[i]
+            for j in range(i + 1, n):
+                pj = clean[j]
+                try:
+                    if pi.overlaps(pj) or pi.touches(pj) or pi.intersects(pj) or (float(merge_within_m) > 0.0 and float(pi.distance(pj)) <= float(merge_within_m)):
+                        _union(i, j)
+                except Exception:
+                    continue
+        groups: dict[int, list[Any]] = {}
+        for idx, poly in enumerate(clean):
+            root = _find(idx)
+            groups.setdefault(root, []).append(poly)
+        merged: list[Any] = []
+        for grp in groups.values():
+            try:
+                if float(merge_within_m) > 0.0:
+                    grow = float(merge_within_m) / 2.0
+                    ug = unary_union([g.buffer(grow) for g in grp]).buffer(0).buffer(-grow).buffer(0)
+                else:
+                    ug = unary_union(grp).buffer(0)
+            except Exception:
+                ug = None
+            if ug is None or ug.is_empty:
+                merged.extend(grp)
+            else:
+                merged.extend(self.iter_polys(ug) or grp)
+        return [p for p in merged if p is not None and (not p.is_empty)]
+
+    def enclosed_area_from_lines_exact(self, lines: list[Any]) -> Any:
+        clean_lines = [g for g in lines if g is not None and (not g.is_empty)]
+        if not clean_lines:
+            return None
+        try:
+            merged_lines = unary_union(clean_lines)
+        except Exception:
+            merged_lines = clean_lines
+        try:
+            snap_tol = 1.0
+            snapped_lines = [snap(g, merged_lines, snap_tol) for g in clean_lines]
+            merged_lines = unary_union(snapped_lines)
+        except Exception:
+            pass
+        try:
+            faces = [p for p in polygonize(merged_lines) if p is not None and (not p.is_empty)]
+        except Exception:
+            faces = []
+        if not faces:
+            return None
+        min_face_area = max(0.01, float(self.street_buffer_m) * float(self.street_buffer_m) * 0.01)
+        faces = [p.buffer(0) for p in faces if p is not None and (not p.is_empty) and float(p.area) >= min_face_area]
+        faces = [p for p in faces if p is not None and (not p.is_empty)]
+        if not faces:
+            return None
+        faces = self.merge_touching_or_overlapping_faces(faces)
+        if not faces:
+            return None
+        try:
+            return unary_union(faces).buffer(0)
+        except Exception:
+            return None
+
+    def scope_geom_from_lines(self, lines_now: list[Any]) -> Any:
+        enclosed_now = self.enclosed_area_from_lines_exact(lines_now)
+        if enclosed_now is None or enclosed_now.is_empty:
+            return None
+        shell_parts: list[Any] = []
+        for poly in self.iter_polys(enclosed_now):
+            try:
+                shell_parts.append(Polygon(poly.exterior))
+            except Exception:
+                continue
+        if not shell_parts:
+            return None
+        try:
+            return unary_union(shell_parts).buffer(0)
+        except Exception:
+            return None
+
+    def new_enclosed_area_gain(self, lines_before: list[Any], seg: Any, *, before_geom: Any | None=None) -> float:
+        if seg is None or seg.is_empty:
+            return 0.0
+        if before_geom is None:
+            before_geom = self.enclosed_area_from_lines_exact(lines_before)
+        after_geom = self.enclosed_area_from_lines_exact(lines_before + [seg])
+        if after_geom is None or after_geom.is_empty:
+            return 0.0
+        if before_geom is None or before_geom.is_empty:
+            try:
+                return float(after_geom.area)
+            except Exception:
+                return 0.0
+        try:
+            newly = after_geom.difference(before_geom).buffer(0)
+            if newly is None or newly.is_empty:
+                return 0.0
+            return max(0.0, float(newly.area))
+        except Exception:
+            try:
+                return max(0.0, float(after_geom.area) - float(before_geom.area))
+            except Exception:
+                return 0.0
+
+    @staticmethod
+    def is_enclosed_point(pt: Point, scope_geom: Any) -> bool:
+        if pt is None or pt.is_empty or scope_geom is None or scope_geom.is_empty:
+            return False
+        try:
+            if bool(scope_geom.contains(pt)):
+                return True
+            if bool(scope_geom.covers(pt)):
+                bnd = scope_geom.boundary
+                if bnd is None or bnd.is_empty:
+                    return True
+                return float(pt.distance(bnd)) > 1.0
+            return False
+        except Exception:
+            return False
+
+def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, demand_data: pd.DataFrame | gpd.GeoDataFrame | None=None, demand_value_column: str='annual_demand_mwh', street_id_column: str='street_id', building_street_column: str | None=None, building_id_column: str | None=None, demand_building_column: str | None=None, id_column: str='id', building_buffer_m: float=2.0, street_buffer_m: float=8.0, segment_streets_by_building_projections: bool=False, segment_projection_buffer_m: float | None=None, demand_street_indicator_column: str | None=None, demand_street_indicator_min: float=0.0, street_corridor_buffer_m: float=15.0, caps: dict[str, float | None] | None=None, demand_share_pct: float | None=None, max_inter_region_connector_m: float | None=100.0, street_connect_tolerance_m: float=3.0, enforce_contiguous_polygons: bool=False, keep_internal_columns: bool=False) -> gpd.GeoDataFrame:
     if buildings.empty:
         raise ValueError('polygon_builder requires non-empty buildings')
     if streets.empty:
@@ -417,13 +605,8 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
     indicator_col = demand_street_indicator_column if (demand_street_indicator_column and demand_street_indicator_column in streets.columns) else None
     b = buildings.copy()
     s = streets.copy()
-    if crs:
-        if b.crs is None:
-            b = b.set_crs(crs)
-        if s.crs is None:
-            s = s.set_crs(crs)
     if b.crs is None or s.crs is None:
-        raise ValueError('buildings and streets must have CRS (or pass crs=...) to polygon_builder')
+        raise ValueError('buildings and streets must have CRS')
     if b.crs != s.crs:
         s = s.to_crs(b.crs)
     s_cols = [street_id_column, 'geometry']
@@ -440,13 +623,13 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
     street_key_to_raw_id = s_work.set_index(street_key_col)[street_id_column].to_dict()
     cap_cfg = {'max_demand_mwh': None, 'max_street_length_km': 10.0, 'max_nondemand_street_km': None, **dict(caps or {})}
     assignment_col = '_assigned_street'
+
     def _fill_nearest_street_assignment(mask: pd.Series) -> None:
         if not bool(mask.any()):
             return
         nearest = gpd.sjoin_nearest(b.loc[mask, ['geometry']], s_work[[street_key_col, 'geometry']], how='left')
         nearest_assigned = nearest.groupby(level=0)[street_key_col].first()
         b.loc[mask, assignment_col] = b.loc[mask].index.to_series().map(nearest_assigned)
-
     b[assignment_col] = pd.NA
     if building_street_column and building_street_column in b.columns:
         raw_to_keys = s_work.groupby(street_id_column, dropna=False)[street_key_col].apply(list).to_dict()
@@ -469,10 +652,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         if demand_value_column not in d.columns:
             raise ValueError(f"Missing demand value column '{demand_value_column}' in demand_data")
         demand_series = None
-        if demand_street_column and demand_street_column in d.columns:
-            demand_by_street = d.groupby(demand_street_column, dropna=False)[demand_value_column].sum(min_count=1).fillna(0.0)
-            demand_series = b[assignment_col].map(street_key_to_raw_id).map(demand_by_street)
-        elif demand_building_column and building_id_column and (demand_building_column in d.columns) and (building_id_column in b.columns):
+        if demand_building_column and building_id_column and (demand_building_column in d.columns) and (building_id_column in b.columns):
             demand_by_building = d.groupby(demand_building_column, dropna=False)[demand_value_column].sum(min_count=1).fillna(0.0)
             demand_series = b[building_id_column].map(demand_by_building)
         if demand_series is None:
@@ -482,137 +662,14 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
     max_street_length_m = None if cap_cfg['max_street_length_km'] is None else float(cap_cfg['max_street_length_km']) * 1000.0
     max_nondemand_street_m = None if cap_cfg['max_nondemand_street_km'] is None else float(cap_cfg['max_nondemand_street_km']) * 1000.0
     max_inter_region_connector_len_m = None if max_inter_region_connector_m is None else float(max_inter_region_connector_m)
-    max_nondemand_ratio = _max_nondemand_to_demand_ratio_from_share(demand_share_pct)
-    min_seed_demand = float(min_seed_demand_mwh)
-    if min_seed_demand < 0:
-        raise ValueError('min_seed_demand_mwh must be >= 0')
+    max_nondemand_ratio = RegionTopologyBase.max_nondemand_to_demand_ratio_from_share(demand_share_pct)
     min_demand_indicator = float(demand_street_indicator_min)
     street_lengths_m = s_work.set_index(street_key_col).geometry.length.fillna(0.0)
     demand_indicator_by_street = None
     if indicator_col and indicator_col in s_work.columns:
         demand_indicator_by_street = pd.to_numeric(s_work[indicator_col], errors='coerce').fillna(0.0)
         demand_indicator_by_street.index = s_work[street_key_col].astype(int)
-
-    def _iter_polys(geom: Any) -> list[Any]:
-        if geom is None or geom.is_empty:
-            return []
-        if geom.geom_type == 'Polygon':
-            return [geom]
-        if geom.geom_type == 'MultiPolygon':
-            return [g for g in geom.geoms if g is not None and (not g.is_empty)]
-        return []
-
-    def _line_endpoints(geom: Any) -> list[Point]:
-        if geom is None or geom.is_empty:
-            return []
-        if geom.geom_type == 'LineString':
-            coords = list(geom.coords)
-            if len(coords) < 2:
-                return []
-            return [Point(coords[0]), Point(coords[-1])]
-        if geom.geom_type == 'MultiLineString':
-            pts: list[Point] = []
-            for part in geom.geoms:
-                pts.extend(_line_endpoints(part))
-            return pts
-        return []
-
-    def _interior_holes_as_polys(geom: Any) -> list[Any]:
-        holes: list[Any] = []
-        for poly in _iter_polys(geom):
-            try:
-                for ring in getattr(poly, 'interiors', []):
-                    hp = Polygon(ring)
-                    if hp is not None and (not hp.is_empty) and float(hp.area) > 0.0:
-                        holes.append(hp)
-            except Exception:
-                continue
-        return holes
-
-    def _merge_touching_or_overlapping_faces(polys: list[Any], *, merge_within_m: float=0.0) -> list[Any]:
-        clean = [p.buffer(0) for p in polys if p is not None and (not p.is_empty)]
-        clean = [p for p in clean if p is not None and (not p.is_empty)]
-        n = len(clean)
-        if n <= 1:
-            return clean
-        parent = list(range(n))
-
-        def _find(i: int) -> int:
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
-        def _union(i: int, j: int) -> None:
-            ri = _find(i)
-            rj = _find(j)
-            if ri != rj:
-                parent[rj] = ri
-
-        for i in range(n):
-            pi = clean[i]
-            for j in range(i + 1, n):
-                pj = clean[j]
-                try:
-                    if pi.overlaps(pj) or pi.touches(pj) or pi.intersects(pj) or (float(merge_within_m) > 0.0 and float(pi.distance(pj)) <= float(merge_within_m)):
-                        _union(i, j)
-                except Exception:
-                    continue
-
-        groups: dict[int, list[Any]] = {}
-        for idx, poly in enumerate(clean):
-            root = _find(idx)
-            groups.setdefault(root, []).append(poly)
-
-        merged: list[Any] = []
-        for grp in groups.values():
-            try:
-                if float(merge_within_m) > 0.0:
-                    grow = float(merge_within_m) / 2.0
-                    ug = unary_union([g.buffer(grow) for g in grp]).buffer(0).buffer(-grow).buffer(0)
-                else:
-                    ug = unary_union(grp).buffer(0)
-            except Exception:
-                ug = None
-            if ug is None or ug.is_empty:
-                merged.extend(grp)
-            else:
-                merged.extend(_iter_polys(ug) or grp)
-        return [p for p in merged if p is not None and (not p.is_empty)]
-
-    def _enclosed_area_from_lines_exact(lines: list[Any]) -> Any:
-        clean_lines = [g for g in lines if g is not None and (not g.is_empty)]
-        if not clean_lines:
-            return None
-        try:
-            merged_lines = unary_union(clean_lines)
-        except Exception:
-            merged_lines = clean_lines
-        try:
-            snap_tol = 1.0
-            snapped_lines = [snap(g, merged_lines, snap_tol) for g in clean_lines]
-            merged_lines = unary_union(snapped_lines)
-        except Exception:
-            pass
-        try:
-            faces = [p for p in polygonize(merged_lines) if p is not None and (not p.is_empty)]
-        except Exception:
-            faces = []
-        if not faces:
-            return None
-        min_face_area = max(0.01, float(street_buffer_m) * float(street_buffer_m) * 0.01)
-        faces = [p.buffer(0) for p in faces if p is not None and (not p.is_empty) and float(p.area) >= min_face_area]
-        faces = [p for p in faces if p is not None and (not p.is_empty)]
-        if not faces:
-            return None
-        faces = _merge_touching_or_overlapping_faces(faces)
-        if not faces:
-            return None
-        try:
-            return unary_union(faces).buffer(0)
-        except Exception:
-            return None
-
+    geometry_factory = _PolygonBuilderGeometryFactory(street_buffer_m=float(street_buffer_m))
     preassigned_district_mode = bool(id_column in s_work.columns and s_work[id_column].notna().any())
     if preassigned_district_mode:
         assigned_streets = s_work.dropna(subset=[id_column]).copy()
@@ -621,15 +678,12 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         assigned_touch[street_key_col] = assigned_touch[street_key_col].astype(int)
         assigned_touch[id_column] = assigned_touch[id_column].astype(int)
         assigned_sindex = assigned_touch.sindex
-        all_assigned_union = unary_union([g for g in assigned_touch.geometry.tolist() if g is not None and (not g.is_empty)]) if not assigned_touch.empty else None
         dead_end_touch_tol = max(0.25, float(street_connect_tolerance_m))
-
         street_to_region = {int(r[street_key_col]): int(r[id_column]) for _, r in assigned_streets[[street_key_col, id_column]].iterrows()}
         b_region = b[assignment_col].map(lambda sid: street_to_region.get(int(sid)) if pd.notna(sid) else None)
         cluster_rows: list[dict[str, Any]] = []
         line_keep_buffer = max(0.25, float(street_connect_tolerance_m) * 0.15)
         street_base_buffer = max(line_keep_buffer, float(street_buffer_m), float(street_corridor_buffer_m))
-
         district_lines: dict[int, list[Any]] = {}
         district_sids: dict[int, list[int]] = {}
         district_base_poly: dict[int, Any] = {}
@@ -650,7 +704,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                 district_center[rid_i] = lu.centroid if lu is not None and (not lu.is_empty) else Point(0.0, 0.0)
             except Exception:
                 district_center[rid_i] = Point(0.0, 0.0)
-
         district_ids = sorted((int(v) for v in district_sids.keys()))
         neighbor_map: dict[int, set[int]] = {int(r): set() for r in district_ids}
         district_union_lines: dict[int, Any] = {}
@@ -675,7 +728,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                         neighbor_map[b_rid].add(a)
                 except Exception:
                     continue
-
         order: list[int] = []
         if district_ids:
             start = max(district_ids, key=lambda r: (len(neighbor_map.get(int(r), set())), -int(r)))
@@ -727,7 +779,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             center = district_center.get(int(rid_i), Point(0.0, 0.0))
             for _, row in rows.iterrows():
                 sid = int(row[street_key_col])
-                eps = _line_endpoints(row.geometry)
+                eps = geometry_factory.line_endpoints(row.geometry)
                 for eidx, ep in enumerate(eps):
                     rec = {
                         'sid': int(sid),
@@ -741,13 +793,11 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     else:
                         red.append(rec)
             return (red, green)
-
         connector_lines_by_rid: dict[int, list[Any]] = {int(r): [] for r in order}
         connector_lines_global: list[Any] = []
         final_pass_count_by_rid: dict[int, int] = {int(r): 0 for r in order}
         total_districts = int(len(order))
         print(f"[polygon_builder] preassigned mode: processing {total_districts} districts", flush=True)
-
         for rid_pos, rid_i in enumerate(order, start=1):
             red, green = _district_red_green(int(rid_i))
             print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): red={len(red)} green={len(green)}", flush=True)
@@ -764,7 +814,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                         rec['dist_foreign'] = float('inf')
                 else:
                     rec['dist_foreign'] = float('inf')
-
             clockwise = sorted(red, key=lambda r: float(r['ang']), reverse=True)
             start_pool = [r for r in clockwise if float(r.get('dist_foreign', float('inf'))) <= 200.0]
             if start_pool:
@@ -775,7 +824,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             ordered = clockwise[start_idx:] + clockwise[:start_idx]
             if not start_pool:
                 ordered = sorted(ordered, key=lambda r: float(r.get('dist_center', 0.0)), reverse=True)
-
             reg_lines_i = district_lines.get(int(rid_i), [])
             other_boundaries = [district_base_poly.get(int(rr)).boundary for rr in district_ids if int(rr) != int(rid_i) and district_base_poly.get(int(rr)) is not None and (not district_base_poly.get(int(rr)).is_empty)]
             other_border_union = unary_union(other_boundaries) if other_boundaries else None
@@ -789,94 +837,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                 if (ax, ay) <= (bx, by):
                     return (round(ax, 3), round(ay, 3), round(bx, 3), round(by, 3))
                 return (round(bx, 3), round(by, 3), round(ax, 3), round(ay, 3))
-
-            def _emit_scope_geom() -> Any:
-                conn_now = connector_lines_by_rid.get(int(rid_i), [])
-                enclosed_now = _enclosed_area_from_lines_exact(reg_lines_i + conn_now)
-                parts_now: list[Any] = []
-                if enclosed_now is not None and (not enclosed_now.is_empty):
-                    shell_parts: list[Any] = []
-                    for poly in _iter_polys(enclosed_now):
-                        try:
-                            shell_parts.append(Polygon(poly.exterior))
-                        except Exception:
-                            continue
-                    if shell_parts:
-                        try:
-                            parts_now.append(unary_union(shell_parts).buffer(0))
-                        except Exception:
-                            parts_now.extend(shell_parts)
-                if not parts_now:
-                    return None
-                try:
-                    return unary_union(parts_now).buffer(0)
-                except Exception:
-                    return None
-
-            def _scope_geom_from_lines(lines_now: list[Any]) -> Any:
-                enclosed_now = _enclosed_area_from_lines_exact(lines_now)
-                if enclosed_now is None or enclosed_now.is_empty:
-                    return None
-                shell_parts: list[Any] = []
-                for poly in _iter_polys(enclosed_now):
-                    try:
-                        shell_parts.append(Polygon(poly.exterior))
-                    except Exception:
-                        continue
-                if not shell_parts:
-                    return None
-                try:
-                    return unary_union(shell_parts).buffer(0)
-                except Exception:
-                    return None
-
-            def _enclosed_area_value(lines_now: list[Any]) -> float:
-                enclosed_now = _enclosed_area_from_lines_exact(lines_now)
-                if enclosed_now is None or enclosed_now.is_empty:
-                    return 0.0
-                try:
-                    return float(enclosed_now.area)
-                except Exception:
-                    return 0.0
-
-            def _new_enclosed_area_gain(lines_before: list[Any], seg: Any, *, before_geom: Any | None=None) -> float:
-                if seg is None or seg.is_empty:
-                    return 0.0
-                if before_geom is None:
-                    before_geom = _enclosed_area_from_lines_exact(lines_before)
-                after_geom = _enclosed_area_from_lines_exact(lines_before + [seg])
-                if after_geom is None or after_geom.is_empty:
-                    return 0.0
-                if before_geom is None or before_geom.is_empty:
-                    try:
-                        return float(after_geom.area)
-                    except Exception:
-                        return 0.0
-                try:
-                    newly = after_geom.difference(before_geom).buffer(0)
-                    if newly is None or newly.is_empty:
-                        return 0.0
-                    return max(0.0, float(newly.area))
-                except Exception:
-                    try:
-                        return max(0.0, float(after_geom.area) - float(before_geom.area))
-                    except Exception:
-                        return 0.0
-
-            def _is_enclosed_point(pt: Point, scope_geom: Any) -> bool:
-                if pt is None or pt.is_empty or scope_geom is None or scope_geom.is_empty:
-                    return False
-                try:
-                    if bool(scope_geom.contains(pt)):
-                        return True
-                    if bool(scope_geom.covers(pt)):
-                        bnd = scope_geom.boundary
-                        if bnd is None or bnd.is_empty:
-                            return True
-                        return float(pt.distance(bnd)) > 1.0
-                    return False
-                except Exception:
-                    return False
 
             def _legal(a: Point, b: Point) -> bool:
                 try:
@@ -927,7 +887,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                 return True
 
             def _status_sets() -> tuple[set[tuple[int, int]], set[tuple[int, int]], bool]:
-                scope_geom = _emit_scope_geom()
+                scope_geom = geometry_factory.scope_geom_from_lines(reg_lines_i + connector_lines_by_rid.get(int(rid_i), []))
                 enclosed_keys: set[tuple[int, int]] = set()
                 target_keys: set[tuple[int, int]] = set()
                 source_keys: set[tuple[int, int]] = set()
@@ -935,7 +895,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     key_rr = (int(rr['sid']), int(rr['eidx']))
                     is_enclosed = False
                     if scope_geom is not None and (not scope_geom.is_empty):
-                        is_enclosed = _is_enclosed_point(rr['pt'], scope_geom)
+                        is_enclosed = geometry_factory.is_enclosed_point(rr['pt'], scope_geom)
                     if is_enclosed:
                         enclosed_keys.add(key_rr)
                         blocked_sources.discard(key_rr)
@@ -955,7 +915,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     all_done = False
                     break
                 return (source_keys, target_keys, all_done)
-
             iter_guard = 0
             iter_guard_max = max(100, len(ordered) * 20)
             while True:
@@ -967,12 +926,10 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     break
                 if not source_keys or not target_red_keys:
                     break
-
                 source_order = [rr for rr in sorted(ordered, key=lambda r: float(r.get('dist_center', 0.0)), reverse=True) if (int(rr['sid']), int(rr['eidx'])) in source_keys]
                 red_best: tuple[float, int, dict[str, Any], dict[str, Any]] | None = None
                 green_best: tuple[float, dict[str, Any], dict[str, Any]] | None = None
                 dead_sources_now: list[tuple[int, int]] = []
-
                 for src in source_order:
                     src_key = (int(src['sid']), int(src['eidx']))
                     src_idx = next((ii for ii, rr in enumerate(ordered) if int(rr['sid']) == int(src['sid']) and int(rr['eidx']) == int(src['eidx'])), -1)
@@ -995,7 +952,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                             continue
                         if local_red is None or dist > local_red[0] or (abs(dist - local_red[0]) <= 1e-06 and int(step) < local_red[1]):
                             local_red = (dist, int(step), src, dst)
-
                     for gg in green:
                         distg = float(src['pt'].distance(gg['pt']))
                         if distg > 800.0:
@@ -1004,7 +960,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                             continue
                         if local_green is None or distg > local_green[0]:
                             local_green = (distg, src, gg)
-
                     if local_red is not None:
                         red_best = local_red
                         break
@@ -1012,7 +967,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                         green_best = local_green
                     if local_red is None and local_green is None:
                         dead_sources_now.append(src_key)
-
                 if red_best is not None:
                     for key_dead in dead_sources_now:
                         blocked_sources.add(key_dead)
@@ -1026,7 +980,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     connection_count[src_key] = int(connection_count.get(src_key, 0)) + 1
                     connection_count[dst_key] = int(connection_count.get(dst_key, 0)) + 1
                     continue
-
                 if green_best is not None:
                     for key_dead in dead_sources_now:
                         blocked_sources.add(key_dead)
@@ -1038,12 +991,9 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     connector_lines_global.append(seg)
                     connection_count[src_key] = int(connection_count.get(src_key, 0)) + 1
                     continue
-
                 for key_dead in dead_sources_now:
                     blocked_sources.add(key_dead)
-
                 break
-
             final_pass_added = 0
             all_dot_points: list[Point] = []
             for rr in ordered:
@@ -1054,12 +1004,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             def _enclosed_dot_count(scope_geom: Any) -> int:
                 if scope_geom is None or scope_geom.is_empty:
                     return 0
-                c = 0
-                for pt in all_dot_points:
-                    if _is_enclosed_point(pt, scope_geom):
-                        c += 1
-                return int(c)
-
+                return int(sum((1 for pt in all_dot_points if geometry_factory.is_enclosed_point(pt, scope_geom))))
             final_blocked_sources: set[tuple[int, int]] = set()
             bridge_pool_limit = 40
             final_efficiency_ref: float | None = None
@@ -1093,15 +1038,14 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): final-pass iter {final_iter_guard}/{final_iter_max}", flush=True)
                 conn_now = connector_lines_by_rid.get(int(rid_i), [])
                 lines_before = reg_lines_i + conn_now
-                before_geom = _enclosed_area_from_lines_exact(lines_before)
-                scope_before = _scope_geom_from_lines(lines_before)
+                before_geom = geometry_factory.enclosed_area_from_lines_exact(lines_before)
+                scope_before = geometry_factory.scope_geom_from_lines(lines_before)
                 enclosed_before = _enclosed_dot_count(scope_before)
-
                 target_candidates: list[dict[str, Any]] = []
                 source_candidates: list[dict[str, Any]] = []
                 for rr in ordered:
                     key = (int(rr['sid']), int(rr['eidx']))
-                    if _is_enclosed_point(rr['pt'], scope_before):
+                    if geometry_factory.is_enclosed_point(rr['pt'], scope_before):
                         final_blocked_sources.add(key)
                         continue
                     target_candidates.append(rr)
@@ -1109,25 +1053,21 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                         source_candidates.append(rr)
                 for gg in green:
                     key = (int(gg['sid']), int(gg['eidx']))
-                    if _is_enclosed_point(gg['pt'], scope_before):
+                    if geometry_factory.is_enclosed_point(gg['pt'], scope_before):
                         final_blocked_sources.add(key)
                         continue
                     target_candidates.append(gg)
                     if key not in final_blocked_sources:
                         source_candidates.append(gg)
-
                 if len(target_candidates) < 2 or not source_candidates:
                     break
-
                 target_by_key: dict[tuple[int, int], dict[str, Any]] = {(int(x['sid']), int(x['eidx'])): x for x in target_candidates}
-
                 best_area_gain = 0.0
                 best_dot_gain = -10**9
                 best_dist = float('inf')
                 best_pair: tuple[dict[str, Any], dict[str, Any]] | None = None
                 legal_pairs_now: list[tuple[dict[str, Any], dict[str, Any], Any, float, float]] = []
                 area_tie_eps = 1e-06
-
                 n_c = len(source_candidates)
                 for i in range(n_c):
                     src = source_candidates[i]
@@ -1148,7 +1088,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                                     continue
                             except Exception:
                                 pass
-                        area_gain = _new_enclosed_area_gain(lines_before, seg, before_geom=before_geom)
+                        area_gain = geometry_factory.new_enclosed_area_gain(lines_before, seg, before_geom=before_geom)
                         legal_pairs_now.append((src, dst, seg, dist, area_gain))
                         if area_gain <= 1e-06:
                             continue
@@ -1159,7 +1099,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                             best_pair = (src, dst)
                             continue
                         if abs(area_gain - best_area_gain) <= area_tie_eps:
-                            scope_after = _scope_geom_from_lines(lines_before + [seg])
+                            scope_after = geometry_factory.scope_geom_from_lines(lines_before + [seg])
                             enclosed_after = _enclosed_dot_count(scope_after)
                             dot_gain = int(enclosed_after - enclosed_before)
                             if dot_gain > best_dot_gain or (dot_gain == best_dot_gain and dist < best_dist):
@@ -1169,7 +1109,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                                 best_pair = (src, dst)
                     if not src_has_legal:
                         final_blocked_sources.add(src_key)
-
                 if best_pair is None or best_area_gain <= 1e-06:
                     bridge_best_total = 0.0
                     bridge_best_dist = float('inf')
@@ -1186,20 +1125,18 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                         bridge_pool.extend(zero_pool[:zero_keep])
                         if len(bridge_pool) > bridge_pool_limit:
                             bridge_pool = bridge_pool[:bridge_pool_limit]
-
                         seg_key_by_pair: dict[tuple[int, int, int, int], tuple[Any, Any, Any]] = {}
                         for src_x, dst_x, seg_x, _dist_x, _gx in bridge_pool:
                             key_x = (int(src_x['sid']), int(src_x['eidx']), int(dst_x['sid']), int(dst_x['eidx']))
                             endpoint_mask_x = src_x['pt'].buffer(float(dead_end_touch_tol)).union(dst_x['pt'].buffer(float(dead_end_touch_tol)))
                             body_x = seg_x.difference(endpoint_mask_x)
                             seg_key_by_pair[key_x] = (seg_x, body_x, endpoint_mask_x)
-
                         for src1, dst1, seg1, _dist1, g1 in bridge_pool:
                             connector_lines_global.append(seg1)
                             second_best = 0.0
                             second_best_dist = float('inf')
                             conn_plus_first = conn_now + [seg1]
-                            before_geom_after_first = _enclosed_area_from_lines_exact(reg_lines_i + conn_plus_first)
+                            before_geom_after_first = geometry_factory.enclosed_area_from_lines_exact(reg_lines_i + conn_plus_first)
                             key1 = (int(src1['sid']), int(src1['eidx']), int(dst1['sid']), int(dst1['eidx']))
                             seg1_geom, _body1, _mask1 = seg_key_by_pair.get(key1, (seg1, None, None))
                             for src2, dst2, seg2, _dist2, _g2 in bridge_pool:
@@ -1216,7 +1153,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                                             continue
                                 elif not _legal(src2['pt'], dst2['pt']):
                                     continue
-                                g_after_first = _new_enclosed_area_gain(reg_lines_i + conn_plus_first, seg2, before_geom=before_geom_after_first)
+                                g_after_first = geometry_factory.new_enclosed_area_gain(reg_lines_i + conn_plus_first, seg2, before_geom=before_geom_after_first)
                                 if g_after_first > second_best + 1e-06 or (abs(g_after_first - second_best) <= 1e-06 and float(_dist2) < second_best_dist):
                                     second_best = g_after_first
                                     second_best_dist = float(_dist2)
@@ -1242,14 +1179,12 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                     connection_count[dst_b_key] = int(connection_count.get(dst_b_key, 0)) + 1
                     final_pass_added += 1
                     continue
-
                 if math.isfinite(best_dist) and best_dist > 1e-06:
                     pair_eff = float(best_area_gain) / float(best_dist)
                     if final_efficiency_ref is None:
                         final_efficiency_ref = pair_eff
                     elif pair_eff < float(final_efficiency_ref) * float(final_efficiency_floor_ratio) and best_dot_gain <= 0:
                         break
-
                 src = best_pair[0]
                 dst = best_pair[1]
                 src_key = (int(src['sid']), int(src['eidx']))
@@ -1260,10 +1195,8 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                 connection_count[src_key] = int(connection_count.get(src_key, 0)) + 1
                 connection_count[dst_key] = int(connection_count.get(dst_key, 0)) + 1
                 final_pass_added += 1
-
             final_pass_count_by_rid[int(rid_i)] = int(final_pass_added)
             print(f"[polygon_builder] district {rid_pos}/{total_districts} (id={int(rid_i)}): connectors={len(connector_lines_by_rid.get(int(rid_i), []))} final_pass_added={int(final_pass_added)}", flush=True)
-
         print("[polygon_builder] assembling output polygons", flush=True)
         for rid_pos, rid_i in enumerate(order, start=1):
             reg_street_keys = district_sids.get(int(rid_i), [])
@@ -1272,10 +1205,9 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                 continue
             base_poly = district_base_poly.get(int(rid_i))
             conn_lines = connector_lines_by_rid.get(int(rid_i), [])
-            enclosed = _enclosed_area_from_lines_exact(reg_lines + conn_lines)
-            holes = _interior_holes_as_polys(base_poly)
+            enclosed = geometry_factory.enclosed_area_from_lines_exact(reg_lines + conn_lines)
+            holes = geometry_factory.interior_holes_as_polys(base_poly)
             enclosed_from_holes = unary_union(holes).buffer(0) if holes else None
-
             parts: list[Any] = []
             if base_poly is not None and (not base_poly.is_empty):
                 parts.append(base_poly)
@@ -1286,7 +1218,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             emit_geom = unary_union(parts).buffer(0) if parts else None
             if emit_geom is None or emit_geom.is_empty:
                 continue
-
             reg_buildings = b[b_region == int(rid_i)]
             total_demand = float(reg_buildings[polygon_demand_column].sum()) if polygon_demand_column in reg_buildings.columns else 0.0
             total_len_m = float(sum((float(street_lengths_m.get(int(sid), 0.0)) for sid in reg_street_keys)))
@@ -1294,12 +1225,11 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             rows_sid = assigned_touch[assigned_touch[id_column] == int(rid_i)]
             for _, rrow in rows_sid.iterrows():
                 sid = int(rrow[street_key_col])
-                eps = _line_endpoints(rrow.geometry)
+                eps = geometry_factory.line_endpoints(rrow.geometry)
                 if any((not _endpoint_touches_other_assigned(ep, int(sid))) for ep in eps):
                     dead_end_members.append(int(sid))
             dead_end_members = sorted(set(dead_end_members))
             print(f"[polygon_builder] emit {rid_pos}/{total_districts} (id={int(rid_i)}): demand_mwh={float(total_demand):.2f} streets={len(reg_street_keys)}", flush=True)
-
             out_row: dict[str, Any] = {
                 street_id_column: '|'.join(map(str, list(dict.fromkeys((street_key_to_raw_id.get(sid) for sid in reg_street_keys))))),
                 'street_count': len(reg_street_keys),
@@ -1311,24 +1241,18 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
                 'final_pass_connector_count': int(final_pass_count_by_rid.get(int(rid_i), 0)),
                 polygon_demand_column: total_demand,
                 '_street_members': reg_street_keys,
-                '_demand_street_members': [],
-                '_dead_end_street_members': dead_end_members,
                 'geometry': emit_geom,
                 id_column: int(rid_i),
             }
             cluster_rows.append(out_row)
-
         polygons_pre = gpd.GeoDataFrame(cluster_rows, geometry='geometry', crs=b.crs)
         if polygons_pre.empty:
             raise ValueError('polygon_builder preassigned mode produced no polygons')
         polygons_pre = polygons_pre.sort_values(id_column).reset_index(drop=True)
-        if not keep_internal_columns and '_street_members' in polygons_pre.columns:
-            polygons_pre = polygons_pre.drop(columns=['_street_members', '_dead_end_street_members'], errors='ignore')
+        if not keep_internal_columns:
+            polygons_pre = polygons_pre.drop(columns=['_street_members'], errors='ignore')
         return polygons_pre
-
     group_cols = [assignment_col]
-    if district_column and district_column in b.columns:
-        group_cols.append(district_column)
     node_rows: list[dict[str, Any]] = []
     node_id = 0
     grouped = b.dropna(subset=[assignment_col]).groupby(group_cols, dropna=False)
@@ -1336,7 +1260,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         subset_demand = float(subset[polygon_demand_column].sum())
         street_key = group_key[0] if isinstance(group_key, tuple) else group_key
         if demand_data is not None:
-            if subset_demand <= min_seed_demand:
+            if subset_demand <= 0.0:
                 continue
             if demand_indicator_by_street is not None:
                 if float(demand_indicator_by_street.get(int(street_key), 0.0)) <= min_demand_indicator:
@@ -1345,22 +1269,18 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         if not buffered:
             continue
         poly = unary_union(buffered).buffer(0)
-        if smooth_distance_m > 0:
-            poly = poly.buffer(float(smooth_distance_m)).buffer(-float(smooth_distance_m))
         if poly is None or poly.is_empty:
             continue
         street_len_m = float(street_lengths_m.get(street_key, 0.0))
         rec: dict[str, Any] = {'_node_id': node_id, street_id_column: street_key_to_raw_id.get(street_key), 'street_length_m': street_len_m, 'building_count': int(len(subset)), polygon_demand_column: subset_demand, '_street_members': [street_key], 'geometry': poly}
-        if isinstance(group_key, tuple) and district_column and (len(group_key) > 1):
-            rec[district_column] = group_key[1]
         node_rows.append(rec)
         node_id += 1
     if not node_rows:
         raise ValueError('polygon_builder produced no polygons')
     nodes = gpd.GeoDataFrame(node_rows, geometry='geometry', crs=b.crs)
     street_geom = s_work.set_index(street_key_col)['geometry'].to_dict()
-    full_adj = _build_street_adjacency(s_work[[street_key_col, 'geometry']], street_key_col=street_key_col, tolerance_m=float(street_connect_tolerance_m))
-    street_comp: dict[int, int] = {int(sid): int(comp_id) for comp_id, street_nodes in enumerate(_connected_components(full_adj)) for sid in street_nodes}
+    full_adj = RegionTopologyGeometry.build_street_adjacency(s_work[[street_key_col, 'geometry']], street_key_col=street_key_col, tolerance_m=float(street_connect_tolerance_m))
+    street_comp: dict[int, int] = {int(sid): int(comp_id) for comp_id, street_nodes in enumerate(RegionTopologyBase.connected_components(full_adj)) for sid in street_nodes}
     demand_street_to_node: dict[int, int] = {}
     for _, row in nodes.iterrows():
         node_id_i = int(row['_node_id'])
@@ -1436,7 +1356,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         out.extend(_split_region(part_b))
         return out
     initial_regions: list[dict[str, set[int]]] = []
-    for comp in _connected_components(demand_adj, set(demand_street_keys)):
+    for comp in RegionTopologyBase.connected_components(demand_adj, set(demand_street_keys)):
         for part in _split_region(set((int(s) for s in comp))):
             initial_regions.append({'demand': set(part), 'connectors': set()})
     if not initial_regions:
@@ -1495,7 +1415,7 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             tgt = regions[tgt_idx]
             if tgt is None:
                 continue
-            path_nodes = _trace_prev_chain(prev, hit_prev.get(tgt_idx))
+            path_nodes = RegionTopologyBase.trace_prev_chain(prev, hit_prev.get(tgt_idx))
             connector_add = {sid for sid in path_nodes if owner.get(int(sid)) is None}
             tgt_demand, _, tgt_demand_len, tgt_non_len = _region_stats(tgt)
             merged_demand = src_demand + tgt_demand
@@ -1505,8 +1425,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
             if not _fits_caps(demand_sum=merged_demand, street_len_sum=merged_total_len):
                 continue
             if max_nondemand_street_m is not None and merged_non_len > max_nondemand_street_m:
-                continue
-            if enforce_demand_gt_nondemand and merged_non_len >= merged_demand_len and (merged_demand_len > 0):
                 continue
             if max_nondemand_ratio is not None and merged_demand_len > 0 and (merged_non_len / merged_demand_len >= max_nondemand_ratio):
                 continue
@@ -1575,8 +1493,6 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         if not _fits_caps(demand_sum=total_demand, street_len_sum=total_len_m):
             continue
         out_row: dict[str, Any] = {street_id_column: '|'.join(map(str, list(dict.fromkeys((street_key_to_raw_id.get(sid) for sid in reg_streets))))), 'street_count': len(reg_streets), 'street_length_m': total_len_m, 'nondemand_street_length_m': nondemand_len_m, 'building_count': int(sum((float(node_by_id[n].get('building_count', 0.0)) for n in member_nodes))), polygon_demand_column: total_demand, '_street_members': reg_streets, '_demand_street_members': sorted((int(sid) for sid in demand_set)), 'geometry': emit_geom}
-        if district_column and district_column in nodes.columns and member_nodes:
-            out_row[district_column] = node_by_id[member_nodes[0]].get(district_column)
         cluster_records.append(out_row)
     polygons = gpd.GeoDataFrame(cluster_records, geometry='geometry', crs=b.crs)
     if '_street_members' in polygons.columns:
@@ -1585,40 +1501,9 @@ def polygon_builder(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, d
         polygons = polygons.drop(columns=['_sort_min_street_key'], errors='ignore')
     polygons = polygons.reset_index(drop=True)
     polygons[id_column] = range(len(polygons))
-    if not keep_internal_columns and '_street_members' in polygons.columns:
-        polygons = polygons.drop(columns=['_street_members'])
+    if not keep_internal_columns:
+        polygons = polygons.drop(columns=['_street_members'], errors='ignore')
     return polygons
-
-def filter_streets_for_buildings(buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, *, clip_buffer_m: float=250.0) -> gpd.GeoDataFrame:
-    if buildings.crs is None or streets.crs is None:
-        raise ValueError('buildings and streets must both have CRS')
-    s = streets if buildings.crs == streets.crs else streets.to_crs(buildings.crs)
-    if buildings.empty:
-        return s.iloc[0:0].copy()
-    area = buildings.geometry.union_all().convex_hull.buffer(float(clip_buffer_m))
-    return s[s.geometry.intersects(area)].copy()
-
-def _street_segments_with_region(streets: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, *, buildings: gpd.GeoDataFrame | None, segment_streets_by_building_projections: bool, segment_projection_buffer_m: float, region_id_column: str, street_id_column: str) -> gpd.GeoDataFrame:
-    s = streets[[street_id_column, 'geometry']].copy().explode(index_parts=False).reset_index(drop=True)
-    if segment_streets_by_building_projections and buildings is not None and (not buildings.empty):
-        s = _segment_streets_by_building_projections(s, buildings, street_id_column=street_id_column, projection_buffer_m=float(segment_projection_buffer_m))
-    s['_street_key'] = range(len(s))
-    if '_street_members' not in polygons.columns:
-        raise ValueError("Expected '_street_members' in polygons")
-    rid_by_key: dict[int, int] = {}
-    demand_keys: set[int] = set()
-    for _, r in polygons[[region_id_column, '_street_members']].iterrows():
-        if not isinstance(r['_street_members'], list):
-            continue
-        for k in r['_street_members']:
-            rid_by_key[int(k)] = int(r[region_id_column])
-    if '_demand_street_members' in polygons.columns:
-        for vals in polygons['_demand_street_members'].tolist():
-            if isinstance(vals, list):
-                demand_keys.update((int(v) for v in vals))
-    s[region_id_column] = s['_street_key'].map(rid_by_key)
-    s['_is_demand_street'] = s['_street_key'].isin(demand_keys)
-    return s
 
 def _count_disconnected_regions(streets: gpd.GeoDataFrame, polygons: gpd.GeoDataFrame, *, tolerance_m: float, buildings: gpd.GeoDataFrame | None, segment_streets_by_building_projections: bool, segment_projection_buffer_m: float, street_id_column: str) -> int:
     if '_street_members' not in polygons.columns:
@@ -1627,7 +1512,7 @@ def _count_disconnected_regions(streets: gpd.GeoDataFrame, polygons: gpd.GeoData
     if segment_streets_by_building_projections and buildings is not None and (not buildings.empty):
         s = _segment_streets_by_building_projections(s, buildings, street_id_column=street_id_column, projection_buffer_m=float(segment_projection_buffer_m))
     s['_street_key'] = range(len(s))
-    adj = _build_street_adjacency(s[['_street_key', 'geometry']], street_key_col='_street_key', tolerance_m=float(tolerance_m))
+    adj = RegionTopologyGeometry.build_street_adjacency(s[['_street_key', 'geometry']], street_key_col='_street_key', tolerance_m=float(tolerance_m))
     bad = 0
     for _, prow in polygons.iterrows():
         m = prow.get('_street_members', [])
@@ -1649,14 +1534,14 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
         return (polygons, streets_with_region)
     p = polygons.copy()
     s = streets_with_region.copy()
-    max_nondemand_to_demand_ratio = _max_nondemand_to_demand_ratio_from_share(demand_share_pct)
+    max_nondemand_to_demand_ratio = RegionTopologyBase.max_nondemand_to_demand_ratio_from_share(demand_share_pct)
     split_region_min_segments = max(2, int(small_islands_max_segments))
     street_demand_mwh: dict[int, float] = {}
     for _, row in p[['_demand_street_members', 'annual_demand_mwh']].iterrows():
         members = row.get('_demand_street_members', [])
         if not isinstance(members, list) or not members:
             continue
-        dsum = _to_float(row.get('annual_demand_mwh', 0.0), 0.0)
+        dsum = RegionTopologyBase.to_float(row.get('annual_demand_mwh', 0.0), 0.0)
         per = dsum / float(len(members)) if members else 0.0
         for sid in members:
             sid_i = int(sid)
@@ -1664,8 +1549,8 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
     base = s[['_street_key', 'geometry', region_id_column]].copy()
     base['_street_key'] = base['_street_key'].astype(int)
     lengths = {int(r['_street_key']): float(r.geometry.length if r.geometry is not None else 0.0) for _, r in base.iterrows()}
-    adj = _build_street_adjacency(base[['_street_key', 'geometry']], street_key_col='_street_key', tolerance_m=float(tolerance_m))
-    overloaded_junctions = _build_overloaded_junction_segments(base[['_street_key', 'geometry']], street_key_col='_street_key', tolerance_m=float(tolerance_m), min_degree=int(_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE))
+    adj = RegionTopologyGeometry.build_street_adjacency(base[['_street_key', 'geometry']], street_key_col='_street_key', tolerance_m=float(tolerance_m))
+    overloaded_junctions = RegionTopologyGeometry.build_overloaded_junction_segments(base[['_street_key', 'geometry']], street_key_col='_street_key', tolerance_m=float(tolerance_m), min_degree=int(_JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE))
     overloaded_by_sid: dict[int, set[int]] = {}
     for jidx, segs in enumerate(overloaded_junctions):
         for sid in segs:
@@ -1726,7 +1611,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
         assigned_now = s.dropna(subset=[region_id_column]).copy()
         if assigned_now.empty:
             return
-        owner_now = _owner_map_from_assigned(assigned_now, street_key_col='_street_key', region_id_col=region_id_column)
+        owner_now = RegionTopologyBase.owner_map_from_assigned(assigned_now, street_key_col='_street_key', region_id_col=region_id_column)
         changed_local = False
         for segs in overloaded_junctions:
             counts: dict[int, int] = {}
@@ -1794,7 +1679,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
                 members = _region_member_keys(int(rid))
                 if len(members) <= 1:
                     continue
-                comps = _connected_components(adj, members)
+                comps = RegionTopologyBase.connected_components(adj, members)
                 if len(comps) <= 1:
                     continue
                 demand_members = _region_member_keys(int(rid), demand_only=True)
@@ -1854,7 +1739,6 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
                     prev[int(nb)] = int(cur)
                     heapq.heappush(pq, (cand, int(nb)))
         return (prev, hit_cost, hit_node)
-
     _collapse_overloaded_junction_regions()
     _enforce_connected_assignments()
     for _ in range(500):
@@ -1869,7 +1753,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
         candidates = sorted([int(rid) for rid in counts.index.tolist()], key=lambda rid: int(counts.get(rid, 0)))
         if not candidates:
             break
-        owner = _owner_map_from_assigned(assigned, street_key_col='_street_key', region_id_col=region_id_column)
+        owner = RegionTopologyBase.owner_map_from_assigned(assigned, street_key_col='_street_key', region_id_col=region_id_column)
         changed = False
         for rid in candidates:
             seeds = [int(r['_street_key']) for _, r in assigned[assigned[region_id_column] == rid][['_street_key']].iterrows()]
@@ -1878,7 +1762,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
             prev, hit_cost, hit_node = _search_targets(seeds=set((int(v) for v in seeds)), source_rid=int(rid), owner=owner, max_cost=float(max_connector_m))
             feasible_targets: list[tuple[float, int]] = []
             for target, cost in hit_cost.items():
-                path = _trace_prev_chain(prev, hit_node.get(int(target)))
+                path = RegionTopologyBase.trace_prev_chain(prev, hit_node.get(int(target)))
                 path_set = set(path)
                 added_unassigned_len = float(sum((float(lengths.get(sid, 0.0)) for sid in path_set if owner.get(sid) is None)))
                 if max_demand_mwh is not None:
@@ -1906,7 +1790,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
             if not feasible_targets:
                 continue
             target = min(feasible_targets, key=lambda x: (x[0], counts.get(x[1], 0), x[1]))[1]
-            connector_path = _trace_prev_chain(prev, hit_node.get(int(target)))
+            connector_path = RegionTopologyBase.trace_prev_chain(prev, hit_node.get(int(target)))
             if connector_path:
                 mask_path_unassigned = s['_street_key'].isin(connector_path) & s[region_id_column].isna()
                 s.loc[mask_path_unassigned, region_id_column] = int(target)
@@ -1930,7 +1814,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
             members = row.get('_street_members', [])
             if not isinstance(members, list) or not members:
                 continue
-            dsum = _to_float(row.get('annual_demand_mwh', 0.0), 0.0)
+            dsum = RegionTopologyBase.to_float(row.get('annual_demand_mwh', 0.0), 0.0)
             per = dsum / float(len(members)) if len(members) > 0 else 0.0
             for sid in members:
                 sid_i = int(sid)
@@ -1989,12 +1873,12 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
             seeds = sorted(_region_streets(int(rid)))
             if not seeds:
                 return []
-            owner = _owner_map_from_assigned(assigned, street_key_col='_street_key', region_id_col=region_id_column)
+            owner = RegionTopologyBase.owner_map_from_assigned(assigned, street_key_col='_street_key', region_id_col=region_id_column)
             prev, hit_cost, hit_node = _search_targets(seeds=set((int(v) for v in seeds)), source_rid=int(rid), owner=owner)
             ranked_targets: list[tuple[float, int, int, list[int]]] = []
             for target, cost in hit_cost.items():
                 tsize = int(counts.get(int(target), 10 ** 9))
-                path = _trace_prev_chain(prev, hit_node.get(int(target)))
+                path = RegionTopologyBase.trace_prev_chain(prev, hit_node.get(int(target)))
                 ranked_targets.append((float(cost), int(tsize), int(target), path))
             ranked_targets.sort(key=lambda x: (x[0], x[1], x[2]))
             if max_targets is not None:
@@ -2026,7 +1910,6 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
                 demand_total_by_region.clear()
                 demand_total_by_region.update(demand_snapshot)
                 return False
-
             rid_mask_s = s[region_id_column] == int(rid)
             rid_mask_p = p[region_id_column] == int(rid)
             path_mask_s = s['_street_key'].isin(path_try) & s[region_id_column].isna()
@@ -2045,7 +1928,7 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
             if not affected_regions:
                 return _rollback()
             is_valid = all((_region_ok_with_flags(int(r), enforce_caps=enforce_caps, enforce_ratio=enforce_ratio) for r in affected_regions))
-            owner_now = _owner_map_from_assigned(s.dropna(subset=[region_id_column]), street_key_col='_street_key', region_id_col=region_id_column)
+            owner_now = RegionTopologyBase.owner_map_from_assigned(s.dropna(subset=[region_id_column]), street_key_col='_street_key', region_id_col=region_id_column)
             if is_valid and (not _has_overloaded_multi_region_conflict(owner_now, street_scope=affected_streets)):
                 return True
             return _rollback()
@@ -2157,7 +2040,6 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
                 within10 = 0 if total_dem <= 0 or diff <= 0.1 * total_dem else 1
                 score = (float(_split_overlap_area(comp_a, comp_b)), int(within10), float(diff))
                 return (score, bool(_ratio_ok(comp_a) and _ratio_ok(comp_b)))
-
             for c in crossing_candidates:
                 seen_global: set[int] = set()
                 comps: list[set[int]] = []
@@ -2224,7 +2106,6 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
 
         def _is_active_small_region(rid: int) -> bool:
             return int(rid) in _assigned_region_ids() and float(demand_total_by_region.get(int(rid), 0.0)) < float(small_region_demand_threshold_mwh)
-
         for _round_idx in range(3):
             if not round_candidates:
                 unresolved_after_rounds = []
@@ -2300,15 +2181,13 @@ def _merge_small_regions_by_street_graph(*, polygons: gpd.GeoDataFrame, streets_
 
 def build_region_topology(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame, config: RegionTopologyConfig) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, dict[str, int]]:
     """Build region polygons from street/building demand inputs.
-
     Optionally filters to one city, clips the street network to relevant buildings,
     and delegates partitioning to polygon_builder with demand/length caps. It then
     maps region IDs back to street segments, merges tiny disconnected islands with
     graph constraints and returns polygons.
     """
     cfg = config
-    caps = RegionCaps(max_demand_mwh=cfg.max_demand_mwh, max_street_length_km=cfg.max_street_length_km, max_nondemand_street_km=None)
-
+    caps = cfg.build_caps()
     b, s = (buildings.copy(), streets.copy())
     if cfg.city_column and cfg.city_column in b.columns and (cfg.city_column in s.columns):
         city_value_resolved = cfg.city_value
@@ -2319,13 +2198,38 @@ def build_region_topology(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFr
             city_value_resolved = str(vals.mode().iloc[0])
         b = b[b[cfg.city_column].astype(str) == str(city_value_resolved)].copy()
         s = s[s[cfg.city_column].astype(str) == str(city_value_resolved)].copy()
-    s = filter_streets_for_buildings(b, s, clip_buffer_m=float(cfg.clip_buffer_m))
-    polygons = polygon_builder(buildings=b, streets=s, demand_data=demand_data, demand_value_column=cfg.demand_value_column, street_id_column=cfg.street_id_column, segment_streets_by_building_projections=cfg.segment_streets_by_building_projections, segment_projection_buffer_m=cfg.segment_projection_buffer_m, demand_street_indicator_column=cfg.demand_street_indicator_column, demand_street_indicator_min=float(cfg.demand_street_indicator_min), building_street_column=None, building_id_column=cfg.building_id_column, demand_building_column=cfg.demand_building_column, id_column=cfg.region_id_column, caps=caps.as_polygon_builder_caps(), demand_share_pct=float(cfg.demand_share_pct) if cfg.demand_share_pct is not None else None, enforce_demand_gt_nondemand=False, max_inter_region_connector_m=600.0, street_connect_tolerance_m=float(cfg.connect_tolerance_m), street_corridor_buffer_m=20.0, enforce_contiguous_polygons=True, keep_internal_columns=True)
-    streets_with_region = _street_segments_with_region(streets=s, polygons=polygons, buildings=b, segment_streets_by_building_projections=cfg.segment_streets_by_building_projections, segment_projection_buffer_m=cfg.segment_projection_buffer_m, region_id_column=cfg.region_id_column, street_id_column=cfg.street_id_column)
-    polygons, streets_with_region = _merge_small_regions_by_street_graph(polygons=polygons, streets_with_region=streets_with_region, region_id_column=cfg.region_id_column, small_islands_max_segments=int(cfg.small_islands_max_segments), tolerance_m=float(cfg.connect_tolerance_m), max_connector_m=600.0, max_demand_mwh=float(cfg.max_demand_mwh) if cfg.max_demand_mwh is not None else None, max_street_length_km=float(cfg.max_street_length_km) if cfg.max_street_length_km is not None else None, demand_share_pct=float(cfg.demand_share_pct) if cfg.demand_share_pct is not None else None, enable_final_resort=not bool(cfg.polynesia))
+    if b.crs is None or s.crs is None:
+        raise ValueError('buildings and streets must both have CRS')
+    s = s if b.crs == s.crs else s.to_crs(b.crs)
+    if b.empty:
+        s = s.iloc[0:0].copy()
+    else:
+        area = b.geometry.union_all().convex_hull.buffer(float(cfg.clip_buffer_m))
+        s = s[s.geometry.intersects(area)].copy()
+    polygons = polygon_builder(buildings=b, streets=s, demand_data=demand_data, **cfg.polygon_builder_kwargs(caps=caps, keep_internal_columns=True))
+    streets_with_region = s[[cfg.street_id_column, 'geometry']].copy().explode(index_parts=False).reset_index(drop=True)
+    if cfg.segment_streets_by_building_projections and (not b.empty):
+        streets_with_region = _segment_streets_by_building_projections(streets_with_region, b, street_id_column=cfg.street_id_column, projection_buffer_m=float(cfg.segment_projection_buffer_m))
+    streets_with_region['_street_key'] = range(len(streets_with_region))
+    if '_street_members' not in polygons.columns:
+        raise ValueError("Expected '_street_members' in polygons")
+    rid_by_key: dict[int, int] = {}
+    demand_keys: set[int] = set()
+    for _, r in polygons[[cfg.region_id_column, '_street_members']].iterrows():
+        if not isinstance(r['_street_members'], list):
+            continue
+        for k in r['_street_members']:
+            rid_by_key[int(k)] = int(r[cfg.region_id_column])
+    if '_demand_street_members' in polygons.columns:
+        for vals in polygons['_demand_street_members'].tolist():
+            if isinstance(vals, list):
+                demand_keys.update((int(v) for v in vals))
+    streets_with_region[cfg.region_id_column] = streets_with_region['_street_key'].map(rid_by_key)
+    streets_with_region['_is_demand_street'] = streets_with_region['_street_key'].isin(demand_keys)
+    if cfg.small_islands:
+        polygons, streets_with_region = _merge_small_regions_by_street_graph(polygons=polygons, streets_with_region=streets_with_region, **cfg.small_island_merge_kwargs(enable_final_resort=not bool(cfg.polynesia)))
     mantra = {'raw_street_ids_split_across_regions': int((streets_with_region.dropna(subset=[cfg.region_id_column]).groupby(cfg.street_id_column)[cfg.region_id_column].nunique() > 1).sum()), 'unassigned_street_segments': int(streets_with_region[cfg.region_id_column].isna().sum()), 'cross_region_crossings': 0, 'junction_overload_points': 0, 'disconnected_regions': int(_count_disconnected_regions(streets=s, polygons=polygons, tolerance_m=cfg.connect_tolerance_m, buildings=b, segment_streets_by_building_projections=cfg.segment_streets_by_building_projections, segment_projection_buffer_m=cfg.segment_projection_buffer_m, street_id_column=cfg.street_id_column))}
     return (polygons, streets_with_region, mantra)
-
 
 class RegionTopologyEngine(RegionTopologyGeometry):
 
@@ -2339,23 +2243,5 @@ class RegionTopologyEngine(RegionTopologyGeometry):
             buildings=buildings,
             streets=assigned_streets,
             demand_data=demand_data,
-            demand_value_column=config.demand_value_column,
-            street_id_column=config.street_id_column,
-            segment_streets_by_building_projections=False,
-            segment_projection_buffer_m=12.0,
-            demand_street_indicator_column=config.demand_street_indicator_column,
-            demand_street_indicator_min=float(config.demand_street_indicator_min),
-            building_street_column=None,
-            building_id_column=config.building_id_column,
-            demand_building_column=config.demand_building_column,
-            id_column=config.region_id_column,
-            caps=caps.as_polygon_builder_caps(),
-            demand_share_pct=float(config.demand_share_pct),
-            enforce_demand_gt_nondemand=False,
-            max_inter_region_connector_m=600.0,
-            street_connect_tolerance_m=float(config.connect_tolerance_m),
-            street_corridor_buffer_m=20.0,
-            enforce_contiguous_polygons=True,
-            keep_internal_columns=True,
+            **config.polygon_builder_kwargs(caps=caps, segment_streets_by_building_projections=False, keep_internal_columns=True),
         )
-

@@ -3,7 +3,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.energy_system.region_topology import _iter_intersection_points, build_region_topology, RegionTopologyConfig
+from pypeline.energy_system.region_topology import RegionTopologyGeometry, build_region_topology, RegionTopologyConfig
 
 
 def _count_overloaded_junction_multi_region_violations(streets_with_region: gpd.GeoDataFrame, *, tolerance_m: float = 10.0) -> int:
@@ -46,7 +46,7 @@ def _count_overloaded_junction_multi_region_violations(streets_with_region: gpd.
         if ga is None or gb is None or ga.is_empty or gb.is_empty:
             continue
         inter = ga.intersection(gb)
-        for pt in _iter_intersection_points(inter):
+        for pt in RegionTopologyGeometry.iter_intersection_points(inter):
             key = (round(float(pt.x), 3), round(float(pt.y), 3))
             junction_segments.setdefault(key, set()).update({a, b})
 
@@ -63,8 +63,8 @@ def _count_overloaded_junction_multi_region_violations(streets_with_region: gpd.
 def neuburg_topology_t() -> None:
     """Checks generated Neuburg regions respect multi-region overloaded junction constraints."""
     root = Path(__file__).resolve().parents[2]
-    buildings = gpd.read_file(root / "examples/neuburg/buildings_heat_demand.geojson")
-    streets = gpd.read_file(root / "examples/neuburg/street_segments_neuburg.geojson")
+    buildings = gpd.read_file(root / "examples/neuburg/input data/buildings_heat_demand.geojson")
+    streets = gpd.read_file(root / "examples/neuburg/output data/street_segments_neuburg.geojson")
 
     demand = pd.DataFrame(
         {

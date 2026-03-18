@@ -140,9 +140,9 @@ def _pipe_registry() -> TechnologyRegistry:
 
 def first_year_imports_t(tmp_path: Path) -> None:
     """Checks first-year locked scenario enforces required district heat import level from inter-district pipes."""
-    polygon_path = REPO_ROOT / "examples" / "neuburg" / "polygon_neuburg.geojson"
-    street_segments_path = REPO_ROOT / "examples" / "neuburg" / "street_segments_neuburg.geojson"
-    heating_shares_path = REPO_ROOT / "examples" / "neuburg" / "heating_shares_neuburg.geojson"
+    polygon_path = REPO_ROOT / "examples" / "neuburg" / "output data" / "polygon_neuburg.geojson"
+    street_segments_path = REPO_ROOT / "examples" / "neuburg" / "output data" / "street_segments_neuburg.geojson"
+    heating_shares_path = REPO_ROOT / "examples" / "neuburg" / "input data" / "heating_shares_neuburg.geojson"
     if not polygon_path.exists() or not street_segments_path.exists() or not heating_shares_path.exists():
         pytest.skip("Neuburg fixtures not available")
 

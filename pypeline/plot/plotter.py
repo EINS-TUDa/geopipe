@@ -300,13 +300,14 @@ class EnergySystemPlotter:
         top_panel_h = 0.0
         if has_top_panel:
             # Reserve figure space above the map for district tables only.
-            rows_per_table = min(25, len(table_rows))
+            rows_per_table = min(25, (len(table_rows) + 1) // 2)
             top_panel_h = min(0.42, max(0.20, 0.12 + 0.012 * (rows_per_table + 1)))
             fig.subplots_adjust(top=1.0 - top_panel_h - 0.02)
 
         if table_rows:
-            left_rows = table_rows[:25]
-            right_rows = table_rows[25:50]
+            split_idx = min(25, (len(table_rows) + 1) // 2)
+            left_rows = table_rows[:split_idx]
+            right_rows = table_rows[split_idx:50]
             table_specs = [
                 (left_rows, [0.04, 1.0 - top_panel_h + 0.01, 0.42, top_panel_h - 0.02]),
                 (right_rows, [0.54, 1.0 - top_panel_h + 0.01, 0.42, top_panel_h - 0.02]),

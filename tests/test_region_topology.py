@@ -1,6 +1,6 @@
 import geopandas as gpd
 from shapely.geometry import LineString
-from pypeline.energy_system.region_topology import _build_street_adjacency
+from pypeline.energy_system.region_topology import RegionTopologyGeometry
 
 
 def _streets_from_lines(lines):
@@ -23,7 +23,7 @@ def junction_rule_t():
         ]
     )
 
-    adj = _build_street_adjacency(
+    adj = RegionTopologyGeometry.build_street_adjacency(
         streets,
         street_key_col="_street_key",
         tolerance_m=0.0,
@@ -46,7 +46,7 @@ def three_way_ok_t():
         ]
     )
 
-    adj = _build_street_adjacency(
+    adj = RegionTopologyGeometry.build_street_adjacency(
         streets,
         street_key_col="_street_key",
         tolerance_m=0.0,

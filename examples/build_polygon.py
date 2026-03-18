@@ -88,7 +88,6 @@ class DatasetPolygonBuildRequest:
     demand_value_column: str
     demand_street_indicator_column: str
     demand_street_indicator_min: float
-    plots_subdir: str
 
 
 @dataclass(frozen=True)
@@ -109,7 +108,6 @@ class DatasetPolygonBuildDefaults:
     demand_value_column: str = "annual_demand_mwh"
     demand_street_indicator_column: str = "total_heat_demand"
     demand_street_indicator_min: float = 0.0
-    plots_subdir: str = "plots"
 
 
 DATASET_POLYGON_BUILD_DEFAULTS = DatasetPolygonBuildDefaults()
@@ -121,7 +119,6 @@ class DatasetPolygonOutputPaths:
     streets_out: Path
     topology_plot_out: Path
     polygon_plot_out: Path
-    polygon_raw_plot_out: Path
 
 
 @dataclass(frozen=True)
@@ -174,26 +171,40 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
             demand_value_column=request.demand_value_column,
             demand_street_indicator_column=request.demand_street_indicator_column,
             demand_street_indicator_min=float(request.demand_street_indicator_min),
-            plots_subdir=request.plots_subdir,
         )
 
     @staticmethod
-    def _compute_output_paths(dataset_folder: Path, *, polynesia: bool, plots_subdir: str) -> DatasetPolygonOutputPaths:
+    def _resolve_input_file_path(dataset_folder: Path, file_name_or_relpath: str) -> Path:
+        rel = Path(str(file_name_or_relpath))
+        if rel.is_absolute():
+            return rel
+        candidate = dataset_folder / rel
+        if candidate.exists():
+            return candidate
+        input_dir_candidate = dataset_folder / "input data" / rel
+        if input_dir_candidate.exists():
+            return input_dir_candidate
+        return candidate
+
+    @staticmethod
+    def _compute_output_paths(dataset_folder: Path, *, polynesia: bool) -> DatasetPolygonOutputPaths:
         name = dataset_folder.name
-        polygons_out = dataset_folder / f"polygon_{name}.geojson"
-        streets_out = dataset_folder / f"street_segments_{name}.geojson"
-        plots_dir = dataset_folder / plots_subdir
+        has_input_dir = (dataset_folder / "input data").exists()
+        has_output_dir = (dataset_folder / "output data").exists()
+        outputs_dir = (dataset_folder / "output data") if (has_input_dir or has_output_dir) else dataset_folder
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        polygons_out = outputs_dir / f"polygon_{name}.geojson"
+        streets_out = outputs_dir / f"street_segments_{name}.geojson"
+        plots_dir = outputs_dir / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
         plot_suffix = "_polynesia" if polynesia else ""
         topology_plot_out = plots_dir / f"district_topology_{name}{plot_suffix}.png"
         polygon_plot_out = plots_dir / f"district_polygons_{name}{plot_suffix}.png"
-        polygon_raw_plot_out = plots_dir / f"district_polygons_raw_{name}{plot_suffix}.png"
         return DatasetPolygonOutputPaths(
             polygons_out=polygons_out,
             streets_out=streets_out,
             topology_plot_out=topology_plot_out,
             polygon_plot_out=polygon_plot_out,
-            polygon_raw_plot_out=polygon_raw_plot_out,
         )
 
     @staticmethod
@@ -217,8 +228,8 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
     def build_polygons_for_dataset_folder(dataset_folder: Path, *, request: DatasetPolygonBuildRequest) -> tuple[Path, Path]:
         cfg = DatasetPolygonBuildPipeline._validate_and_normalize_request(request)
 
-        buildings_path = dataset_folder / str(cfg.buildings_file)
-        streets_path = dataset_folder / str(cfg.streets_file)
+        buildings_path = DatasetPolygonBuildPipeline._resolve_input_file_path(dataset_folder, str(cfg.buildings_file))
+        streets_path = DatasetPolygonBuildPipeline._resolve_input_file_path(dataset_folder, str(cfg.streets_file))
 
         if not buildings_path.exists():
             raise FileNotFoundError(f"Buildings file not found: {buildings_path}")
@@ -286,13 +297,14 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
             config=topology_config,
         )
 
-        artifacts = DatasetPolygonBuildPipeline._compute_output_paths(dataset_folder, polynesia=cfg.polynesia, plots_subdir=cfg.plots_subdir)
+        artifacts = DatasetPolygonBuildPipeline._compute_output_paths(dataset_folder, polynesia=cfg.polynesia)
 
         polygons.drop(columns=["_street_members", "_demand_street_members"], errors="ignore").to_file(artifacts.polygons_out, driver="GeoJSON")
         streets_with_region.to_file(artifacts.streets_out, driver="GeoJSON")
 
         EnergySystemPlotter.plot_streets_colored_by_region(
             streets_with_region=streets_with_region,
+            polygons=polygons,
             output_path=artifacts.topology_plot_out,
             region_id_column=cfg.region_id_column,
             title=f"District topology: {dataset_folder.name}",
@@ -309,12 +321,6 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
             title=f"District polygons: {dataset_folder.name}",
             output_path=artifacts.polygon_plot_out,
         )
-        DatasetPolygonBuildPipeline._plot_polygons(
-            polygons,
-            region_id_column=cfg.region_id_column,
-            title=f"District polygons RAW (polygon_builder): {dataset_folder.name}",
-            output_path=artifacts.polygon_raw_plot_out,
-        )
 
         print(
             "check -> "
@@ -328,7 +334,6 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
         print(f"Wrote district street segments: {artifacts.streets_out} ({len(streets_with_region)} features)")
         print(f"Wrote topology plot: {artifacts.topology_plot_out}")
         print(f"Wrote polygon plot: {artifacts.polygon_plot_out}")
-        print(f"Wrote RAW polygon plot (polygon_builder): {artifacts.polygon_raw_plot_out}")
 
         return artifacts.polygons_out, artifacts.topology_plot_out
 
@@ -356,7 +361,6 @@ def create_dataset_polygon_build_request(
     demand_value_column: str | None = None,
     demand_street_indicator_column: str | None = None,
     demand_street_indicator_min: float | None = None,
-    plots_subdir: str | None = None,
 ) -> DatasetPolygonBuildRequest:
     return DatasetPolygonBuildRequest(
         buildings_file=buildings_file,
@@ -380,32 +384,17 @@ def create_dataset_polygon_build_request(
         demand_value_column=DATASET_POLYGON_BUILD_DEFAULTS.demand_value_column if demand_value_column is None else demand_value_column,
         demand_street_indicator_column=DATASET_POLYGON_BUILD_DEFAULTS.demand_street_indicator_column if demand_street_indicator_column is None else demand_street_indicator_column,
         demand_street_indicator_min=DATASET_POLYGON_BUILD_DEFAULTS.demand_street_indicator_min if demand_street_indicator_min is None else float(demand_street_indicator_min),
-        plots_subdir=DATASET_POLYGON_BUILD_DEFAULTS.plots_subdir if plots_subdir is None else plots_subdir,
     )
 
 
-def resolve_dataset_folder(examples_root: Path, dataset: str) -> Path:
-    return DatasetFolderResolver.resolve_subfolder(examples_root, dataset)
-
-
-def build_polygons_for_dataset_folder(dataset_folder: Path, *, request: DatasetPolygonBuildRequest) -> tuple[Path, Path]:
-    return DatasetPolygonBuildPipeline.build_polygons_for_dataset_folder(dataset_folder, request=request)
-
-
 def build_dataset_topology_outputs(dataset_folder: Path, *, request: DatasetPolygonBuildRequest) -> DatasetTopologyBuildResult:
-    polygons_out, plot_out = build_polygons_for_dataset_folder(dataset_folder, request=request)
-
-    effective_plots_subdir = request.plots_subdir
-    effective_polynesia = bool(request.polynesia)
-    name = dataset_folder.name
-    plots_dir = dataset_folder / effective_plots_subdir
-    plot_suffix = "_polynesia" if effective_polynesia else ""
-    polygon_plot_out = plots_dir / f"district_polygons_{name}{plot_suffix}.png"
+    polygons_out, _ = DatasetPolygonBuildPipeline.build_polygons_for_dataset_folder(dataset_folder, request=request)
+    artifacts = DatasetPolygonBuildPipeline._compute_output_paths(dataset_folder, polynesia=bool(request.polynesia))
 
     return DatasetTopologyBuildResult(
         polygons_path=polygons_out,
-        topology_plot_path=plot_out,
-        polygon_plot_path=polygon_plot_out,
+        topology_plot_path=artifacts.topology_plot_out,
+        polygon_plot_path=artifacts.polygon_plot_out,
     )
 
 
@@ -425,7 +414,7 @@ def main() -> None:
     args = parser.parse_args()
 
     examples_root = Path(__file__).resolve().parent
-    dataset_folder = resolve_dataset_folder(examples_root, args.dataset)
+    dataset_folder = DatasetFolderResolver.resolve_subfolder(examples_root, args.dataset)
 
     request = create_dataset_polygon_build_request(
         buildings_file=args.buildings_file,
@@ -440,7 +429,7 @@ def main() -> None:
         segment_projection_buffer_m=float(args.segment_projection_buffer_m),
     )
 
-    build_polygons_for_dataset_folder(dataset_folder, request=request)
+    DatasetPolygonBuildPipeline.build_polygons_for_dataset_folder(dataset_folder, request=request)
 
 
 if __name__ == "__main__":
