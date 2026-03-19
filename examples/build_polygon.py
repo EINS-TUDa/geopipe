@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 """
-This module prepares the spatial topology that is later consumed by the CESM
-optimizer. 
+This module prepares the spatial topology, later consumed by the optimizer. 
 
-Pipeline: data -> street graph -> district polygons -> CESM hand-off.
+Pipeline: data -> street graph -> district polygons -> hand-off to optimizer.
 
 1) Input data prep:
      - Convert building heat demand into annual MWh values.
@@ -126,6 +125,7 @@ class DatasetTopologyBuildResult:
     polygons_path: Path
     topology_plot_path: Path
     polygon_plot_path: Path
+    district_street_path: Path
 
 
 class DatasetFolderResolver:
@@ -225,7 +225,7 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
         plt.close(fig)
 
     @staticmethod
-    def build_polygons_for_dataset_folder(dataset_folder: Path, *, request: DatasetPolygonBuildRequest) -> tuple[Path, Path]:
+    def build_polygons_for_dataset_folder(dataset_folder: Path, *, request: DatasetPolygonBuildRequest) -> tuple[Path, Path, Path]:
         cfg = DatasetPolygonBuildPipeline._validate_and_normalize_request(request)
 
         buildings_path = DatasetPolygonBuildPipeline._resolve_input_file_path(dataset_folder, str(cfg.buildings_file))
@@ -335,7 +335,7 @@ class DatasetPolygonBuildPipeline(DatasetFolderResolver):
         print(f"Wrote topology plot: {artifacts.topology_plot_out}")
         print(f"Wrote polygon plot: {artifacts.polygon_plot_out}")
 
-        return artifacts.polygons_out, artifacts.topology_plot_out
+        return artifacts.polygons_out, artifacts.topology_plot_out, artifacts.streets_out
 
 
 def create_dataset_polygon_build_request(
@@ -388,13 +388,14 @@ def create_dataset_polygon_build_request(
 
 
 def build_dataset_topology_outputs(dataset_folder: Path, *, request: DatasetPolygonBuildRequest) -> DatasetTopologyBuildResult:
-    polygons_out, _ = DatasetPolygonBuildPipeline.build_polygons_for_dataset_folder(dataset_folder, request=request)
+    polygons_out, _ ,streets_out = DatasetPolygonBuildPipeline.build_polygons_for_dataset_folder(dataset_folder, request=request)
     artifacts = DatasetPolygonBuildPipeline._compute_output_paths(dataset_folder, polynesia=bool(request.polynesia))
 
     return DatasetTopologyBuildResult(
         polygons_path=polygons_out,
         topology_plot_path=artifacts.topology_plot_out,
         polygon_plot_path=artifacts.polygon_plot_out,
+        district_street_path=streets_out,
     )
 
 

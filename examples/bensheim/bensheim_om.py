@@ -1,133 +1,87 @@
-# -*- coding: utf-8 -*-
-import os
 from pathlib import Path
-import sys
-import geopandas as gpd
-import sqlite3
-import matplotlib.pyplot as plt
 project_root = Path(__file__).resolve().parents[2]
-from pypeline import EnergySystemBuilder, TechnologyRegistry
-from pypeline.energy_system.rule_book import (
-    EnergySystemRuleBook,
-    MinimumDHNThroughputRule,
-    MinimumCentralCapacityRule,
-)
-from pypeline.energy_system.scenario import Scenario
 from pypeline.plot.plotter import EnergySystemPlotter
-from tools.cesm_plugin import CESMBackend
-from pypeline.data.default_registry import get_default_data_registry
+from examples.example_builders import (
+    prepare_topology_outputs,
+    confirm_continue,
+    load_spatial_inputs,
+    create_cesm_backend,
+    years_for_scenario,
+    plot_mix_results,
+    show_cesm_sankey,
+    build_energy_system,
+    build_scenario
+)
 
-def must_exist(p: Path, what: str) -> None:
-    if not p.exists():
-        raise FileNotFoundError(f"Missing {what}: {p.resolve()}")
+project_root = Path(__file__).resolve().parents[2]
+BENSHEIM_DIR = project_root / "examples" / "bensheim"
+BENSHEIM_PLOTS_DIR = BENSHEIM_DIR / "plots"
+BENSHEIM_PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+BUILDINGS_FILE = "wah_bensheim_4_districts.geojson"
+STREETS_FILE = "baublock_bensheim_epsg25832.geojson"
+HEAT_DEMAND_FILE = project_root / "data" / "WaermeatlasHessen.gpkg"
+HEATING_SHARES_FILE = project_root / "data" / "Census2022HeatingType100mGrid" / "Census2022HeatingType100mGrid_Polygons_southhessen.geojson"
+
+MODEL_NAME = "Bensheim"
+SCENARIO_NAME = "Base4twk"
+TSS_NAME = "4ThinWeeks"
+DEMAND_NAME = "residential_heat"
 
 def main():
-    tech_reg = TechnologyRegistry()
-    tech_reg.load_from_default()
-    bensheim_folder = project_root / "examples" / "bensheim"
-    plots_dir = bensheim_folder / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    polygons_path = project_root / "examples" / "bensheim" / "wah_bensheim_4_districts.geojson"
-    polygons = gpd.read_file(polygons_path)
-
-
-    data_reg = get_default_data_registry(
-        mode="local",
-        local_heat_demand_file=project_root / "data" / "WaermeatlasHessen.gpkg",
-        local_heating_shares_file=project_root / "data" / "Census2022HeatingType100mGrid" / "Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
+    ##################
+    # Topology block
+    ##################
+    polygons_path, polygon_plot_path = prepare_topology_outputs(
+        BENSHEIM_DIR,
+        buildings_file=BUILDINGS_FILE,
+        streets_file=STREETS_FILE,
+        max_demand_mwh=15_000.0,
+        max_street_length_km=15.0,
+        demand_share_pct=75.0,
+        polynesia=False,
     )
+    if not confirm_continue(polygon_plot_path):
+        return
+    polygons, district_street_segments = load_spatial_inputs(BENSHEIM_DIR, polygons_path, STREETS_FILE)
 
-    esb = EnergySystemBuilder(energy_system_name="Bensheim")
-    esb.set_polygons(polygons)
-    esb.set_technology_dependency_manager(default=True)
-    esb.set_demands(default=True)
-    esb.set_technology_registry(tech_reg)
-    esb.set_data_registry(data_reg)
-
-    esb.set_default_region_builder_config()
-    esb.region_builder_config.update({
-        "min_heat_grid_share": 0.20,
-        "heat_grid_names": ("heat_exchanger",),
-    })
-
-    rulebook = EnergySystemRuleBook()
-    rulebook.add_rule(MinimumDHNThroughputRule(demand_name="residential_heat", min_share=0.25))
-    rulebook.add_rule(MinimumCentralCapacityRule(demand_name="residential_heat", min_share_of_demand=0.50,commodity="gas",))
-    esb.set_energy_system_rule_book(rulebook)
-
-    es = esb.build()
+    #############
+    # ESM block
+    #############
+    es = build_energy_system(
+        model_name=MODEL_NAME,
+        polygons=polygons,
+        district_street_segments=district_street_segments,
+        heat_demand_file=HEAT_DEMAND_FILE,
+        heating_shares_file=HEATING_SHARES_FILE,
+        region_builder_config_overrides={"min_heat_grid_share": 0.20, "heat_grid_names": ("heat_exchanger",)},
+    )
+    es.data_dir = project_root / "data"
     es_plotter = EnergySystemPlotter(es)
 
-    model_name    = "Bensheim"
-    scenario_name = "Base4twk"
-    tss_name      = "4ThinWeeks"
-    run_name      = f"{model_name}-{scenario_name}"
-    scenario = Scenario(
-        name=run_name,
+    ###################
+    # Optimizer block
+    ###################
+    scenario = build_scenario(
+        model_name=MODEL_NAME,
+        scenario_name=SCENARIO_NAME,
+        tss_name=TSS_NAME,
         start_year=2020,
         end_year=2030,
         year_gap=5,
-        tss=tss_name,
         retain_existing_output_drop_per_year=0.05,
         lockout_years=2,
     )
-    
-    workdir     = Path("CESM")
-    techmap_dir = workdir / "Data" / "Techmap"
-    es.data_dir = project_root / "data"
-    runner = project_root / "tools" / "cesm_plugin.py"
-    must_exist(runner, "runner script")
+    backend = create_cesm_backend(project_root, model_name=MODEL_NAME, scenario_name=SCENARIO_NAME, tss_name=TSS_NAME, scenario=scenario, demand_name=DEMAND_NAME)
+    solution = backend.optimize(es, scenario=scenario, demand_name=DEMAND_NAME)
 
-    existing_py_path = os.environ.get("PYTHONPATH")
-    if existing_py_path:
-        os.environ["PYTHONPATH"] = f"{project_root}{os.pathsep}{existing_py_path}"
-    else:
-        os.environ["PYTHONPATH"] = str(project_root)
-
-    backend = CESMBackend(
-        workdir=str(workdir),
-        cli=[sys.executable, str(runner)],
-        run_args=["--workdir", ".", "-m", model_name, "-s", scenario_name],
-        run_subdir=run_name,
-        results_db_name="db.sqlite",
-        write_inputs=True,
-        model_name=model_name,
-        scenario_name=scenario_name,
-        tss_name=tss_name,
-        scenario=scenario,
-        demand_name="residential_heat",
-    )
-
-    solution = backend.optimize(es, scenario=scenario, demand_name="residential_heat")
-    visible = sorted([p.stem for p in techmap_dir.glob("*.xlsx") if p.is_file()])
-    print(f"Techmaps in CESM/Data/Techmap: {visible}")
+    #################
+    # Results block
+    #################
     print(solution.results)
-
-    years = list(range(int(scenario.start_year), int(scenario.end_year) + 1, int(scenario.year_gap)))
-    mix_plot_paths = es_plotter.save_default_mix_plots(
-        solution.results,
-        years=years,
-        plots_dir=plots_dir,
-    )
-    technology_plot_path = mix_plot_paths["technology"]
-    print(f"Saved technology plot: {technology_plot_path}")
-    plt.show()
-
-    from cesm.core.plotter import Plotter, PlotType
-    from cesm.core.data_access import DAO
-    db_path = Path(solution.results["db"])
-    if not db_path.is_absolute():
-        db_path = project_root / db_path
-    print(f"Using DB: {db_path}")
-    conn = sqlite3.connect(str(db_path))
-    dao = DAO(conn)
-    plotter = Plotter(dao)
-
-    for year in years:
-        sankey_fig = plotter.plot_sankey(year=year)
-        sankey_fig.show()
-
-    conn.close()
+    years = years_for_scenario(scenario)
+    plot_mix_results(es_plotter, solution.results, years, BENSHEIM_PLOTS_DIR)
+    show_cesm_sankey(project_root, solution.results, years)
 
 
 if __name__ == "__main__":
