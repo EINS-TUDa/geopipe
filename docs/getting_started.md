@@ -1,10 +1,6 @@
-# README
+# Getting started
 
-## PYPELINE
-
-PYthon-based data piPELINe for Energy system modeling
-
-## How to run with CESM
+## Setup with CESM
 
 1. Clone the repository
    ```
@@ -22,19 +18,16 @@ PYthon-based data piPELINe for Energy system modeling
    ```
    uv sync
    ```
-## Documentation
-Documentation can be found [here](https://CaroAy.github.io/data-pipeline-esm/).
-To build the documentation, use:
-```
-uv run mkdocs gh-deploy --remote-name github
-```
-To preview the documentation locally, use:
-```
-uv run mkdocs serve
-```
+   
+## Run the first example
+1. Change into the example directory
+   ```
+   cd examples/neuburg
+   ```
+2. Run the example
+   ```
+   uv run python neuburg.py
+   ```
+      
 
-## Getting Started
-Run examples in `examples/`.
-
-
-
+   
