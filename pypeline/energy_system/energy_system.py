@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 import geopandas as gpd
 import pandas as pd
 import yaml
@@ -11,12 +11,15 @@ from pypeline.data.data_registry import DataRegistry
 from pypeline.data.dataset import CensusTechnology
 from pypeline.energy_system.demand import Demand
 from pypeline.energy_system.region import Region, RegionBuilder
-from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_system.rule_book import (
+    DEFAULT_HEAT_GRID_COST_DATASET,
+    DEFAULT_HEAT_GRID_DEMAND_NAME,
     EnergySystemRuleBook,
+    HEAT_EXCHANGER_NAMES,
     HeatExchangerCostAdjustmentRule,
     MinimumHeatGridConstraintRule,
     MinimumHeatGridOutputRule,
+    PRIMARY_HEAT_EXCHANGER,
     RegionRuleBook,
 )
 from pypeline.energy_system.unit import Unit, UnitEnum
@@ -34,16 +37,13 @@ __all__ = (
     "NameEnergySystemBuilder",
 )
 
-HEAT_EXCHANGER_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
-PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
-
-
 @dataclass(slots=True)
 class EnergySystem:
     name: str
     regions: list[Region]
     units: Unit
-    connections: list[RegionConnection]
+    district_street_segments_gdf: gpd.GeoDataFrame | None = None
+    technology_registry: TechnologyRegistry | None = None
     commodity_config: dict[str, Any] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
@@ -57,11 +57,11 @@ class EnergySystemBuilder:
         self.region_rule_book: RegionRuleBook | None = None
         self.data_registry: DataRegistry | None = None
         self.technology_registry: TechnologyRegistry | None = None
-        self.connections: list[RegionConnection] | None = None
         self.unit: Unit = UnitEnum.GW.unit
         self.technology_dependency_manager: TechnologyDependencyManager | None = None
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
+        self.district_street_segments_gdf: gpd.GeoDataFrame | None = None
         self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
 
     def set_unit(self, input_unit: UnitEnum):
@@ -153,28 +153,14 @@ class EnergySystemBuilder:
             ),
         ]
 
-    def set_connections(self, connections: Sequence[RegionConnection]):
-        self.connections = list(connections)
+    def set_district_street_segments(self, street_segments: gpd.GeoDataFrame | None):
+        self.district_street_segments_gdf = None if street_segments is None else street_segments.copy()
         return self
-
-    def build_connections(self) -> list[RegionConnection]:
-        """
-        Different logics should be implemented here to build connections between regions.
-        1. If a region touches another region, a connection should be created.
-        2. If there is a connection via a street, a connection should be created.
-        Or: Take user defined connections from a file.
-
-        Also, it should be possible to define the commodities that are transported via the connection.
-        """
-        return []
 
     def _set_default_technology_dependency_manager(self):
         dependencies = {
             PRIMARY_HEAT_EXCHANGER: [
                 TechnologyRequirement(technology_name="heat_grid", capacity_factor=1.5)
-            ],
-            "heat_grid": [
-                TechnologyRequirement(technology_name="cen_heat_pump", share=0.5, capacity_factor=1.05)
             ]
         }
         self.technology_dependency_manager = TechnologyDependencyManager(dependencies=dependencies)
@@ -203,7 +189,6 @@ class EnergySystemBuilder:
         *,
         grid_prices: dict[str, Any],
         supply_prices_eur_per_mwh: dict[str, Any],
-        edge_defaults: dict[str, Any] | None = None,
     ):
         if not isinstance(grid_prices, dict):
             raise TypeError("grid_prices must be a mapping")
@@ -213,10 +198,6 @@ class EnergySystemBuilder:
             "grid_prices": dict(grid_prices),
             "supply_prices_eur_per_mwh": dict(supply_prices_eur_per_mwh),
         }
-        if edge_defaults is not None:
-            if not isinstance(edge_defaults, dict):
-                raise TypeError("edge_defaults must be a mapping if provided")
-            config["edge_defaults"] = dict(edge_defaults)
         self.commodity_config = config
         return self
 
@@ -225,9 +206,9 @@ class EnergySystemBuilder:
             "cap_factor_ind_technologies": 1.1,  # Factor to increase the capacity of individual technologies over the minimum required capacity
             "min_heat_grid_output_mwh": 0.0,
             "min_heat_grid_share": None,
-            "heat_grid_demand_name": "residential_heat",
+            "heat_grid_demand_name": DEFAULT_HEAT_GRID_DEMAND_NAME,
             "heat_grid_names": HEAT_EXCHANGER_NAMES,
-            "heat_grid_cost_dataset": "residential_heat_technology_shares",
+            "heat_grid_cost_dataset": DEFAULT_HEAT_GRID_COST_DATASET,
             "heat_grid_cost_scaling": 1.0,
             "heat_grid_cost_min_factor": 1.0,
             "heat_grid_decentralized_keys": tuple(
@@ -240,7 +221,7 @@ class EnergySystemBuilder:
         config = self.region_builder_config or {}
         min_output = float(config.get("min_heat_grid_output_mwh", 0.0) or 0.0)
         min_share_raw = config.get("min_heat_grid_share")
-        demand_name = config.get("heat_grid_demand_name", "residential_heat")
+        demand_name = config.get("heat_grid_demand_name", DEFAULT_HEAT_GRID_DEMAND_NAME)
         heat_grid_names = config.get("heat_grid_names", HEAT_EXCHANGER_NAMES)
 
         min_share = None
@@ -254,7 +235,7 @@ class EnergySystemBuilder:
 
     def _heat_grid_cost_settings(self) -> tuple[str, float, float, tuple[str, ...]]:
         config = self.region_builder_config or {}
-        dataset = config.get("heat_grid_cost_dataset", "residential_heat_technology_shares")
+        dataset = config.get("heat_grid_cost_dataset", DEFAULT_HEAT_GRID_COST_DATASET)
         scale = float(config.get("heat_grid_cost_scaling", 1.0))
         min_factor = float(config.get("heat_grid_cost_min_factor", 1.0))
         raw_keys = config.get("heat_grid_decentralized_keys")
@@ -339,18 +320,13 @@ class EnergySystemBuilder:
                                        crs=self.polygons.crs)
             regions.append(rb.build(polygon=polygon))
 
-        # build connections if not provided
-        if self.connections is None:
-            connections = self.build_connections()
-        else:
-            connections = self.connections
-
         # create the energy system
         es = EnergySystem(
             name=self.energy_system_name,
             regions=regions,
             units=self.unit,
-            connections=connections,
+            district_street_segments_gdf=self.district_street_segments_gdf,
+            technology_registry=self.technology_registry,
             commodity_config=self.commodity_config or {},
         )
 
@@ -372,8 +348,6 @@ class EnergySystemBuilder:
         if not isinstance(self.technology_registry, TechnologyRegistry):
             raise ValueError(
                 f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}")
-        if not self.connections:
-            print("Warning: No connections set, building default connections.")
         # Technology Dependency Manager
         if self.technology_dependency_manager:
             for key, value in self.technology_dependency_manager.dependencies.items():

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from pypeline.data.data_registry import DataRegistry
+from pypeline.data.dataset import CensusTechnology
+from pypeline.validation import normalize_shares_or_zero, to_int_id
 from pypeline.energy_system.demand import Demand, RegionDemand
-from pypeline.energy_system.rule_book import RegionRuleBook
+from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES, PRIMARY_HEAT_EXCHANGER, RegionRuleBook
 import geopandas as gpd
 
 from pypeline.energy_technology.technology import (
+    CENTRAL_TECH_PREFIX,
+    INDIRECT_TECH_PREFIX,
     Technology,
     RegionTechnology,
     TechnologyRequirement,
@@ -15,12 +19,7 @@ from pypeline.energy_technology.technology_registry import (
     TechnologyNotFoundError,
 )
 
-
-HEAT_EXCHANGER_NAMES: tuple[str, ...] = ("heat_exchanger", "ind_district_heating_connection")
-PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
 REGIONAL_TECH_ALIAS_MAP: dict[str, tuple[str, ...]] = {PRIMARY_HEAT_EXCHANGER: HEAT_EXCHANGER_NAMES[1:]}
-INDIRECT_TECH_PREFIX = "ind_"
-CENTRAL_TECH_PREFIX = "cen_"
 EXCLUDED_TECH_NAMES: tuple[str, ...] = ("heat_pipe",)
 
 
@@ -167,18 +166,10 @@ def _is_other_district_clone(name: str, district_id: int) -> bool:
 
 
 def _safe_int(raw, fallback: int = 0) -> int:
-    if hasattr(raw, "iloc"):
-        try:
-            raw = raw.iloc[0]
-        except Exception:
-            pass
     try:
-        return int(raw)
+        return to_int_id(raw)
     except Exception:
-        try:
-            return int(float(raw))
-        except Exception:
-            return fallback
+        return fallback
 
 
 class Region:
@@ -212,6 +203,49 @@ class RegionBuilder:
         self.technology_dependency_manager = None
         self.config = None
         self.demands = None
+        self._dhn_central_seed_cache: dict[int, str] = {}
+
+    def _infer_dhn_central_seed_base(self, polygon: gpd.GeoDataFrame, district_id: int) -> str:
+        cached = self._dhn_central_seed_cache.get(int(district_id))
+        if cached:
+            return cached
+
+        base_query = {
+            "key": "heating_shares",
+            "region": polygon,
+            "base_crs": self.base_crs,
+            "name_mapping": {},
+        }
+        raw_shares = self.data_registry.query(base_query)
+        if not isinstance(raw_shares, dict):
+            raise TypeError(f"Heating share query must return a mapping, got {type(raw_shares)} for district {district_id}")
+
+        candidates: list[tuple[str, float]] = [
+            ("cen_gas_boiler", float(raw_shares.get(CensusTechnology.Gas, 0.0) or 0.0)),
+            ("cen_oil_boiler", float(raw_shares.get(CensusTechnology.Oil, 0.0) or 0.0)),
+            (
+                "cen_biomass_woodpellets",
+                float(raw_shares.get(CensusTechnology.Wood, 0.0) or 0.0)
+                + float(raw_shares.get(CensusTechnology.Biomass, 0.0) or 0.0),
+            ),
+        ]
+        candidates.sort(key=lambda entry: (entry[1], entry[0]), reverse=True)
+
+        viable = [
+            (name, score)
+            for name, score in candidates
+            if score > 0.0 and self.technology_registry.has_technology(name)
+        ]
+        if not viable:
+            raise ValueError(
+                "Unable to infer district-heating central technology from local fuel shares "
+                f"for district {district_id}. Expected positive Gas/Heizoel/Wood/Biomass shares."
+            )
+
+        selected = viable[0][0]
+
+        self._dhn_central_seed_cache[int(district_id)] = selected
+        return selected
 
     def set_demands(self, demands: list[Demand]):
         if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
@@ -334,11 +368,9 @@ class RegionBuilder:
             mapped: list[TechnologyRequirement] = []
             for requirement in base_requirements:
                 target_name = _canonical_regional_name(requirement.technology_name)
-                if base_name == "heat_grid" and target_name == "cen_heat_pump":
-                    # Allow heat grids to draw from shared central plants via pipes instead of
-                    # enforcing a local central heat pump clone per district.
-                    continue
                 base_target = target_name.rsplit("_D", 1)[0]
+                if base_name == "heat_grid" and _is_central_base(base_target):
+                    continue
                 if base_target in regional_base_set and target_name == base_target:
                     target_name = _localized_name(base_target, district_id)
                 elif _is_regional_clone(target_name):
@@ -476,6 +508,8 @@ class RegionBuilder:
     def build_technologies(self, polygon: gpd.GeoDataFrame, r_demands: list[RegionDemand], district_id: int) -> list[RegionTechnology]:
         collection: list[RegionTechnology] = []
         technologies_with_shares: set[str] = set()
+        central_seed_outputs: dict[str, float] = {}
+        central_seed_profile_peaks: dict[str, float] = {}
         suffix = _district_suffix(district_id)
         registry = self.technology_registry
         raw_names = registry.get_all(return_type="name")
@@ -540,11 +574,9 @@ class RegionBuilder:
                 if mapped in technologies_supplying_this_demand:
                     model_tech_shares[mapped] = share
 
-            total_share = sum(model_tech_shares.values())
+            normalized_shares = normalize_shares_or_zero(model_tech_shares)
 
-            if total_share > 0:
-                normalized_shares = {tech: share / total_share for tech, share in model_tech_shares.items()}
-            else:
+            if not any(share > 0.0 for share in normalized_shares.values()):
                 normalized_shares = {tech: 0.0 for tech in model_tech_shares}
                 if r_demand.demand.default_supply_technology:
                     default_tech = r_demand.demand.default_supply_technology
@@ -569,7 +601,49 @@ class RegionBuilder:
                 collection.append(region_technology)
                 technologies_with_shares.add(tech)
 
-        # Add technologies that do not have shares defined in the data registry
+                localized_heat_exchanger = localized_map.get(PRIMARY_HEAT_EXCHANGER)
+                if (
+                    localized_heat_exchanger
+                    and tech == localized_heat_exchanger
+                    and initial_energy_output > 0.0
+                ):
+                    central_seed_base = self._infer_dhn_central_seed_base(polygon, district_id)
+                    localized_central_default = localized_map.get(central_seed_base)
+                    if not localized_central_default:
+                        raise ValueError(
+                            f"Missing localized central technology '{central_seed_base}' for district {district_id}"
+                        )
+                    if not self.technology_registry.has_technology(localized_central_default):
+                        raise ValueError(
+                            f"Technology registry missing '{localized_central_default}' for district {district_id}"
+                        )
+                    central_seed_outputs[localized_central_default] = (
+                        central_seed_outputs.get(localized_central_default, 0.0) + float(initial_energy_output)
+                    )
+                    central_seed_profile_peaks[localized_central_default] = max(
+                        central_seed_profile_peaks.get(localized_central_default, 0.0),
+                        float(max(r_demand.profile)),
+                    )
+
+        for central_name, seeded_output in central_seed_outputs.items():
+            profile_peak = central_seed_profile_peaks.get(central_name, 0.0)
+            seeded_capacity = profile_peak * seeded_output * self.config["cap_factor_ind_technologies"]
+            existing = next((item for item in collection if item.technology.name == central_name), None)
+            if existing is not None:
+                existing.initial_energy_output += seeded_output
+                existing.initial_capacity += seeded_capacity
+            else:
+                collection.append(
+                    RegionTechnology(
+                        technology=self.technology_registry.get_by_name(central_name),
+                        initial_energy_output=seeded_output,
+                        initial_capacity=seeded_capacity,
+                        output_profile=None,
+                    )
+                )
+            technologies_with_shares.add(central_name)
+
+       
         other_technologies = set(all_technologies) - technologies_with_shares
         for tech_name in other_technologies:
             tech = self.technology_registry.get_by_name(tech_name)

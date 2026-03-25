@@ -1,16 +1,9 @@
 grid_prices:
-  electricity: 90.0   
+  electricity: 80.0   
   export: 0.0       
 
 supply_prices_eur_per_mwh:
   gas: 120.0
   oil: 110.0
-  hydrogen: 200.0
+  hydrogen: 180.0
   biomass: 80.0
-
-# defaults for network edge generation in CESM writer
-edge_defaults:
-  edge_strategy: mst
-  min_shared_border_m: 0.0
-  max_pipes_per_district: null
-  neighbor_distance_m: null

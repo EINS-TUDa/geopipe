@@ -11,7 +11,8 @@ from pypeline.energy_technology.technology_stage import TechnologyStage, Technol
         ("district_heat_grid_branch", "district_heat_in", "district_heat_out"),
     ],
 )
-def test_heat_grid_like_names_get_district_defaults(name, expected_in, expected_out):
+def grid_names_t(name, expected_in, expected_out):
+    """Checks inferred heat-grid naming maps to default district commodities."""
     item = {"name": name}
     result = _SPEC_INFERENCE.apply(dict(item), set(item.keys()))
     assert result["category"] == TechnologyCategory.GRID.value
@@ -20,7 +21,8 @@ def test_heat_grid_like_names_get_district_defaults(name, expected_in, expected_
     assert result["commodity_out"] == expected_out
 
 
-def test_heat_grid_preserves_explicit_commodities():
+def grid_explicit_t():
+    """Checks explicit commodity mappings are preserved during inference normalization."""
     item = {
         "name": "heat_grid_pipe_custom",
         "commodity_in": "pipe_inlet",
@@ -33,7 +35,8 @@ def test_heat_grid_preserves_explicit_commodities():
     assert result["stage"] == TechnologyStage.STAGE2.value
 
 
-def test_invalid_yaml_entry_raises(tmp_path):
+def invalid_yaml_t(tmp_path):
+    """Checks invalid technology YAML entries raise descriptive validation errors."""
     yaml_path = tmp_path / "bad.yaml"
     yaml_path.write_text(
         "bad_tech:\n"

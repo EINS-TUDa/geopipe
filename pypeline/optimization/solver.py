@@ -1,6 +1,5 @@
 from abc import ABC
 from dataclasses import dataclass
-
 import pandas as pd
 
 from pypeline.energy_system.energy_system import EnergySystem
@@ -13,10 +12,6 @@ class OptimizationModel(ABC):
         self.conversion_processes = ...
         self.commodities = ...
         self.tss = ...
-
-    def optimize(self, model):
-        """Optimize the provided model."""
-        raise NotImplementedError("This method should be implemented by subclasses.")
 
 class Solution:
     def __init__(self):

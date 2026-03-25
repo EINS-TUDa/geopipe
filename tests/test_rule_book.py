@@ -1,12 +1,8 @@
 import pandas as pd
 import pytest
-
 from pypeline.energy_system.demand import Demand, RegionDemand
 from pypeline.energy_system.region import Region
-from pypeline.energy_system.rule_book import (
-    MinimumHeatGridOutputRule,
-    MinimumHeatGridConstraintRule,
-)
+from pypeline.energy_system.rule_book import ( MinimumHeatGridOutputRule, MinimumHeatGridConstraintRule,)
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 
@@ -56,7 +52,8 @@ def _build_region(heat_output, other_output, include_extra=False):
     return region
 
 
-def test_min_heat_grid_rule_removes_small_output_and_rescales():
+def min_grid_rescale_t():
+    """Checks small heat-grid output is raised and other heat supply rescaled."""
     region = _build_region(heat_output=5.0, other_output=95.0, include_extra=True)
 
     rule = MinimumHeatGridOutputRule(min_output_mwh=10.0, heat_grid_names=("heat_grid",))
@@ -83,7 +80,8 @@ def test_min_heat_grid_rule_removes_small_output_and_rescales():
     assert total_heat == pytest.approx(100.0)
 
 
-def test_min_heat_grid_rule_keeps_large_heat_grid():
+def min_grid_keep_t():
+    """Checks sufficiently large heat-grid output remains unchanged by minimum rule."""
     region = _build_region(heat_output=30.0, other_output=70.0)
 
     rule = MinimumHeatGridOutputRule(min_output_mwh=10.0, heat_grid_names=("heat_grid",))
@@ -96,7 +94,8 @@ def test_min_heat_grid_rule_keeps_large_heat_grid():
     assert gas.initial_energy_output == pytest.approx(70.0)
 
 
-def test_min_heat_grid_rule_no_other_supply():
+def min_grid_supply_t():
+    """Checks minimum heat-grid rule keeps output when no alternative supply exists."""
     demand = Demand(demand_type="residential_heat", commodity_in="Heat")
     profile = pd.Series([1.0, 1.0])
     region_demand = RegionDemand(demand=demand, value=5.0, profile=profile)
@@ -124,9 +123,10 @@ def test_min_heat_grid_rule_no_other_supply():
     assert heat_grid_after.initial_capacity == pytest.approx(5.0)
 
 
-def test_min_heat_grid_constraint_rule_sets_targets():
+def grid_targets_t():
+    """Checks system-level minimum heat-grid constraint target is written per region."""
     region = _build_region(heat_output=5.0, other_output=95.0)
-    es = EnergySystem(name="TestES", regions=[region], units=None, connections=[])
+    es = EnergySystem(name="TestES", regions=[region], units=None)
 
     rule = MinimumHeatGridConstraintRule(min_share=0.1, heat_grid_names=("heat_grid",))
     updated = rule.apply(es)

@@ -24,6 +24,7 @@ class Scenario:
     discount_rate: float = 0.05
     retain_existing_output_schedule: Optional[List[float]] = None
     retain_existing_output_drop_per_year: Optional[Number] = None
+    lockout_years: int = 2
 
     def years(self) -> List[int]:
         return list(range(self.start_year, self.end_year + 1, self.year_gap))

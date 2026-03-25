@@ -1,1 +1,0 @@
-"""Plotter for ESM data."""

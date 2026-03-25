@@ -60,3 +60,6 @@ exclude = ["data*", "examples*", "tests*", "docs*"]
 
 [tool.uv.sources]
 cesm = { path = "CESM", editable = true }
+
+[tool.pytest.ini_options]
+python_functions = ["*_t"]
