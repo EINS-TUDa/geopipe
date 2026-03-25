@@ -7,3 +7,4 @@ scripts/
 .vscode
 site/
 output_data/*
+plots/*
