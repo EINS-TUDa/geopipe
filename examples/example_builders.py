@@ -9,27 +9,10 @@ from typing import Tuple
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from pypeline.data.default_registry import get_default_data_registry
-from examples.build_polygon import create_dataset_polygon_build_request, build_dataset_topology_outputs
 from tools.cesm_plugin import CESMBackend
 from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook
 from pypeline.energy_system.scenario import Scenario
-
-
-def prepare_topology_outputs(dataset_dir: Path, *, buildings_file: str, streets_file: str, max_demand_mwh: float, max_street_length_km: float, demand_share_pct: float, polynesia: bool = False) -> Tuple[Path, Path, Path]:
-    """Build polygons and return polygon and plot paths."""
-    polygon_build_request = create_dataset_polygon_build_request(
-        buildings_file=buildings_file,
-        streets_file=streets_file,
-        max_demand_mwh=max_demand_mwh,
-        max_street_length_km=max_street_length_km,
-        demand_share_pct=demand_share_pct,
-        polynesia=polynesia,
-    )
-    outputs = build_dataset_topology_outputs(dataset_dir, request=polygon_build_request)
-    print(f"Saved topology plot: {outputs.topology_plot_path}")
-    print(f"Saved polygon plot: {outputs.polygon_plot_path}")
-    return outputs.polygons_path, outputs.polygon_plot_path, outputs.district_street_path
 
 
 def confirm_continue(polygon_plot_path: Path) -> bool:
@@ -41,17 +24,6 @@ def confirm_continue(polygon_plot_path: Path) -> bool:
         print("Aborting before optimization at user's request.")
         return False
     return True
-
-
-def load_spatial_inputs(polygons_path: Path, street_segments_path: Path) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Load polygons and street segments from the dataset output dir."""
-    if not polygons_path.exists():
-        raise FileNotFoundError(f"Missing polygons output: {polygons_path}")
-    if not street_segments_path.exists():
-        raise FileNotFoundError(f"Missing street segments output: {street_segments_path}")
-    polygons = gpd.read_file(polygons_path)
-    street_segments = gpd.read_file(street_segments_path)
-    return polygons, street_segments
 
 
 def create_local_data_registry(heat_demand_file: Path, heating_shares_file: Path):
@@ -100,6 +72,7 @@ def create_cesm_backend(project_root: Path, *, model_name: str, scenario_name: s
 
 def years_for_scenario(scenario) -> list[int]:
     """Return scenario year list for plotting."""
+    # Should be replaced by a property on Scenario in near future.
     return list(range(int(scenario.start_year), int(scenario.end_year) + 1, int(scenario.year_gap)))
 
 
@@ -131,7 +104,7 @@ def show_cesm_sankey(project_root: Path, results: dict, years: list[int]) -> Non
         conn.close()
 
 
-def build_energy_system(*, model_name: str, polygons: gpd.GeoDataFrame, district_street_segments: gpd.GeoDataFrame | None, heat_demand_file: Path, heating_shares_file: Path, region_builder_config_overrides: dict | None = None, rulebook: EnergySystemRuleBook | None = None):
+def build_energy_system(*, model_name: str, polygons: gpd.GeoDataFrame, district_street_segments: gpd.GeoDataFrame | None, heat_demand_file: Path, heating_shares_file: Path, region_builder_config_overrides: dict | None, rulebook: EnergySystemRuleBook | None = None):
     """Build energy system from polygons and local data."""
     tech_reg = TechnologyRegistry()
     tech_reg.load_from_default()
