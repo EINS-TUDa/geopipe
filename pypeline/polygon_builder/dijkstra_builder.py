@@ -18,7 +18,6 @@ from pypeline.polygon_builder.polygon_builder import (
     AbstractPolygonBuilder,
     PolygonBuildError,
     PolygonBuildResult,
-    PolygonBuilderConfig,
 )
 
 """
@@ -68,46 +67,6 @@ Shortest path algo reference:
 - E. W. Dijkstra, “A Note on Two Problems in Connexion with Graphs,”
     Numerische Mathematik 1 (1959), pp. 269–271.
 """
-
-# ---------------------------------------------------------------------------
-# Dijkstra-specific configuration
-# ---------------------------------------------------------------------------
-
-@dataclass
-class DijkstraPolygonBuilderConfig(PolygonBuilderConfig):
-    """
-    Inherits input_dir and output_dir from PolygonBuilderConfig.
-    All Dijkstra-specific fields have sensible defaults so that only the
-    required algorithmic parameters (buildings_file, streets_file, and the
-    three capacity knobs) must be supplied explicitly.
-    """
-    # --- required ---
-    buildings_file: str = ""
-    streets_file: str = ""
-    max_demand_mwh: float = 0.0
-    max_street_length_km: float = 0.0
-    demand_share_pct: float = 0.0
-
-    # --- optional: algorithm tuning ---
-    polynesia: bool = True
-    city_column: str = "gemeindeschluessel"
-    clip_buffer_m: float = 200.0
-    connect_tolerance_m: float = 10.0
-    small_islands: bool = True
-    small_islands_max_segments: int = 60
-    segment_streets_by_building_projections: bool = True
-    segment_projection_buffer_m: float = 12.0
-
-    # --- optional: column names ---
-    region_id_column: str = "id"
-    street_id_column: str = "street_id"
-    building_id_column: str = "building_objectid"
-    demand_building_column: str = "building_objectid"
-    demand_source_column: str = "heating:demand[Wh]"
-    demand_value_column: str = "annual_demand_mwh"
-    demand_street_indicator_column: str = "total_heat_demand"
-    demand_street_indicator_min: float = 0.0
-
 
 # ---------------------------------------------------------------------------
 # Output path helpers
@@ -170,10 +129,10 @@ def _plot_polygons(polygons: gpd.GeoDataFrame, *, region_id_column: str, title: 
 
 
 def _run_dijkstra_pipeline(
-    input_dir: Path,
-    output_dir: Path,
-    dataset_name: str,
-    request: DijkstraPolygonBuilderConfig,
+        input_dir: Path,
+        output_dir: Path,
+        dataset_name: str,
+        request: DijkstraPolygonBuilderConfig,
 ) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     """
     Execute the full Dijkstra topology pipeline and write all output artifacts.
@@ -207,9 +166,9 @@ def _run_dijkstra_pipeline(
     b_for_algo = buildings.copy()
     city_value = None
     if (
-        request.city_column
-        and request.city_column in buildings.columns
-        and request.city_column in streets.columns
+            request.city_column
+            and request.city_column in buildings.columns
+            and request.city_column in streets.columns
     ):
         vals = buildings[request.city_column].dropna().astype(str)
         if vals.empty:
@@ -308,39 +267,74 @@ def _run_dijkstra_pipeline(
 class DijkstraPolygonBuilder(AbstractPolygonBuilder):
     """
     Polygon builder based on Dijkstra-driven region topology.
-
-    Usage::
-
-        cfg = DijkstraPolygonBuilderConfig(
-            input_dir=Path("neuburg/input_data"),
-            output_dir=Path("neuburg/output"),
-            buildings_file="buildings.geojson",
-            streets_file="streets.geojson",
-            max_demand_mwh=1500,
-            max_street_length_km=3.0,
-            demand_share_pct=60,
-        )
-        builder = DijkstraPolygonBuilder(cfg)
-        polygons, street_segments = builder.build()
     """
 
-    def __init__(self, cfg: DijkstraPolygonBuilderConfig):
-        super().__init__(cfg)
-        self._cfg: DijkstraPolygonBuilderConfig = cfg
+    def __init__(self,
+                 # required
+                 input_dir: Path,
+                 output_dir: Path,
+                 buildings_file: str,
+                 streets_file: str,
+                 max_demand_mwh: float,
+                 max_street_length_km: float,
+                 demand_share_pct: float,
+                 # optional
+                 polynesia: bool = True,
+                 city_column: str = "gemeindeschluessel",
+                 clip_buffer_m: float = 200.0,
+                 connect_tolerance_m: float = 10.0,
+                 small_islands: bool = True,
+                 small_islands_max_segments: int = 60,
+                 segment_streets_by_building_projections: bool = True,
+                 segment_projection_buffer_m: float = 12.0,
+                 region_id_column: str = "id",
+                 street_id_column: str = "street_id",
+                 building_id_column: str = "building_objectid",
+                 demand_building_column: str = "building_objectid",
+                 demand_source_column: str = "heating:demand[Wh]",
+                 demand_value_column: str = "annual_demand_mwh",
+                 demand_street_indicator_column: str = "total_heat_demand",
+                 demand_street_indicator_min: float = 0.0,
+                 ):
+
+        self.input_dir = input_dir
+        self.output_dir = output_dir
+        self.buildings_file = buildings_file
+        self.streets_file = streets_file
+        self.max_demand_mwh = max_demand_mwh
+        self.max_street_length_km = max_street_length_km
+        self.demand_share_pct = demand_share_pct
+        self.polynesia = polynesia
+
+        self.city_column = city_column
+        self.clip_buffer_m = clip_buffer_m
+        self.connect_tolerance_m = connect_tolerance_m
+        self.small_islands = small_islands
+        self.small_islands_max_segments = small_islands_max_segments
+        self.segment_streets_by_building_projections = segment_streets_by_building_projections
+        self.segment_projection_buffer_m = segment_projection_buffer_m
+        self.region_id_column = region_id_column
+        self.street_id_column = street_id_column
+        self.building_id_column = building_id_column
+        self.demand_building_column = demand_building_column
+        self.demand_source_column = demand_source_column
+        self.demand_value_column = demand_value_column
+        self.demand_street_indicator_column = demand_street_indicator_column
+        self.demand_street_indicator_min = demand_street_indicator_min
 
     def build(self) -> PolygonBuildResult:
         """
         Runs the full pipeline (street graph construction, district assignment,
         polygon synthesis) and writes all output artifacts to output_dir.
         """
-        cfg = self._cfg
-        dataset_name = cfg.input_dir.parent.name
+
+        dataset_name = self.input_dir.parent.name
         try:
             return _run_dijkstra_pipeline(
-                input_dir=cfg.input_dir,
-                output_dir=cfg.output_dir,
+                input_dir=self.input_dir,
+                output_dir=self.output_dir,
                 dataset_name=dataset_name,
-                request=cfg,
+                request=...,
             )
         except Exception as exc:
             raise PolygonBuildError("Error when creating the polygons.") from exc
