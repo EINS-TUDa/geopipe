@@ -5,8 +5,8 @@ import pandas as pd
 from shapely.geometry import Polygon
 
 from pypeline.energy_technology.technology import Technology
-from pypeline.optimization.om_adapter import OMContext
-from tools.cesm_plugin import _write_cesm_inputs_from_om
+from pypeline.optimization.optimization_context import OptimizationContext
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -52,9 +52,9 @@ def _single_polygon() -> gpd.GeoDataFrame:
     )
 
 
-def _mock_om() -> OMContext:
+def _mock_om() -> OptimizationContext:
     years = [2020, 2025, 2030]
-    return OMContext(
+    return OptimizationContext(
         years=years,
         regions=[0],
         commodity="residential_heat",

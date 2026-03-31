@@ -8,3 +8,4 @@ scripts/
 site/
 output_data/*
 plots/*
+.claude

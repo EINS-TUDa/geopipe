@@ -10,9 +10,9 @@ from cesm.core.model import Model
 from pypeline.energy_system.dhn import build_inter_dhn_pipes_from_street_segments
 from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
-from pypeline.optimization.om_adapter import OMContext
+from pypeline.optimization.optimization_context import OptimizationContext
 from pypeline.energy_system.heating_shares import resolve_fernwaerme_share_by_district
-from tools.cesm_plugin import _write_cesm_inputs_from_om
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,7 +30,7 @@ def _run_cesm_in_memory(*, workdir: Path, model_name: str, scenario_name: str = 
     return conn
 
 
-def _build_multidistrict_om(*, region_ids: list[int], annual_mwh: float, import_share_by_region: dict[int, float]) -> OMContext:
+def _build_multidistrict_om(*, region_ids: list[int], annual_mwh: float, import_share_by_region: dict[int, float]) -> OptimizationContext:
     years = [2020, 2025, 2030]
     annual_demand = {rid: {year: float(annual_mwh) for year in years} for rid in region_ids}
     demand_profile = [1.0 / 8760.0] * 8760
@@ -47,7 +47,7 @@ def _build_multidistrict_om(*, region_ids: list[int], annual_mwh: float, import_
         "initial_energy_output": 2.0 * float(annual_mwh),
     }
 
-    om = OMContext(
+    om = OptimizationContext(
         years=years,
         regions=region_ids,
         commodity="residential_heat",

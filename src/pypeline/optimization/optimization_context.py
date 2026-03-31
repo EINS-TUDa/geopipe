@@ -1,3 +1,21 @@
+"""Backend-agnostic optimization context.
+
+Defines :class:`OptimizationContext`, a flat numerical representation of an
+:class:`~pypeline.energy_system.energy_system.EnergySystem` + :class:`~pypeline.energy_system.scenario.Scenario`
+pair.  All domain logic (region topology, demand profiles, technology shares)
+is resolved here so that solver backends only need to consume plain dicts /
+lists / DataFrames.
+
+Typical use::
+
+    from pypeline.optimization.optimization_context import (
+        OptimizationContext,
+        build_optimization_context,
+    )
+
+    ctx = build_optimization_context(energy_system, scenario)
+    # ctx.years, ctx.annual_demand, ctx.technologies, ...
+"""
 from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
@@ -24,14 +42,37 @@ from pypeline.energy_technology.technology import Technology
 
 
 @dataclass
-class OMContext:
-    """Backend-agnostic optimization context derived from the EnergySystem and a Scenario."""
+class OptimizationContext:
+    """Flat numerical context derived from an EnergySystem and a Scenario.
+
+    This is the intermediate representation passed to solver backends.
+    It contains mostly plain Python types (lists, dicts, floats).  The
+    ``technologies`` field carries Technology domain objects because
+    backends need access to the full technology specification.
+
+    Attributes:
+        years: Scenario years as a list of ints.
+        regions: Region IDs as a list of ints.
+        commodity: Name of the demand commodity (e.g. ``"residential_heat"``).
+        annual_demand: Nested mapping ``{region_id: {year: MWh}}``.
+        demand_profile: Fractional hourly profile (length 8760, sums to 1).
+        schedules: Per-technology fractional hourly supply schedules
+            ``{tech_name: [f_h, ...]}``.
+        tss_indices: 0-based hour indices selected by the time-slice scheme.
+        tss_weights: Weights corresponding to ``tss_indices``.
+        constraints: Optional mapping of constraint name → values dict from
+            the EnergySystem (e.g. ``{"min_dhn_throughput_mwh": {...}}``).
+        technologies: Optional mapping of technology name → Technology object.
+        region_technology_metrics: Optional nested mapping
+            ``{region_id: {tech_name: {"initial_capacity": float,
+            "initial_energy_output": float}}}``.
+    """
     years: List[int]
     regions: List[int]
     commodity: str
     annual_demand: Dict[int, Dict[int, float]]  # region -> year -> MWh
     demand_profile: List[float]                 # l = 8760
-    schedules: Dict[str, List[float]]           # {tech,h}: fractional share of demand per hour
+    schedules: Dict[str, List[float]]           # {tech_name: fractional share per hour}
     tss_indices: List[int]                      # 0-based hour indices
     tss_weights: List[int]
     constraints: Dict[str, Dict[int, float]] | None = None
@@ -91,14 +132,29 @@ def _shape_schedule_for_share(
     return [target_share * v for v in normalized]
 
 
-def build_om_from_es(
+def build_optimization_context(
     energy_system: EnergySystem,
     scenario: Scenario,
     demand_name: str = DEFAULT_HEAT_GRID_DEMAND_NAME,
     commodity_out: Optional[str] = None,
     shaped_schedules: Optional[Mapping[str, Sequence[float]]] = None,
-) -> OMContext:
-    """Build an OMContext from an EnergySystem and Scenario."""
+) -> OptimizationContext:
+    """Build an :class:`OptimizationContext` from an EnergySystem and Scenario.
+
+    Args:
+        energy_system: The configured energy system.
+        scenario: The scenario defining years, discount rate, etc.
+        demand_name: Name of the demand entry to use for the commodity and
+            annual demand values (default: ``"residential_heat"``).
+        commodity_out: Override the demand commodity name.  Inferred from the
+            first region's demand entry when *None*.
+        shaped_schedules: Optional per-technology hourly shapes (length 8760).
+            When provided, each technology's flat share is spread according to
+            its shape.  Technologies without a shape entry get a zero schedule.
+
+    Returns:
+        A fully populated :class:`OptimizationContext`.
+    """
     regions = energy_system.regions
     if not regions:
         raise ValueError("EnergySystem has no regions")
@@ -171,7 +227,7 @@ def build_om_from_es(
     tss_idx, tss_w = four_times_indices()
     constraints = energy_system.constraints
 
-    return OMContext(
+    return OptimizationContext(
         years=scenario_years,
         regions=region_ids,
         commodity=commodity_out,
@@ -184,3 +240,5 @@ def build_om_from_es(
         technologies=tech_objects,
         region_technology_metrics=region_metrics,
     )
+
+

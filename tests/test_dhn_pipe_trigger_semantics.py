@@ -5,8 +5,8 @@ import pandas as pd
 from shapely.geometry import LineString, Polygon
 from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
-from pypeline.optimization.om_adapter import OMContext
-from tools.cesm_plugin import _write_cesm_inputs_from_om
+from pypeline.optimization.optimization_context import OptimizationContext
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -31,12 +31,12 @@ def _heat_demand(district: int) -> str:
     return _dn("residential_heat", district)
 
 
-def _build_om(region_ids: list[int], region_metrics: dict | None = None) -> OMContext:
+def _build_om(region_ids: list[int], region_metrics: dict | None = None) -> OptimizationContext:
     years = [2020, 2025, 2030]
     regions = list(region_ids)
     annual_demand = {rid: {year: 1000.0 for year in years} for rid in regions}
     demand_profile = [1.0 / 8760.0] * 8760
-    return OMContext(
+    return OptimizationContext(
         years=years,
         regions=regions,
         commodity="residential_heat",
@@ -127,7 +127,7 @@ def _write_inputs_with_techs(
     workdir: Path,
     model_name: str,
     polygons: gpd.GeoDataFrame,
-    om: OMContext,
+    om: OptimizationContext,
     techs: list[Technology],
     segments: gpd.GeoDataFrame | None = None,
 ) -> pd.DataFrame:

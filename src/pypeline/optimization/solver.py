@@ -1,28 +1,30 @@
-from abc import ABC
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Optional
 import pandas as pd
 
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_system.scenario import Scenario
 
 
-class OptimizationModel(ABC):
-    def __init__(self, conversion_sub_processes, conversion_processes, commodities, tss):
-        self.conversion_sub_processes = ...
-        self.conversion_processes = ...
-        self.commodities = ...
-        self.tss = ...
-
-class Solution:
-    def __init__(self):
-        self.energy_system: EnergySystem
-        self.scenario: Scenario
-        self.results: Results
-
 @dataclass
 class Results:
-    active_capacities: pd.DataFrame  # Columns: year, region, technology, capacity
-    yearly_energy_outputs: pd.DataFrame       # Columns: year, region, technology, energy_output
-    opex: float
-    capex: float
-    totex: float
+    active_capacities: pd.DataFrame  # Columns: year, technology, capacity
+    yearly_energy_outputs: pd.DataFrame  # Columns: year, technology, energy_output
+    opex: Optional[float]
+    capex: Optional[float]
+    totex: Optional[float]
+
+
+@dataclass
+class Solution:
+    energy_system: Optional[EnergySystem] = field(default=None)
+    scenario: Optional[Scenario] = field(default=None)
+    results: Optional[Results] = field(default=None)
+
+
+class OptimizationBackend(ABC):
+    @abstractmethod
+    def solve(self, energy_system: EnergySystem, scenario: Scenario) -> Solution:
+        """Run the optimization and return a Solution."""
+        ...

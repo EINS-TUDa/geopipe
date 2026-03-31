@@ -7,8 +7,8 @@ from shapely.geometry import Polygon
 from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 from pypeline.energy_technology.technology import Technology
-from pypeline.optimization.om_adapter import OMContext
-from tools.cesm_plugin import _write_cesm_inputs_from_om
+from pypeline.optimization.optimization_context import OptimizationContext
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,14 +64,14 @@ def _profile_value_for_year(value, year: int) -> float:
     return float(raw)
 
 
-def _build_om(*, force_central_cap_mw: float | None = None) -> OMContext:
+def _build_om(*, force_central_cap_mw: float | None = None) -> OptimizationContext:
     years = [2020, 2025, 2030]
     annual_demand = {DISTRICT_ID: {year: 1200.0 for year in years}}
     constraints: dict[str, dict] = {}
     if force_central_cap_mw and force_central_cap_mw > 0.0:
         constraints["min_central_cap_mw_total"] = {DISTRICT_ID: float(force_central_cap_mw)}
 
-    return OMContext(
+    return OptimizationContext(
         years=years,
         regions=[DISTRICT_ID],
         commodity="residential_heat",
@@ -86,10 +86,10 @@ def _build_om(*, force_central_cap_mw: float | None = None) -> OMContext:
     )
 
 
-def _build_om_with_region_metrics(region_metrics: dict[int, dict]) -> OMContext:
+def _build_om_with_region_metrics(region_metrics: dict[int, dict]) -> OptimizationContext:
     years = [2020, 2025, 2030]
     annual_demand = {DISTRICT_ID: {year: 1200.0 for year in years}}
-    return OMContext(
+    return OptimizationContext(
         years=years,
         regions=[DISTRICT_ID],
         commodity="residential_heat",

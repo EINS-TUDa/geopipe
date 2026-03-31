@@ -2,7 +2,7 @@ import math
 import pytest
 
 from pypeline.energy_technology.technology import Technology
-from tools.cesm_plugin import tech_to_cesms_row
+from pypeline.optimization.cesm.conversion_rows import tech_to_cesms_row
 
 
 class DummyTech(Technology):

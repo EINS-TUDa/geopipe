@@ -9,7 +9,7 @@ from typing import Tuple
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from pypeline.data.default_registry import get_default_data_registry
-from tools.cesm_plugin import CESMBackend
+from pypeline.optimization.cesm import CESMOptimizationBackend
 from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.energy_system.rule_book import EnergySystemRuleBook
 from pypeline.energy_system.scenario import Scenario
@@ -48,16 +48,13 @@ def ensure_pythonpath(project_root: Path) -> None:
         os.environ["PYTHONPATH"] = str(project_root)
 
 
-def create_cesm_backend(project_root: Path, *, model_name: str, scenario_name: str, tss_name: str, scenario, demand_name: str) -> CESMBackend:
+def create_cesm_backend(project_root: Path, *, model_name: str, scenario_name: str, tss_name: str, scenario, demand_name: str) -> CESMOptimizationBackend:
     """Configure and return a CESMBackend instance."""
     workdir = (project_root / "CESM").resolve()
-    runner = project_root / "tools" / "cesm_plugin.py"
-    if not runner.exists():
-        raise FileNotFoundError(f"Runner script not found: {runner}")
     ensure_pythonpath(project_root)
-    return CESMBackend(
+    return CESMOptimizationBackend(
         workdir=str(workdir),
-        cli=[sys.executable, str(runner)],
+        cli=[sys.executable, "-m", "pypeline.optimization.cesm.cli"],
         run_args=["--workdir", str(workdir), "-m", model_name, "-s", scenario_name],
         run_subdir=f"{model_name}-{scenario_name}",
         results_db_name="db.sqlite",

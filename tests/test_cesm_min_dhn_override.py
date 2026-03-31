@@ -1,6 +1,6 @@
 import pytest
 from pypeline.energy_technology.technology import Technology
-from tools.cesm_plugin import _ConversionRowsBuilder
+from pypeline.optimization.cesm.conversion_rows import _ConversionRowsBuilder
 
 
 def _profile_value_by_year(value) -> dict[int, float]:
