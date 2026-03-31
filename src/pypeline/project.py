@@ -1,12 +1,6 @@
 import logging
 from pathlib import Path
 
-THIRD_PARTY_LOGGERS = [
-    "matplotlib", "rasterio", "PIL", "fiona",
-    "shapely", "geopandas", "pyproj", "urllib3",
-    "sqlalchemy", "numba", "asyncio",
-]
-
 
 class PypelineProject:
     """Manages directory and file paths for a Pypeline project."""
@@ -33,8 +27,9 @@ class PypelineProject:
                 logging.FileHandler(log_file, mode="w", encoding="utf-8"),
             ],
         )
-        for logger_name in THIRD_PARTY_LOGGERS:
-            logging.getLogger(logger_name).setLevel(logging.WARNING)
+        # all loggers default to WARNING, pypeline logger uses specified log_level
+        logging.getLogger().setLevel(logging.WARNING)
+        logging.getLogger("pypeline").setLevel(log_level)
 
     def check_directories(self) -> None:
         """Check that all directories exist, create output directories if needed."""
