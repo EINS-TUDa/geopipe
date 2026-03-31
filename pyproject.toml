@@ -56,7 +56,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["pypeline*", "tools*"]
 exclude = ["data*", "examples*", "tests*", "docs*"]
 

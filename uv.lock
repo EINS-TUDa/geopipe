@@ -87,7 +87,7 @@ requires-dist = [
     { name = "plotly" },
     { name = "pyarrow" },
     { name = "scipy" },
-    { name = "setuptools" },
+    { name = "setuptools", specifier = "<81" },
 ]
 
 [[package]]
