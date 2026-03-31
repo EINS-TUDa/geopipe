@@ -177,11 +177,13 @@ class Region:
                  id_: int,
                  polygon: gpd.GeoDataFrame,
                  region_demands: list["RegionDemand"],
-                 region_technologies: list[RegionTechnology]):
+                 region_technologies: list[RegionTechnology],
+                 local_dhn_capex_base_eur: float | None = None):
         self.id = id_
         self.polygon = polygon
         self.region_demands = region_demands
         self.region_technologies = region_technologies
+        self.local_dhn_capex_base_eur = local_dhn_capex_base_eur
 
     def get_demand(self, name: str) -> RegionDemand | None:
         for demand in self.region_demands:

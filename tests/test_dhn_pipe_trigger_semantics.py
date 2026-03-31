@@ -3,8 +3,12 @@ import re
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString, Polygon
+from pypeline.energy_system.dhn import (
+    build_district_heat_grid_from_polygons,
+    build_inter_dhn_pipes_from_street_segments,
+)
 from pypeline.energy_technology.technology import Technology
-from pypeline.energy_technology.technology_registry import TechnologyRegistry
+from pypeline.energy_technology.technology_registry import TechnologyRegistry, get_default_technology_registry
 from pypeline.optimization.optimization_context import OptimizationContext
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_optimization_context
 
@@ -131,6 +135,27 @@ def _write_inputs_with_techs(
     techs: list[Technology],
     segments: gpd.GeoDataFrame | None = None,
 ) -> pd.DataFrame:
+    inter_district_pipe_specs = None
+    local_dhn_costs = None
+    if segments is not None:
+        default_registry = get_default_technology_registry()
+        default_registry.load_from_default()
+        pipe_tech = default_registry.get_by_name("heat_pipe")
+        polygons_proj = polygons.to_crs(3035) if polygons.crs is None or polygons.crs.is_geographic else polygons
+        segments_proj = segments.to_crs(3035) if segments.crs is None or segments.crs.is_geographic else segments
+        if len(polygons) > 1:
+            inter_district_pipe_specs = build_inter_dhn_pipes_from_street_segments(
+                polygons=polygons_proj,
+                street_segments_gdf=segments_proj,
+                pipe_capex_eur_per_km=1.0,
+                region_id_column="id",
+            )
+        local_dhn_costs = build_district_heat_grid_from_polygons(
+            polygons=polygons_proj,
+            local_pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
+            street_segments_gdf=segments_proj,
+            region_id_column="id",
+        )
     _ensure_tss(workdir)
     _write_cesm_inputs_from_optimization_context(
         om,
@@ -139,7 +164,8 @@ def _write_inputs_with_techs(
         scenario_name="Base",
         tss_name="4ThinWeeks",
         polygons_gdf=polygons,
-        street_segments_gdf=segments,
+        inter_district_pipe_specs=inter_district_pipe_specs,
+        local_dhn_costs=local_dhn_costs,
         data_dir=REPO_ROOT / "data",
         start_year=2020,
         end_year=2030,

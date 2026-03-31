@@ -20,7 +20,7 @@ class PypelineProject:
         """Configure logging: basicConfig for root, suppress third-party loggers."""
         log_file = self._project_dir / f"{project_name}.log"
         logging.basicConfig(
-            level=log_level,
+            level=logging.WARNING,
             format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             handlers=[
                 logging.StreamHandler(),
@@ -28,7 +28,6 @@ class PypelineProject:
             ],
         )
         # all loggers default to WARNING, pypeline logger uses specified log_level
-        logging.getLogger().setLevel(logging.WARNING)
         logging.getLogger("pypeline").setLevel(log_level)
 
     def check_directories(self) -> None:

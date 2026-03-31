@@ -27,6 +27,10 @@ from pypeline.energy_technology.technology import (
     TechnologyDependencyManager,
     TechnologyRequirement,
 )
+from pypeline.energy_system.dhn import (
+    build_district_heat_grid_from_polygons,
+    build_inter_dhn_pipes_from_street_segments,
+)
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 
 
@@ -47,6 +51,7 @@ class EnergySystem:
     commodity_config: dict[str, Any] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
+    inter_district_pipe_specs: dict[tuple[int, int], dict[str, float]] | None = None
 
 class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
@@ -63,6 +68,7 @@ class EnergySystemBuilder:
         self.demands: list[Demand] | None = None
         self.district_street_segments_gdf: gpd.GeoDataFrame | None = None
         self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
+        self.pipe_technology_name: str = "heat_pipe"
 
     def set_unit(self, input_unit: UnitEnum):
         self.unit = input_unit.unit
@@ -320,6 +326,31 @@ class EnergySystemBuilder:
                                        crs=self.polygons.crs)
             regions.append(rb.build(polygon=polygon))
 
+        # pre-compute pipe topology if street segments are available
+        inter_district_pipe_specs = None
+        if self.district_street_segments_gdf is not None:
+            pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
+
+            if len(self.polygons) > 1:
+                inter_district_pipe_specs = build_inter_dhn_pipes_from_street_segments(
+                    polygons=self.polygons,
+                    street_segments_gdf=self.district_street_segments_gdf,
+                    pipe_capex_eur_per_km=1.0,
+                    region_id_column="id",
+                )
+
+            # TODO: This should be integrated into the RegionBuilder
+            local_dhn_costs = build_district_heat_grid_from_polygons(
+                polygons=self.polygons,
+                local_pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
+                street_segments_gdf=self.district_street_segments_gdf,
+                region_id_column="id",
+            )
+            for region in regions:
+                payload = local_dhn_costs.get(region.id)
+                if payload is not None:
+                    region.local_dhn_capex_base_eur = float(payload["local_grid_capex_base_eur"])
+
         # create the energy system
         es = EnergySystem(
             name=self.energy_system_name,
@@ -328,6 +359,7 @@ class EnergySystemBuilder:
             district_street_segments_gdf=self.district_street_segments_gdf,
             technology_registry=self.technology_registry,
             commodity_config=self.commodity_config or {},
+            inter_district_pipe_specs=inter_district_pipe_specs,
         )
 
         # apply energy system rule book if set

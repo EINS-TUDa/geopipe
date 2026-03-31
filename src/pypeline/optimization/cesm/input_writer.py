@@ -33,10 +33,6 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 
-from pypeline.energy_system.dhn import (
-    build_district_heat_grid_from_polygons,
-    build_inter_dhn_pipes_from_street_segments,
-)
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_system.io_utils import (
     _canon_co,
@@ -110,7 +106,8 @@ def _write_cesm_inputs_from_optimization_context(
         tss_name: str,
         polygons_path: Optional[PathLike] = None,
         polygons_gdf: Optional[gpd.GeoDataFrame] = None,
-        street_segments_gdf: Optional[gpd.GeoDataFrame] = None,
+        inter_district_pipe_specs: Optional[dict] = None,
+        local_dhn_costs: Optional[dict] = None,
         data_dir: Optional[PathLike] = None,
         start_year: int | None = None,
         end_year: int | None = None,
@@ -211,14 +208,6 @@ def _write_cesm_inputs_from_optimization_context(
         gdf = gpd.read_file(poly_path)
     if gdf.crs is None or gdf.crs.is_geographic:
         gdf = gdf.to_crs(3035)
-    if street_segments_gdf is not None:
-        street_segments_gdf = street_segments_gdf.copy()
-        if street_segments_gdf.crs is None and gdf.crs is not None:
-            street_segments_gdf = street_segments_gdf.set_crs(gdf.crs, allow_override=True)
-        if gdf.crs is not None and street_segments_gdf.crs is not None and street_segments_gdf.crs != gdf.crs:
-            street_segments_gdf = street_segments_gdf.to_crs(gdf.crs)
-        if street_segments_gdf.crs is None or street_segments_gdf.crs.is_geographic:
-            street_segments_gdf = street_segments_gdf.to_crs(3035)
 
     n = int(len(gdf))
     if n < 1:
@@ -233,18 +222,12 @@ def _write_cesm_inputs_from_optimization_context(
         heat_names = [f"{base_heat_name}"]
     else:
         heat_names = [f"{base_heat_name}_D{i}" for i in range(n)]
-        if street_segments_gdf is not None and not street_segments_gdf.empty:
-            pipe_candidates = build_inter_dhn_pipes_from_street_segments(
-                polygons=gdf,
-                street_segments_gdf=street_segments_gdf,
-                pipe_capex_eur_per_km=1.0,
-                region_id_column="id",
-            )
+        if inter_district_pipe_specs is not None:
             pipe_specs_by_pair = {
                 (int(i), int(j)): dict(specs or {})
-                for (i, j), specs in pipe_candidates.items()
+                for (i, j), specs in inter_district_pipe_specs.items()
             }
-            pipe_pairs = sorted((int(i), int(j)) for (i, j) in pipe_candidates.keys())
+            pipe_pairs = sorted((int(i), int(j)) for (i, j) in inter_district_pipe_specs.keys())
 
     district_index = {d: idx for idx, d in enumerate(districts)}
     if len(districts) <= 1:
@@ -322,23 +305,12 @@ def _write_cesm_inputs_from_optimization_context(
     default_registry.load_from_default()
     pipe_tech = default_registry.get_by_name(pipe_technology_name)
 
-    demand_street_lengths = pd.to_numeric(
-        gdf.reindex(columns=["demand_street_length_m"]).iloc[:, 0],
-        errors="coerce",
-    ).fillna(0.0)
-    gdf = gdf.assign(demand_street_length_m=demand_street_lengths)
-
-    local_pipe_capex_per_km = float(pipe_tech.pipe_capex_eur_per_km)
-    local_grid_costs = build_district_heat_grid_from_polygons(
-        polygons=gdf,
-        local_pipe_capex_eur_per_km=local_pipe_capex_per_km,
-        street_segments_gdf=street_segments_gdf,
-        region_id_column="id",
-    )
-    local_dhn_capex_base_by_district: dict[int, float] = {
-        int(district_id): float(payload["local_grid_capex_base_eur"])
-        for district_id, payload in local_grid_costs.items()
-    }
+    local_dhn_capex_base_by_district: dict[int, float] = {}
+    if local_dhn_costs is not None:
+        local_dhn_capex_base_by_district = {
+            int(district_id): float(payload["local_grid_capex_base_eur"])
+            for district_id, payload in local_dhn_costs.items()
+        }
 
     def _require_value(value_override: Any, spec_value: Any, field_name: str) -> Any:
         if value_override is not None:
@@ -930,7 +902,12 @@ def write_cesm_inputs_from_energy_system(
         year_gap=getattr(scenario, "year_gap", None),
         discount_rate=getattr(scenario, "discount_rate", None),
         polygons_gdf=polygons_gdf,
-        street_segments_gdf=getattr(energy_system, "district_street_segments_gdf", None),
+        inter_district_pipe_specs=getattr(energy_system, "inter_district_pipe_specs", None),
+        local_dhn_costs={
+            region.id: {"local_grid_capex_base_eur": region.local_dhn_capex_base_eur}
+            for region in energy_system.regions
+            if region.local_dhn_capex_base_eur is not None
+        },
         technology_registry=technology_registry,
         retain_existing_output_factor=retain_existing_output_factor,
         retain_existing_output_years_factor=retain_existing_output_years_factor,
