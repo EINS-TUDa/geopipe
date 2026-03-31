@@ -6,7 +6,7 @@ from shapely.geometry import LineString, Polygon
 from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.optimization_context import OptimizationContext
-from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_optimization_context
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -132,7 +132,7 @@ def _write_inputs_with_techs(
     segments: gpd.GeoDataFrame | None = None,
 ) -> pd.DataFrame:
     _ensure_tss(workdir)
-    _write_cesm_inputs_from_om(
+    _write_cesm_inputs_from_optimization_context(
         om,
         workdir=workdir,
         model_name=model_name,

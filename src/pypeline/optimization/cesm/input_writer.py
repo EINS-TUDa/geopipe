@@ -101,40 +101,40 @@ def _log_techmap_stats(*, commodity_count: int, convproc_count: int, convsubproc
     )
 
 
-def _write_cesm_inputs_from_om(
-    om: OptimizationContext,
-    *,
-    workdir: PathLike,
-    model_name: str,
-    scenario_name: str,
-    tss_name: str,
-    polygons_path: Optional[PathLike] = None,
-    polygons_gdf: Optional[gpd.GeoDataFrame] = None,
-    street_segments_gdf: Optional[gpd.GeoDataFrame] = None,
-    data_dir: Optional[PathLike] = None,
-    start_year: int | None = None,
-    end_year: int | None = None,
-    year_gap: int | None = None,
-    discount_rate: float | None = None,
-    lockout_years: int | None = None,
-    dt_hours: int = 1,
-    elec_profile_file: str | None = None,
-    heat_commodity_base: str | None = None,
-    elec_price_eur_per_mwh: float | None = None,
-    export_price_eur_per_mwh: float | None = None,
-    grid_prices: dict[str, float] | None = None,
-    supply_prices: dict[str, float] | None = None,
-    pipe_loss_fraction: float | None = None,
-    pipe_cap_max_mw: float | None = None,
-    pipe_opex_eur_per_mwh: float | None = None,
-    pipe_capex_eur_per_mw: float | None = None,
-    pipe_lifetime_years: int | None = None,
-    selected_techs: list[Technology] | TechnologyRegistry | None = None,
-    retain_existing_output_factor: float | None = None,
-    retain_existing_output_years_factor: float | None = None,
-    retain_existing_output_schedule: Optional[List[float]] = None,
-    technology_registry: TechnologyRegistry | None = None,
-    pipe_technology_name: str = "heat_pipe",
+def _write_cesm_inputs_from_optimization_context(
+        optimization_context: OptimizationContext,
+        *,
+        workdir: PathLike,
+        model_name: str,
+        scenario_name: str,
+        tss_name: str,
+        polygons_path: Optional[PathLike] = None,
+        polygons_gdf: Optional[gpd.GeoDataFrame] = None,
+        street_segments_gdf: Optional[gpd.GeoDataFrame] = None,
+        data_dir: Optional[PathLike] = None,
+        start_year: int | None = None,
+        end_year: int | None = None,
+        year_gap: int | None = None,
+        discount_rate: float | None = None,
+        lockout_years: int | None = None,
+        dt_hours: int = 1,
+        elec_profile_file: str | None = None,
+        heat_commodity_base: str | None = None,
+        elec_price_eur_per_mwh: float | None = None,
+        export_price_eur_per_mwh: float | None = None,
+        grid_prices: dict[str, float] | None = None,
+        supply_prices: dict[str, float] | None = None,
+        pipe_loss_fraction: float | None = None,
+        pipe_cap_max_mw: float | None = None,
+        pipe_opex_eur_per_mwh: float | None = None,
+        pipe_capex_eur_per_mw: float | None = None,
+        pipe_lifetime_years: int | None = None,
+        selected_techs: list[Technology] | TechnologyRegistry | None = None,
+        retain_existing_output_factor: float | None = None,
+        retain_existing_output_years_factor: float | None = None,
+        retain_existing_output_schedule: Optional[List[float]] = None,
+        technology_registry: TechnologyRegistry | None = None,
+        pipe_technology_name: str = "heat_pipe",
 ) -> None:
     workdir = Path(workdir)
     paths = _prepare_io_paths(workdir, model_name, tss_name)
@@ -150,7 +150,7 @@ def _write_cesm_inputs_from_om(
     if data_dir is None:
         raise ValueError("data_dir must be provided via the EnergySystem (no default path)")
     data_dir = Path(data_dir)
-    om_regions = list(om.regions)
+    om_regions = list(optimization_context.regions)
 
     if grid_prices is None or supply_prices is None:
         raise ValueError(
@@ -182,7 +182,7 @@ def _write_cesm_inputs_from_om(
     if not scenario_years:
         raise ValueError("scenario years cannot be empty")
 
-    om_profile = om.demand_profile
+    om_profile = optimization_context.demand_profile
     if hasattr(om_profile, "values"):
         om_profile = om_profile.values
     profile_full = np.asarray(list(om_profile), dtype=float)
@@ -196,7 +196,7 @@ def _write_cesm_inputs_from_om(
     heat_names: List[str]
     pipe_pairs: List[Tuple[int, int]] = []
     pipe_specs_by_pair: dict[tuple[int, int], dict[str, float]] = {}
-    base_heat_name = heat_commodity_base or om.commodity or demand_commodity
+    base_heat_name = heat_commodity_base or optimization_context.commodity
     gdf: Optional[gpd.GeoDataFrame] = None
     if polygons_gdf is not None:
         gdf = polygons_gdf.copy()
@@ -261,7 +261,7 @@ def _write_cesm_inputs_from_om(
     def _annual_demands_from_om() -> List[float]:
         if not om_regions:
             return []
-        annual_map = om.annual_demand
+        annual_map = optimization_context.annual_demand
         target_year = int(start_year)
         values: List[float] = []
         for rid in om_regions:
@@ -296,8 +296,8 @@ def _write_cesm_inputs_from_om(
     tss_df = _tss_df(tss_name=tss_name, dt_hours=dt_hours)
     base = ["Electricity", "External", "Dummy"]
     district_heat_names = (
-        [district_heat_in_names[d] for d in districts]
-        + [district_heat_out_names[d] for d in districts]
+            [district_heat_in_names[d] for d in districts]
+            + [district_heat_out_names[d] for d in districts]
     )
     commodity_list = base + [grid_hub_name] + grid_names + heat_names + district_heat_names
     commodity_list = list(dict.fromkeys(commodity_list))
@@ -307,7 +307,7 @@ def _write_cesm_inputs_from_om(
     elif isinstance(selected_techs, list):
         sel_list = [t for t in selected_techs if isinstance(t, Technology)]
     elif selected_techs is None:
-        om_techs = om.technologies
+        om_techs = optimization_context.technologies
         if isinstance(om_techs, dict):
             sel_list = [t for t in om_techs.values() if isinstance(t, Technology)]
     dedup: dict[str, Technology] = {}
@@ -369,11 +369,11 @@ def _write_cesm_inputs_from_om(
         pipe_lifetime_value = int(_require_value(pipe_lifetime_years, spec_lifetime, "pipe_lifetime_years"))
         pipe_cap_max_value = float(_require_value(pipe_cap_max_mw, spec_cap_max, "pipe_cap_max_mw"))
 
-    constraints_raw = om.constraints or {}
+    constraints_raw = optimization_context.constraints or {}
     if constraints_raw and not isinstance(constraints_raw, dict):
         raise ValueError("constraints must be provided as a mapping")
 
-    demand_commodity = om.commodity or "residential_heat"
+    demand_commodity = optimization_context.commodity or "residential_heat"
 
     min_dhn_targets_raw = constraints_raw.get("min_dhn_throughput_mwh", {}) if constraints_raw else {}
     if min_dhn_targets_raw and not isinstance(min_dhn_targets_raw, dict):
@@ -435,7 +435,7 @@ def _write_cesm_inputs_from_om(
         if bucket:
             min_central_cap_totals_by_co[commodity] = bucket
 
-    om_region_ids = list(om.regions)
+    om_region_ids = list(optimization_context.regions)
     district_to_region: dict[int, int] = {}
     for idx, district_id in enumerate(districts):
         if idx >= len(om_region_ids):
@@ -443,7 +443,7 @@ def _write_cesm_inputs_from_om(
         raw_rid = om_region_ids[idx]
         district_to_region[district_id] = to_int_id(raw_rid)
 
-    region_metrics = om.region_technology_metrics or {}
+    region_metrics = optimization_context.region_technology_metrics or {}
     if not isinstance(region_metrics, dict):
         region_metrics = {}
 
@@ -521,7 +521,8 @@ def _write_cesm_inputs_from_om(
             imported = float(metrics["initial_energy_output"] or 0.0)
             if imported <= 0.0:
                 continue
-            historical_pipe_import_by_region[dst_region] = historical_pipe_import_by_region.get(dst_region, 0.0) + imported
+            historical_pipe_import_by_region[dst_region] = historical_pipe_import_by_region.get(dst_region,
+                                                                                                0.0) + imported
 
     for district, rid in district_to_region.items():
         if district >= len(annual_heat_by_d):
@@ -647,7 +648,8 @@ def _write_cesm_inputs_from_om(
         conv_procs += [f"HeatDemand_D{i}" for i in districts]
         conv_procs += [f"Pipe_D{i}_D{j}" for (i, j) in pipe_pairs]
     for tech in sel_list:
-        from pypeline.energy_technology.technology import split_base_and_district as _sbd, is_central_heat_supply as _ichs
+        from pypeline.energy_technology.technology import split_base_and_district as _sbd, \
+            is_central_heat_supply as _ichs
         base_name, tech_district = _sbd(tech.name)
         if base_name in _hx_base_names:
             if len(districts) == 1:
@@ -879,20 +881,20 @@ def _write_cesm_inputs_from_om(
 
 
 def write_cesm_inputs_from_energy_system(
-    energy_system: EnergySystem,
-    scenario: Scenario,
-    *,
-    workdir: PathLike,
-    model_name: str,
-    scenario_name: str,
-    tss_name: str,
-    demand_name: str = "residential_heat",
-    technology_registry: TechnologyRegistry | None = None,
-    polygons_gdf: Optional[gpd.GeoDataFrame] = None,
-    retain_existing_output_factor: float | None = None,
-    retain_existing_output_years_factor: float | None = None,
-    retain_existing_output_schedule: Optional[List[float]] = None,
-    **kwargs: Any,
+        energy_system: EnergySystem,
+        scenario: Scenario,
+        *,
+        workdir: PathLike,
+        model_name: str,
+        scenario_name: str,
+        tss_name: str,
+        demand_name: str = "residential_heat",
+        technology_registry: TechnologyRegistry | None = None,
+        polygons_gdf: Optional[gpd.GeoDataFrame] = None,
+        retain_existing_output_factor: float | None = None,
+        retain_existing_output_years_factor: float | None = None,
+        retain_existing_output_schedule: Optional[List[float]] = None,
+        **kwargs: Any,
 ) -> None:
     """Generate CESM inputs from an EnergySystem."""
 
@@ -914,7 +916,7 @@ def write_cesm_inputs_from_energy_system(
     )
     if polygons_gdf is None:
         polygons_gdf = _polygons_from_energy_system(energy_system)
-    _write_cesm_inputs_from_om(
+    _write_cesm_inputs_from_optimization_context(
         om_ctx,
         workdir=workdir,
         model_name=model_name,

@@ -12,7 +12,7 @@ from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.optimization_context import OptimizationContext
 from pypeline.energy_system.heating_shares import resolve_fernwaerme_share_by_district
-from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_optimization_context
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -190,7 +190,7 @@ def first_year_imports_t(tmp_path: Path) -> None:
     tss_target.parent.mkdir(parents=True, exist_ok=True)
     tss_target.write_text(tss_source.read_text(encoding="utf-8"), encoding="utf-8")
 
-    _write_cesm_inputs_from_om(
+    _write_cesm_inputs_from_optimization_context(
         om,
         workdir=workdir,
         model_name="FirstYearFernwaermeImportFromDataset",

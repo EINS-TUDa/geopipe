@@ -1,13 +1,18 @@
+import logging
 from pathlib import Path
 
-from pkg_resources import ensure_directory
+THIRD_PARTY_LOGGERS = [
+    "matplotlib", "rasterio", "PIL", "fiona",
+    "shapely", "geopandas", "pyproj", "urllib3",
+    "sqlalchemy", "numba", "asyncio",
+]
 
 
 class PypelineProject:
     """Manages directory and file paths for a Pypeline project."""
 
-    def __init__(self, project_root: Path, project_name: str):
-        self._project_root = project_root # should be obsolete in near future
+    def __init__(self, project_root: Path, project_name: str, log_level: int = logging.DEBUG):
+        self._project_root = project_root
         self._project_dir = project_root / "examples" / project_name
         self._input_data_dir = self._project_dir / "input_data"
         self._output_data_dir = self._project_dir / "output_data"
@@ -15,6 +20,21 @@ class PypelineProject:
         self._global_data_dir = project_root / "data" # should be obsolete in near future
 
         self.check_directories()
+        self._setup_logging(project_name, log_level)
+
+    def _setup_logging(self, project_name: str, log_level: int) -> None:
+        """Configure logging: basicConfig for root, suppress third-party loggers."""
+        log_file = self._project_dir / f"{project_name}.log"
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            handlers=[
+                logging.StreamHandler(),
+                logging.FileHandler(log_file, mode="w", encoding="utf-8"),
+            ],
+        )
+        for logger_name in THIRD_PARTY_LOGGERS:
+            logging.getLogger(logger_name).setLevel(logging.WARNING)
 
     def check_directories(self) -> None:
         """Check that all directories exist, create output directories if needed."""

@@ -8,7 +8,7 @@ from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 from pypeline.energy_technology.technology import Technology
 from pypeline.optimization.optimization_context import OptimizationContext
-from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_om
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_optimization_context
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -223,7 +223,7 @@ def _run_case(*, tmp_path: Path, model_name: str, force_central_cap_mw: float | 
 
     _ensure_tss(ts_dir)
 
-    _write_cesm_inputs_from_om(
+    _write_cesm_inputs_from_optimization_context(
         _build_om(force_central_cap_mw=force_central_cap_mw),
         workdir=workdir,
         model_name=model_name,
@@ -337,7 +337,7 @@ def legacy_dispatch_t(tmp_path: Path) -> None:
         }
     )
 
-    _write_cesm_inputs_from_om(
+    _write_cesm_inputs_from_optimization_context(
         om,
         workdir=workdir,
         model_name="LegacyDispatch",
@@ -436,7 +436,7 @@ def lockout_keeps_min_t(tmp_path: Path) -> None:
         }
     )
 
-    _write_cesm_inputs_from_om(
+    _write_cesm_inputs_from_optimization_context(
         om,
         workdir=workdir,
         model_name="CentralRetainLockout",
@@ -494,7 +494,7 @@ def bad_retention_t(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Invalid central retention metrics"):
-        _write_cesm_inputs_from_om(
+        _write_cesm_inputs_from_optimization_context(
             om,
             workdir=workdir,
             model_name="CentralBadMetrics",
