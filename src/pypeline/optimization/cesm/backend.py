@@ -137,8 +137,6 @@ class CESMOptimizationBackend(OptimizationBackend):
         if extra_args:
             cmd.extend(extra_args)
         (self.workdir / "cesm_cmd.txt").write_text(json.dumps(cmd, indent=2))
-        cp = subprocess.run(cmd, cwd=self.workdir, capture_output=True, text=True)
-        (self.workdir / "cesm_stdout.log").write_text(cp.stdout or "")
-        (self.workdir / "cesm_stderr.log").write_text(cp.stderr or "")
+        cp = subprocess.run(cmd, cwd=self.workdir, text=True)
         if cp.returncode != 0:
             raise RuntimeError(f"CESM failed (exit {cp.returncode}). See logs in workdir")
