@@ -1,5 +1,7 @@
 import geopandas as gpd
+import networkx as nx
 import pandas as pd
+from shapely.geometry import MultiPoint
 from pathlib import Path
 from pypeline.data import (
     DataRegistry,
@@ -93,34 +95,18 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 def local_heat_demand_query(dataset: FileDataset, query: dict) -> float:
     if query["key"] != "residential_heat_demand":
         raise ValueError("local_heat_demand_query only supports 'residential_heat_demand' key")
-
-    region: gpd.GeoDataFrame = query["region"]
-    region_epsg = region.crs.to_epsg()
-
-    gdf = dataset.get_data()
-    if gdf.crs.to_epsg() != region_epsg:
-        gdf = gdf.to_crs(epsg=region_epsg)
-
-    if "qnutzwaerme_2020_kwh" in gdf.columns:
-        gdf_in_region = gpd.sjoin(gdf, region, predicate="within", how="inner")
-        return float(pd.to_numeric(gdf_in_region["qnutzwaerme_2020_kwh"], errors="coerce").fillna(0.0).sum())
-
-    gdf_in_region = gpd.sjoin(gdf, region, predicate="intersects", how="inner")
-
-    if "total_heat_demand" in gdf_in_region.columns:
-        total_heat_demand_wh = pd.to_numeric(gdf_in_region["total_heat_demand"], errors="coerce").fillna(0.0).sum()
-        return float(total_heat_demand_wh) / 1_000_000.0
-
-    if "linear_heat_density" in gdf_in_region.columns and "street_length" in gdf_in_region.columns:
-        linear = pd.to_numeric(gdf_in_region["linear_heat_density"], errors="coerce").fillna(0.0)
-        length = pd.to_numeric(gdf_in_region["street_length"], errors="coerce").fillna(0.0)
-        total_heat_demand_wh = (linear * length).sum()
-        return float(total_heat_demand_wh) / 1_000_000.0
-
-    raise ValueError(
-        "Local heat demand file must contain either 'qnutzwaerme_2020_kwh', "
-        "'total_heat_demand', or both 'linear_heat_density' and 'street_length'."
-    )
+    # TODO: Maybe account for additional demands via demand.yaml here. Decide how to deal with "dataset" which is not needed for this query as the heat demand lives on the edges of the region graph.
+    region: nx.Graph = query["region"]
+    seen: set = set()
+    total_wh = 0.0
+    for _, _, d in region.edges(data=True):
+        sid = d.get("street_id")
+        if sid is not None and sid in seen:
+            continue
+        if sid is not None:
+            seen.add(sid)
+        total_wh += float(d.get("total_heat_demand", 0.0))
+    return total_wh / 1_000_000.0
 
 
 def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusTechnology, float]:
@@ -137,36 +123,18 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusT
                        "Fernwaerme": CensusTechnology.District_Heating,
                        "kein_Energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    region: gpd.GeoDataFrame = query["region"]
-    region_epsg = region.crs.to_epsg()
+    region: nx.Graph = query["region"]
+    region_crs = region.graph.get("crs")
+    boundary_gdf = gpd.GeoDataFrame(
+        geometry=[MultiPoint(list(region.nodes)).convex_hull], crs=region_crs
+    )
 
     gdf = dataset.get_data()
-    if gdf.crs.to_epsg() != region_epsg:
-        gdf = gdf.to_crs(epsg=region_epsg)
+    if region_crs is not None and gdf.crs != region_crs:
+        gdf = gdf.to_crs(region_crs)
 
-    existing_columns = set(gdf.columns)
-    optional_district_heating_columns = [
-        "Nahwaerme",
-        "nahwaerme",
-        "NAHWAERME",
-    ]
-    district_heating_aliases = [
-        "Fernwaerme",
-        "fernwaerme",
-        "FERNWAERME",
-        *optional_district_heating_columns,
-    ]
-    district_heating_columns = [col for col in district_heating_aliases if col in existing_columns]
-
-    gdf_in_region = gpd.sjoin(gdf, region, predicate="intersects", how="inner")
+    gdf_in_region = gpd.sjoin(gdf, boundary_gdf, predicate="intersects", how="inner")
     gdf_in_region = gdf_in_region.rename(columns=census_names)
-
-    if district_heating_columns:
-        effective_district_heating_columns = [census_names.get(col, col) for col in district_heating_columns]
-        district_heat_values = pd.Series(0.0, index=gdf_in_region.index)
-        for col in effective_district_heating_columns:
-            district_heat_values = district_heat_values + pd.to_numeric(gdf_in_region[col], errors='coerce').fillna(0.0)
-        gdf_in_region[CensusTechnology.District_Heating] = district_heat_values
 
     technologies = list(census_names.values())
 

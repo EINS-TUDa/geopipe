@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import geopandas as gpd
+import networkx as nx
 import pandas as pd
 import yaml
 
@@ -28,8 +29,8 @@ from pypeline.energy_technology.technology import (
     TechnologyRequirement,
 )
 from pypeline.energy_system.dhn import (
-    build_district_heat_grid_from_polygons,
-    build_inter_dhn_pipes_from_street_segments,
+    build_district_heat_grid_from_topology,
+    build_inter_dhn_pipes_from_topologies,
 )
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 
@@ -38,7 +39,6 @@ __all__ = (
     "EnergySystem",
     "EnergySystemBuilder",
     "JsonEnergySystemBuilder",
-    "NameEnergySystemBuilder",
 )
 
 @dataclass(slots=True)
@@ -46,7 +46,7 @@ class EnergySystem:
     name: str
     regions: list[Region]
     units: Unit
-    district_street_segments_gdf: gpd.GeoDataFrame | None = None
+    street_network: nx.Graph | None = None
     technology_registry: TechnologyRegistry | None = None
     commodity_config: dict[str, Any] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
@@ -57,7 +57,8 @@ class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
         self.energy_system_name = energy_system_name
         self.base_crs = base_crs
-        self.polygons: gpd.GeoDataFrame | None = None
+        self.region_topologies: list[nx.Graph] | None = None
+        self.street_network: nx.Graph | None = None
         self.rule_book: EnergySystemRuleBook | None = None
         self.region_rule_book: RegionRuleBook | None = None
         self.data_registry: DataRegistry | None = None
@@ -66,7 +67,6 @@ class EnergySystemBuilder:
         self.technology_dependency_manager: TechnologyDependencyManager | None = None
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
-        self.district_street_segments_gdf: gpd.GeoDataFrame | None = None
         self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
         self.pipe_technology_name: str = "heat_pipe"
 
@@ -74,17 +74,23 @@ class EnergySystemBuilder:
         self.unit = input_unit.unit
         return self
 
-    def set_polygons(self, polygons: gpd.GeoDataFrame):
-        if "id" not in polygons.columns or polygons["id"].isnull().any():
-            polygons = polygons.copy()
-            if "id" not in polygons.columns:
-                polygons["id"] = range(len(polygons))
-            else:
-                missing = polygons["id"].isnull()
-                max_existing_id = polygons["id"].dropna().max()
-                next_id = 0 if pd.isna(max_existing_id) else int(max_existing_id) + 1
-                polygons.loc[missing, "id"] = range(next_id, next_id + missing.sum())
-        self.polygons = polygons.to_crs(self.base_crs)
+    def set_street_network(self, network: nx.Graph):
+        """Explicitly set the full street network used for inter-district routing.
+
+        If not set, ``build()`` will query the data registry for a ``street_network``
+        key.  If neither is available, ``build()`` raises a ``ValueError``.
+        """
+        self.street_network = network
+        return self
+
+    def set_region_topologies(self, topologies: list[nx.Graph]):
+        """Set the region topologies directly as a list of NetworkX graphs.
+
+        Each graph represents the street network of one region.  If a graph carries
+        a pre-assigned integer ID in ``G.graph['id']``, that value is used as the
+        region ID; otherwise the list index is used.
+        """
+        self.region_topologies = list(topologies)
         return self
 
     def set_region_rule_book(self, rule_book: RegionRuleBook):
@@ -158,10 +164,6 @@ class EnergySystemBuilder:
                 default_supply_technology=None,
             ),
         ]
-
-    def set_district_street_segments(self, street_segments: gpd.GeoDataFrame | None):
-        self.district_street_segments_gdf = None if street_segments is None else street_segments.copy()
-        return self
 
     def _set_default_technology_dependency_manager(self):
         dependencies = {
@@ -300,6 +302,28 @@ class EnergySystemBuilder:
                 )
             )
 
+    def _resolve_street_network(self) -> nx.Graph:
+        """Return the full street network for inter-district routing.
+
+        Resolution order:
+        1. Explicitly set via ``set_street_network()``.
+        2. Queried from the data registry using key ``"street_network"``.
+        """
+        if self.street_network is not None:
+            return self.street_network
+        if self.data_registry is not None:
+            try:
+                network = self.data_registry.query({"key": "street_network", "base_crs": self.base_crs})
+                if network is not None:
+                    return network
+            except LookupError:
+                pass
+        raise ValueError(
+            "No street network available for inter-district routing. "
+            "Set one explicitly via set_street_network() or provide a 'street_network' "
+            "entry in the data registry."
+        )
+
     def build(self) -> EnergySystem:
         # verify the required attributes are set
         self.verify()
@@ -319,44 +343,40 @@ class EnergySystemBuilder:
         if self.region_rule_book:
             rb.set_rule_book(self.region_rule_book)
 
-        # build regions from polygons
+        # build one Region per topology graph
         regions: list[Region] = []
-        for row in self.polygons.itertuples(index=False):
-            polygon = gpd.GeoDataFrame([{"geometry": row.geometry, "id": getattr(row, "id")}],
-                                       crs=self.polygons.crs)
-            regions.append(rb.build(polygon=polygon))
+        for idx, topology in enumerate(self.region_topologies):
+            region_id = topology.graph.get("id", idx)
+            if not isinstance(region_id, int):
+                region_id = idx
+            regions.append(rb.build(topology=topology, region_id=region_id))
 
-        # pre-compute pipe topology if street segments are available
-        inter_district_pipe_specs = None
-        if self.district_street_segments_gdf is not None:
-            pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
-
-            if len(self.polygons) > 1:
-                inter_district_pipe_specs = build_inter_dhn_pipes_from_street_segments(
-                    polygons=self.polygons,
-                    street_segments_gdf=self.district_street_segments_gdf,
-                    pipe_capex_eur_per_km=1.0,
-                    region_id_column="id",
-                )
-
-            # TODO: This should be integrated into the RegionBuilder
-            local_dhn_costs = build_district_heat_grid_from_polygons(
-                polygons=self.polygons,
-                local_pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
-                street_segments_gdf=self.district_street_segments_gdf,
-                region_id_column="id",
+        # pre-compute local DHN costs and inter-district pipe specs
+        pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
+        for region in regions:
+            cost = build_district_heat_grid_from_topology(
+                topology=region.topology,
+                pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
             )
-            for region in regions:
-                payload = local_dhn_costs.get(region.id)
-                if payload is not None:
-                    region.local_dhn_capex_base_eur = float(payload["local_grid_capex_base_eur"])
+            region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
+
+        # resolve the full street network for inter-district routing
+        street_network = self._resolve_street_network()
+
+        inter_district_pipe_specs = None
+        if len(regions) > 1:
+            inter_district_pipe_specs = build_inter_dhn_pipes_from_topologies(
+                regions=regions,
+                full_network=street_network,
+                pipe_capex_eur_per_km=1.0,
+            )
 
         # create the energy system
         es = EnergySystem(
             name=self.energy_system_name,
             regions=regions,
+            street_network=street_network,
             units=self.unit,
-            district_street_segments_gdf=self.district_street_segments_gdf,
             technology_registry=self.technology_registry,
             commodity_config=self.commodity_config or {},
             inter_district_pipe_specs=inter_district_pipe_specs,
@@ -371,8 +391,8 @@ class EnergySystemBuilder:
     def verify(self):
         if not isinstance(self.base_crs, str):
             raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
-        if not isinstance(self.polygons, gpd.GeoDataFrame):
-            raise ValueError(f"Geometry must be set and a GeoDataFrame and not {type(self.polygons)}")
+        if not isinstance(self.region_topologies, list) or not self.region_topologies:
+            raise ValueError("Region topologies must be set as a non-empty list of NetworkX graphs")
         if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
             raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
         if not isinstance(self.data_registry, DataRegistry):
@@ -393,13 +413,7 @@ class EnergySystemBuilder:
 
 
 class JsonEnergySystemBuilder(EnergySystemBuilder):
-    def set_geometry_from_json(self, json_file_path: str):
-        self.polygons = gpd.read_file(json_file_path)
-        self.polygons = self.polygons.to_crs(self.base_crs)
-
-
-class NameEnergySystemBuilder(EnergySystemBuilder):
-    def set_geometry_from_city_name(self, city_name: str):
-        self.polygons = DataRegistry.fetch_data("GeoportalHessen", "CityBoundaries",
-                                                {"city_name": city_name, "base_crs": self.base_crs})
-        self.polygons = self.polygons.to_crs(self.base_crs)
+    def set_topology_from_json(self, json_file_path: str, key_column: str = "gemeindeschluessel"):
+        from pypeline.energy_system.dhn import gdf_to_region_topologies
+        gdf = gpd.read_file(json_file_path).to_crs(self.base_crs)
+        self.set_region_topologies(gdf_to_region_topologies(gdf, key_column=key_column))

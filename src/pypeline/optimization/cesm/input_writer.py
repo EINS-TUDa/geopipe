@@ -31,7 +31,6 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
-import geopandas as gpd
 
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_system.io_utils import (
@@ -39,7 +38,6 @@ from pypeline.energy_system.io_utils import (
     _convsubproc_dataframe,
     commodity_config_from_energy_system as _commodity_config_from_energy_system,
     resolve_retain_schedule as _resolve_retain_schedule,
-    polygons_from_energy_system as _polygons_from_energy_system,
     _write_demand_profile,
     _write_techmap_workbook,
     _units_df,
@@ -104,8 +102,6 @@ def _write_cesm_inputs_from_optimization_context(
         model_name: str,
         scenario_name: str,
         tss_name: str,
-        polygons_path: Optional[PathLike] = None,
-        polygons_gdf: Optional[gpd.GeoDataFrame] = None,
         inter_district_pipe_specs: Optional[dict] = None,
         local_dhn_costs: Optional[dict] = None,
         data_dir: Optional[PathLike] = None,
@@ -189,39 +185,15 @@ def _write_cesm_inputs_from_optimization_context(
     profile_full = normalize_profile_for_tss(profile_full, tss_vals)
     demand_profile_name = "HeatDemandProfile"
     _write_demand_profile(ts_dir, demand_profile_name, profile_full)
-    districts: List[int]
     heat_names: List[str]
     pipe_pairs: List[Tuple[int, int]] = []
     pipe_specs_by_pair: dict[tuple[int, int], dict[str, float]] = {}
     base_heat_name = heat_commodity_base or optimization_context.commodity
-    gdf: Optional[gpd.GeoDataFrame] = None
-    if polygons_gdf is not None:
-        gdf = polygons_gdf.copy()
-    if polygons_path is None and gdf is None:
-        raise ValueError("polygons must be provided via EnergySystem (no synthetic fallback)")
-    if gdf is None:
-        if gpd is None:
-            raise RuntimeError("geopandas required for polygons_path.")
-        poly_path = Path(polygons_path)
-        if not poly_path.exists():
-            raise FileNotFoundError(f"polygons not found: {poly_path}")
-        gdf = gpd.read_file(poly_path)
-    if gdf.crs is None or gdf.crs.is_geographic:
-        gdf = gdf.to_crs(3035)
-
-    n = int(len(gdf))
-    if n < 1:
-        raise ValueError("No polygons found.")
-    areas = gdf.geometry.area.values.astype(float)
-    if not np.isfinite(areas).all() or areas.sum() <= 0:
-        area_weights = np.ones(n, dtype=float) / n
-    else:
-        area_weights = areas / areas.sum()
-    districts = list(range(n))
-    if n == 1:
+    districts = list(range(len(om_regions)))
+    if len(districts) == 1:
         heat_names = [f"{base_heat_name}"]
     else:
-        heat_names = [f"{base_heat_name}_D{i}" for i in range(n)]
+        heat_names = [f"{base_heat_name}_D{i}" for i in districts]
         if inter_district_pipe_specs is not None:
             pipe_specs_by_pair = {
                 (int(i), int(j)): dict(specs or {})
@@ -253,19 +225,16 @@ def _write_cesm_inputs_from_optimization_context(
         return values
 
     annual_heat_by_d = _annual_demands_from_om()
-    if annual_heat_by_d and len(annual_heat_by_d) != len(districts):
-        total_from_om = float(sum(annual_heat_by_d))
-        if total_from_om > 0:
-            annual_heat_by_d = (area_weights * total_from_om).tolist()
-        else:
-            annual_heat_by_d = [0.0] * len(districts)
     if not annual_heat_by_d:
         annual_heat_by_d = [0.0] * len(districts)
+    if len(annual_heat_by_d) != len(districts):
+        raise ValueError(
+            f"Annual heat demand count ({len(annual_heat_by_d)}) does not match "
+            f"number of districts ({len(districts)})."
+        )
     annual_heat_mwh_total = float(sum(annual_heat_by_d))
     if annual_heat_mwh_total < 0.0:
         raise ValueError("Annual heat demand is negative.")
-    if len(annual_heat_by_d) != len(districts):
-        annual_heat_by_d = (area_weights * annual_heat_mwh_total).tolist()
     xlsx = paths.xlsx_path
     units_df = _units_df()
     scenario_df = _scenario_df(
@@ -862,7 +831,6 @@ def write_cesm_inputs_from_energy_system(
         tss_name: str,
         demand_name: str = "residential_heat",
         technology_registry: TechnologyRegistry | None = None,
-        polygons_gdf: Optional[gpd.GeoDataFrame] = None,
         retain_existing_output_factor: float | None = None,
         retain_existing_output_years_factor: float | None = None,
         retain_existing_output_schedule: Optional[List[float]] = None,
@@ -886,8 +854,6 @@ def write_cesm_inputs_from_energy_system(
         supply_prices,
         type(supply_prices).__name__,
     )
-    if polygons_gdf is None:
-        polygons_gdf = _polygons_from_energy_system(energy_system)
     _write_cesm_inputs_from_optimization_context(
         om_ctx,
         workdir=workdir,
@@ -901,7 +867,6 @@ def write_cesm_inputs_from_energy_system(
         end_year=getattr(scenario, "end_year", None),
         year_gap=getattr(scenario, "year_gap", None),
         discount_rate=getattr(scenario, "discount_rate", None),
-        polygons_gdf=polygons_gdf,
         inter_district_pipe_specs=getattr(energy_system, "inter_district_pipe_specs", None),
         local_dhn_costs={
             region.id: {"local_grid_capex_base_eur": region.local_dhn_capex_base_eur}

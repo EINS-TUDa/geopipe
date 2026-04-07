@@ -5,7 +5,8 @@ from pypeline.data.dataset import CensusTechnology
 from pypeline.validation import normalize_shares_or_zero, to_int_id
 from pypeline.energy_system.demand import Demand, RegionDemand
 from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES, PRIMARY_HEAT_EXCHANGER, RegionRuleBook
-import geopandas as gpd
+import networkx as nx
+from shapely.geometry import MultiPoint
 
 from pypeline.energy_technology.technology import (
     CENTRAL_TECH_PREFIX,
@@ -175,15 +176,27 @@ def _safe_int(raw, fallback: int = 0) -> int:
 class Region:
     def __init__(self,
                  id_: int,
-                 polygon: gpd.GeoDataFrame,
+                 topology: nx.Graph,
                  region_demands: list["RegionDemand"],
                  region_technologies: list[RegionTechnology],
                  local_dhn_capex_base_eur: float | None = None):
         self.id = id_
-        self.polygon = polygon
+        self.topology = topology
         self.region_demands = region_demands
         self.region_technologies = region_technologies
         self.local_dhn_capex_base_eur = local_dhn_capex_base_eur
+
+    @property
+    def boundary(self):
+        """Convex hull of topology nodes, usable as a polygon geometry for visualisation."""
+        nodes = list(self.topology.nodes)
+        if not nodes:
+            return None
+        return MultiPoint(nodes).convex_hull
+
+    @property
+    def crs(self):
+        return self.topology.graph.get("crs")
 
     def get_demand(self, name: str) -> RegionDemand | None:
         for demand in self.region_demands:
@@ -207,14 +220,14 @@ class RegionBuilder:
         self.demands = None
         self._dhn_central_seed_cache: dict[int, str] = {}
 
-    def _infer_dhn_central_seed_base(self, polygon: gpd.GeoDataFrame, district_id: int) -> str:
+    def _infer_dhn_central_seed_base(self, topology: nx.Graph, district_id: int) -> str:
         cached = self._dhn_central_seed_cache.get(int(district_id))
         if cached:
             return cached
 
         base_query = {
             "key": "heating_shares",
-            "region": polygon,
+            "region": topology,
             "base_crs": self.base_crs,
             "name_mapping": {},
         }
@@ -270,10 +283,10 @@ class RegionBuilder:
         return self
 
 
-    def build_demands(self, polygon) -> list[RegionDemand]:
+    def build_demands(self, topology: nx.Graph) -> list[RegionDemand]:
         collection = []
         for demand in self.demands:
-            base_query = {"region": polygon, "base_crs": self.base_crs}
+            base_query = {"region": topology, "base_crs": self.base_crs}
 
             profile = self.data_registry.query(demand.profile_query_params | base_query)
             if profile is None or profile.empty:
@@ -507,7 +520,7 @@ class RegionBuilder:
                 )
                 registry.register(alias_clone)
 
-    def build_technologies(self, polygon: gpd.GeoDataFrame, r_demands: list[RegionDemand], district_id: int) -> list[RegionTechnology]:
+    def build_technologies(self, topology: nx.Graph, r_demands: list[RegionDemand], district_id: int) -> list[RegionTechnology]:
         collection: list[RegionTechnology] = []
         technologies_with_shares: set[str] = set()
         central_seed_outputs: dict[str, float] = {}
@@ -557,7 +570,7 @@ class RegionBuilder:
                     localized_suppliers.append(canonical_name)
             technologies_supplying_this_demand = localized_suppliers
 
-            base_query = {"region": polygon, "base_crs": self.base_crs}
+            base_query = {"region": topology, "base_crs": self.base_crs}
             technology_shares_data = self.data_registry.query(
                 r_demand.demand.technology_shares_query_params | base_query)
 
@@ -609,7 +622,7 @@ class RegionBuilder:
                     and tech == localized_heat_exchanger
                     and initial_energy_output > 0.0
                 ):
-                    central_seed_base = self._infer_dhn_central_seed_base(polygon, district_id)
+                    central_seed_base = self._infer_dhn_central_seed_base(topology, district_id)
                     localized_central_default = localized_map.get(central_seed_base)
                     if not localized_central_default:
                         raise ValueError(
@@ -680,17 +693,16 @@ class RegionBuilder:
 
         return collection
 
-    def build(self, polygon) -> Region:
-        district_id = _safe_int(polygon.get("id"), 0)
-        demands = self.build_demands(polygon)
-        self._ensure_regional_assets(district_id)
-        technologies = self.build_technologies(polygon, demands, district_id)
+    def build(self, topology: nx.Graph, region_id: int) -> Region:
+        demands = self.build_demands(topology)
+        self._ensure_regional_assets(region_id)
+        technologies = self.build_technologies(topology, demands, region_id)
 
         region = Region(
-            id_=district_id,
-            polygon=polygon,
+            id_=region_id,
+            topology=topology,
             region_technologies=technologies,
-            region_demands=demands
+            region_demands=demands,
         )
 
         if self.rule_book:

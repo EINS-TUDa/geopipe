@@ -253,19 +253,21 @@ def resolve_retain_schedule(
 
 
 def polygons_from_energy_system(es: "EnergySystem") -> Optional[gpd.GeoDataFrame]:
-    """Collect region polygons from an EnergySystem into one GeoDataFrame."""
+    """Collect region boundaries from an EnergySystem into one GeoDataFrame."""
     regions = getattr(es, "regions", []) or []
-    frames: list[gpd.GeoDataFrame] = []
+    rows: list[dict] = []
+    crs = None
     for region in regions:
-        poly = getattr(region, "polygon", None)
-        if isinstance(poly, gpd.GeoDataFrame):
-            frames.append(poly.copy())
-    if not frames:
+        boundary = getattr(region, "boundary", None)
+        if boundary is None:
+            continue
+        if crs is None:
+            crs = getattr(region, "crs", None)
+        rows.append({"geometry": boundary, "id": region.id})
+    if not rows:
         return None
 
-    gdf = pd.concat(frames, ignore_index=True)
-    if "id" not in gdf.columns:
-        gdf["id"] = range(len(gdf))
+    gdf = gpd.GeoDataFrame(rows, crs=crs)
     try:
         if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
             gdf = gdf.to_crs(3035)

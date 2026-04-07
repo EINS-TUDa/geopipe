@@ -396,8 +396,7 @@ class EnergySystemPlotter:
         maxy = -math.inf
 
         for region_idx, region in enumerate(regions):
-            polygon = region.polygon
-            region_geom = polygon.geometry.iloc[0]
+            region_geom = region.boundary
             demand = region.get_demand(demand_name)
 
             if demand_overrides and region_idx in demand_overrides:
@@ -806,12 +805,12 @@ class EnergySystemPlotter:
         inv_max_region_area = 1.0 / context.max_region_area
         region_ids = [int(getattr(region, "id_", idx)) for idx, region in enumerate(self.energy_system.regions)]
         region_color_map = self._build_region_id_color_map(region_ids)
-        region_geoms = [region.polygon.geometry.iloc[0] for region in self.energy_system.regions]
+        region_geoms = [region.boundary for region in self.energy_system.regions]
 
         for region_idx, region in enumerate(self.energy_system.regions):
             region_geom = region_geoms[region_idx]
             other_region_geoms = [g for j, g in enumerate(region_geoms) if j != region_idx]
-            region_draw = gpd.GeoSeries([region_geom], crs=region.polygon.crs)
+            region_draw = gpd.GeoSeries([region_geom], crs=region.crs)
             region_id = getattr(region, "id_", region_idx)
             region_color = region_color_map.get(int(region_id), "#666666")
             region_draw.boundary.plot(ax=ax, edgecolor="black", linewidth=float(region_boundary_linewidth), zorder=2)
@@ -939,7 +938,7 @@ class EnergySystemPlotter:
             )
 
         if draw_basemap:
-            ctx.add_basemap(ax, crs=self.energy_system.regions[0].polygon.crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7, zorder=0)
+            ctx.add_basemap(ax, crs=self.energy_system.regions[0].crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7, zorder=0)
 
         merged_legend: dict[str, Any] = {}
         for tech in context.used_labels:

@@ -508,12 +508,12 @@ class HeatExchangerCostAdjustmentRule(RegionRule):
         if not self.data_registry:
             return region
 
-        polygon = region.polygon
-        if polygon is None:
+        topology = region.topology
+        if topology is None:
             return region
 
         try:
-            shares = self.data_registry.query({"key": self.dataset_type, "region": polygon})
+            shares = self.data_registry.query({"key": self.dataset_type, "region": topology})
         except Exception:
             return region
 

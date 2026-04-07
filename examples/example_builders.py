@@ -101,15 +101,14 @@ def show_cesm_sankey(project_root: Path, results: dict, years: list[int]) -> Non
         conn.close()
 
 
-def build_energy_system(*, model_name: str, polygons: gpd.GeoDataFrame, district_street_segments: gpd.GeoDataFrame | None, heat_demand_file: Path, heating_shares_file: Path, region_builder_config_overrides: dict | None, rulebook: EnergySystemRuleBook | None = None):
-    """Build energy system from polygons and local data."""
+def build_energy_system(*, model_name: str, region_topologies: list, street_network, heat_demand_file: Path, heating_shares_file: Path, region_builder_config_overrides: dict | None, rulebook: EnergySystemRuleBook | None = None):
+    """Build energy system from a list of region topology graphs and local data."""
     tech_reg = TechnologyRegistry()
     tech_reg.load_from_default()
 
     esb = EnergySystemBuilder(energy_system_name=model_name)
-    esb.set_polygons(polygons)
-    if district_street_segments is not None:
-        esb.set_district_street_segments(district_street_segments)
+    esb.set_region_topologies(region_topologies)
+    esb.set_street_network(street_network)
     esb.set_technology_dependency_manager(default=True)
     esb.set_demands(default=True)
     esb.set_technology_registry(tech_reg)
