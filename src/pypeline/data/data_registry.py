@@ -6,6 +6,7 @@ to the appropriate Dataset (based on type, region, and priority).
 """
 
 from collections import defaultdict
+from enum import Enum
 from typing import Optional
 import geopandas as gpd
 import yaml
@@ -13,7 +14,24 @@ import importlib
 
 from pypeline.data.dataset import Dataset
 
+class DataKeys(str, Enum):
+    RESIDENTIAL_HEAT_DEMAND_PROFILE = "residential_heat_demand_profile"
+    RESIDENTIAL_ELECTRICITY_DEMAND_PROFILE = "residential_electricity_demand_profile"
+    RESIDENTIAL_ELECTRICITY_DEMAND = "residential_electricity_demand"
+    RESIDENTIAL_HEAT_DEMAND = "residential_heat_demand"
+    HEATING_SHARES = "heating_shares"
+    STREET_NETWORK = "street_network"
+    LINEAR_HEAT_DENSITY = "linear_heat_density"
 
+"""
+DataKeys.HEAT_DEMAND_PROFILE should return a pd.Series
+DataKeys.ELECTRICITY_DEMAND_PROFILE should return a pd.Series
+DataKeys.ELECTRICITY_DEMAND should return float with the sum of the residential electricity demand in kWh for the specified region.
+DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residential heat demand in kWh for the specified region.
+DataKeys.HEATING_SHARES should return a dict[CensusTechnology, float], or dict[str, float] if a name_mapping is provided
+DataKeys.STREET_NETWORK should return a GeoDataFrame with the street network for the specified region, with columns 'geom' (LineString)
+DataKeys.LINEAR_HEAT_DENSITY should return a GeoDataFrame with the linear heat density for the specified region, with columns 'geom' (LineString) and 'heat_density_mwh_per_km'
+"""
 
 
 class DataRegistry:

@@ -180,6 +180,9 @@ class PostgreSQLDataset(Dataset):
         Returns:
             DataFrame with query results
         """
+        if isinstance(sql_query, str):
+            sql_query = text(sql_query)
+
         region: gpd.GeoDataFrame = query["region"]
         region_epsg = region.crs.to_epsg()
         region_geom_wkt = region.union_all().wkt
