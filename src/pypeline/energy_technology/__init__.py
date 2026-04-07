@@ -6,7 +6,6 @@ from .technology import (
     INDIRECT_TECH_PREFIX,
     RegionTechnology,
     Technology,
-    TechnologyDependencyManager,
     TechnologyRequirement,
     extract_district_id_from_name,
     is_central_heat_supply,
@@ -35,7 +34,6 @@ from .tech_loader import instantiate, instantiate_all, load_specs_from_package
 __all__ = [
     "RegionTechnology",
     "Technology",
-    "TechnologyDependencyManager",
     "TechnologyRequirement",
     "TechnologySpec",
     "validate_spec_dict",

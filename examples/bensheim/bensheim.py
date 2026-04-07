@@ -17,7 +17,6 @@ polygons = gpd.read_file(project_root / "examples" / "bensheim" / "wah_bensheim_
 
 esb = EnergySystemBuilder()
 esb.set_polygons(polygons)
-esb.set_technology_dependency_manager(default=True)
 esb.set_demands(default=True)
 esb.set_technology_registry(technology_registry)
 esb.set_data_registry(data_registry)

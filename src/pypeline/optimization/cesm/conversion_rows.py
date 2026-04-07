@@ -613,7 +613,7 @@ class _ConversionRowsBuilder:
                 self.min_heat_grid_targets.get(rid, 0.0),
             )
             if target and target > 0:
-                if self.scenario_years and self.lockout_until_year is not None:
+                if self.scenario_years and self.lockout_until_year is not None and base_name != "heat_grid":
                     pairs = [
                         (year, 0.0 if year < self.lockout_until_year else float(target))
                         for year in self.scenario_years
@@ -760,6 +760,7 @@ class _ConversionRowsBuilder:
         cap_limit = max(0.0, float(existing_capacity or 0.0))
         base_name, _ = _split_base_and_district(tech.name)
         is_indirect = base_name.startswith("ind_")
+        is_heat_grid = base_name == "heat_grid"
         if cap_limit <= 0.0 and is_indirect and isinstance(metrics, dict):
             existing_output = float(metrics["initial_energy_output"] or 0.0)
             if existing_output > 0.0:
@@ -818,7 +819,7 @@ class _ConversionRowsBuilder:
                 if cap_limit <= 0.0:
                     return 0.0
                 return base
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 # Lockout period: no new capacity beyond what already exists.
                 return cap_limit
             if cap_limit <= 0.0:
@@ -835,7 +836,7 @@ class _ConversionRowsBuilder:
             base_val = base
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 return min(base_val, cap_limit)
             # Keep user-specified minima for later years when there is no existing capacity.
             if cap_limit <= 0.0:
@@ -848,14 +849,14 @@ class _ConversionRowsBuilder:
             base_val = base
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 return min(base_val, cap_limit)
             return base_val
 
         def _adjust_cap_res_max(year: int, base: Optional[float]) -> Optional[float]:
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 if base is None:
                     return cap_limit
                 return min(float(base), cap_limit)

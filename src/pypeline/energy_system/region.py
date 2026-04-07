@@ -12,7 +12,6 @@ from pypeline.energy_technology.technology import (
     INDIRECT_TECH_PREFIX,
     Technology,
     RegionTechnology,
-    TechnologyRequirement,
 )
 from pypeline.energy_technology.technology_registry import (
     TechnologyRegistry,
@@ -202,7 +201,6 @@ class RegionBuilder:
         self.technology_registry = technology_registry
 
         self.rule_book = None
-        self.technology_dependency_manager = None
         self.config = None
         self.demands = None
         self._dhn_central_seed_cache: dict[int, str] = {}
@@ -259,10 +257,6 @@ class RegionBuilder:
         if not isinstance(rule_book, RegionRuleBook):
             raise TypeError(f"rule_book must be an instance of RegionRuleBook and not {type(rule_book)}.")
         self.rule_book = rule_book
-        return self
-
-    def set_technology_dependency_manager(self, manager):
-        self.technology_dependency_manager = manager
         return self
 
     def set_config(self, config: dict):
@@ -356,37 +350,6 @@ class RegionBuilder:
                 unlimited=False,
                 total_units=units,
             )
-
-        if not self.technology_dependency_manager:
-            return
-
-        deps = self.technology_dependency_manager.dependencies
-        for base_name, localized_name in localized.items():
-            if localized_name in deps:
-                continue
-            base_requirements = deps.get(base_name, [])
-            if not base_requirements:
-                continue
-            mapped: list[TechnologyRequirement] = []
-            for requirement in base_requirements:
-                target_name = _canonical_regional_name(requirement.technology_name)
-                base_target = target_name.rsplit("_D", 1)[0]
-                if base_name == "heat_grid" and _is_central_base(base_target):
-                    continue
-                if base_target in regional_base_set and target_name == base_target:
-                    target_name = _localized_name(base_target, district_id)
-                elif _is_regional_clone(target_name):
-                    if _is_other_district_clone(target_name, district_id):
-                        continue
-                mapped.append(
-                    TechnologyRequirement(
-                        technology_name=target_name,
-                        capacity_factor=requirement.capacity_factor,
-                        share=requirement.share,
-                    )
-                )
-            if mapped:
-                deps[localized_name] = mapped
 
     def _clone_names(self, localized_base: str) -> list[str]:
         registry = self.technology_registry
@@ -659,24 +622,6 @@ class RegionBuilder:
                 output_profile=profile
             )
             collection.append(region_technology)
-
-        # Add Technology dependencies if available
-        if self.technology_dependency_manager:
-            tech_capacities = {r_tech.technology.name: r_tech.initial_capacity for r_tech in collection}
-
-            for tech_name in list(tech_capacities.keys()):
-                requirements = self.technology_dependency_manager.get_requirements(tech_name)
-
-                for req in requirements:
-                    required_capacity = tech_capacities[tech_name] * req.capacity_factor * req.share
-                    tech_capacities.setdefault(req.technology_name, 0.0)
-                    tech_capacities[req.technology_name] += required_capacity
-
-            # Update the collection with the new capacities
-            for r_tech in collection:
-                tech_name = r_tech.technology.name
-                if tech_name in tech_capacities:
-                    r_tech.initial_capacity = tech_capacities[tech_name]
 
         return collection
 
