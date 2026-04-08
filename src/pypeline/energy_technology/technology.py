@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import pandas as pd
@@ -158,18 +158,3 @@ class TechnologyRequirement:
     technology_name: str
     capacity_factor: float = 1.0  # Capacity of this technology = capacity_factor * capacity of the demand
     share: float = 1.0  # share of capacity of dependency technology that is covered by this technology
-
-
-@dataclass
-class TechnologyDependencyManager:
-    """Manages dependencies between technologies."""
-    # Dictionary: technology_name -> List of required technologies
-    dependencies: dict[str, list[TechnologyRequirement]] = field(default_factory=dict)
-
-    def add_dependency(self, source_tech: str, requirement: TechnologyRequirement) -> None:
-        if source_tech not in self.dependencies:
-            self.dependencies[source_tech] = []
-        self.dependencies[source_tech].append(requirement)
-
-    def get_requirements(self, technology_name: str) -> list[TechnologyRequirement]:
-        return self.dependencies.get(technology_name, [])

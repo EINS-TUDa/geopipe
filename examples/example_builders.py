@@ -107,9 +107,9 @@ def build_energy_system(*, model_name: str, region_topologies: list, street_netw
     tech_reg.load_from_default()
 
     esb = EnergySystemBuilder(energy_system_name=model_name)
-    esb.set_region_topologies(region_topologies)
-    esb.set_street_network(street_network)
-    esb.set_technology_dependency_manager(default=True)
+    esb.set_polygons(polygons)
+    if district_street_segments is not None:
+        esb.set_district_street_segments(district_street_segments)
     esb.set_demands(default=True)
     esb.set_technology_registry(tech_reg)
     data_reg = create_local_data_registry(heat_demand_file, heating_shares_file)
