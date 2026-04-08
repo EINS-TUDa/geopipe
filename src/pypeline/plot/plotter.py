@@ -421,7 +421,7 @@ class EnergySystemPlotter:
                 used_labels.update(tech_outputs.keys())
             region_plot_data[region_idx] = RegionPlotData(demand_value=demand_value, tech_outputs=tech_outputs)
 
-            bounds = polygon.total_bounds
+            bounds = region_geom.bounds
             minx = min(minx, float(bounds[0]))
             miny = min(miny, float(bounds[1]))
             maxx = max(maxx, float(bounds[2]))

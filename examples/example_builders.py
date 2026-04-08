@@ -69,7 +69,7 @@ def create_cesm_backend(project_root: Path, *, model_name: str, scenario_name: s
 
 def years_for_scenario(scenario) -> list[int]:
     """Return scenario year list for plotting."""
-    # Should be replaced by a property on Scenario in near future.
+    # TODO: replace by a property in Scenario.
     return list(range(int(scenario.start_year), int(scenario.end_year) + 1, int(scenario.year_gap)))
 
 
@@ -107,9 +107,8 @@ def build_energy_system(*, model_name: str, region_topologies: list, street_netw
     tech_reg.load_from_default()
 
     esb = EnergySystemBuilder(energy_system_name=model_name)
-    esb.set_polygons(polygons)
-    if district_street_segments is not None:
-        esb.set_district_street_segments(district_street_segments)
+    esb.set_region_topologies(region_topologies)
+    esb.set_street_network(street_network)
     esb.set_demands(default=True)
     esb.set_technology_registry(tech_reg)
     data_reg = create_local_data_registry(heat_demand_file, heating_shares_file)
