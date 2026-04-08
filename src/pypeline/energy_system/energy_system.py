@@ -23,10 +23,6 @@ from pypeline.energy_system.rule_book import (
     RegionRuleBook,
 )
 from pypeline.energy_system.unit import Unit, UnitEnum
-from pypeline.energy_technology.technology import (
-    TechnologyDependencyManager,
-    TechnologyRequirement,
-)
 from pypeline.energy_system.dhn import (
     build_district_heat_grid_from_polygons,
     build_inter_dhn_pipes_from_street_segments,
@@ -63,7 +59,6 @@ class EnergySystemBuilder:
         self.data_registry: DataRegistry | None = None
         self.technology_registry: TechnologyRegistry | None = None
         self.unit: Unit = UnitEnum.GW.unit
-        self.technology_dependency_manager: TechnologyDependencyManager | None = None
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
         self.district_street_segments_gdf: gpd.GeoDataFrame | None = None
@@ -112,19 +107,6 @@ class EnergySystemBuilder:
         self.demands = demands
         return self
 
-    def set_technology_dependency_manager(
-        self,
-        manager: TechnologyDependencyManager | None = None,
-        default: bool = False,
-    ):
-        if default:
-            self._set_default_technology_dependency_manager()
-            return self
-        if not isinstance(manager, TechnologyDependencyManager):
-            raise TypeError("manager must be an instance of TechnologyDependencyManager.")
-        self.technology_dependency_manager = manager
-        return self
-
     def _set_default_demands(self):
         self.demands = [
             Demand(
@@ -162,14 +144,6 @@ class EnergySystemBuilder:
     def set_district_street_segments(self, street_segments: gpd.GeoDataFrame | None):
         self.district_street_segments_gdf = None if street_segments is None else street_segments.copy()
         return self
-
-    def _set_default_technology_dependency_manager(self):
-        dependencies = {
-            PRIMARY_HEAT_EXCHANGER: [
-                TechnologyRequirement(technology_name="heat_grid", capacity_factor=1.5)
-            ]
-        }
-        self.technology_dependency_manager = TechnologyDependencyManager(dependencies=dependencies)
 
     def _load_default_commodity_config(self) -> dict[str, Any]:
         root = Path(__file__).resolve().parents[1]
@@ -309,7 +283,6 @@ class EnergySystemBuilder:
             base_crs=self.base_crs,
             data_registry=self.data_registry,
             technology_registry=self.technology_registry)
-        rb.set_technology_dependency_manager(self.technology_dependency_manager)
         rb.set_demands(self.demands)
         if not self.region_builder_config:
             self.set_default_region_builder_config()
@@ -380,16 +353,6 @@ class EnergySystemBuilder:
         if not isinstance(self.technology_registry, TechnologyRegistry):
             raise ValueError(
                 f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}")
-        # Technology Dependency Manager
-        if self.technology_dependency_manager:
-            for key, value in self.technology_dependency_manager.dependencies.items():
-                if not self.technology_registry.has_technology(key):
-                    raise ValueError(
-                        f"Technology {key} in the TechnologyDependencyManager is not registered in the TechnologyRegistry.")
-                for requirement in value:
-                    if not self.technology_registry.has_technology(requirement.technology_name):
-                        raise ValueError(
-                            f"Technology {requirement.technology_name} in the TechnologyDependencyManager of {key} is not registered in the TechnologyRegistry.")
 
 
 class JsonEnergySystemBuilder(EnergySystemBuilder):

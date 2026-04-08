@@ -377,6 +377,17 @@ class _ConversionRowsBuilder:
         if merged:
             row.update({k: v for k, v in merged.items() if v is not None})
         self._apply_min_central_cap(row, tech)
+
+        if base_name.startswith("ind_"):
+            # ind_ technologies are modeled as continuous MW-scalable options.
+            row["capex_cost_base"] = None
+            row["cap_min"] = None
+            row["cap_max"] = None
+            row["max_units"] = None
+            existing_cap = self._existing_capacity(metrics)
+            self._limit_first_year_capacity(row, existing_cap, tech, metrics=metrics)
+            return
+
         existing_cap = self._existing_capacity(metrics)
         self._ensure_unit_capacity(row, existing_cap)
         self._limit_first_year_capacity(row, existing_cap, tech, metrics=metrics)
@@ -602,7 +613,7 @@ class _ConversionRowsBuilder:
                 self.min_heat_grid_targets.get(rid, 0.0),
             )
             if target and target > 0:
-                if self.scenario_years and self.lockout_until_year is not None:
+                if self.scenario_years and self.lockout_until_year is not None and base_name != "heat_grid":
                     pairs = [
                         (year, 0.0 if year < self.lockout_until_year else float(target))
                         for year in self.scenario_years
@@ -749,6 +760,7 @@ class _ConversionRowsBuilder:
         cap_limit = max(0.0, float(existing_capacity or 0.0))
         base_name, _ = _split_base_and_district(tech.name)
         is_indirect = base_name.startswith("ind_")
+        is_heat_grid = base_name == "heat_grid"
         if cap_limit <= 0.0 and is_indirect and isinstance(metrics, dict):
             existing_output = float(metrics["initial_energy_output"] or 0.0)
             if existing_output > 0.0:
@@ -802,7 +814,12 @@ class _ConversionRowsBuilder:
                     return 0.0
                 if base is None:
                     return UNBOUNDED_CAP
-            if year < lockout_until_year and not is_indirect:
+            if is_indirect and year == first_year:
+                # First year: allow scaling only for technologies that already exist.
+                if cap_limit <= 0.0:
+                    return 0.0
+                return base
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 # Lockout period: no new capacity beyond what already exists.
                 return cap_limit
             if cap_limit <= 0.0:
@@ -814,10 +831,12 @@ class _ConversionRowsBuilder:
             return min(base, cap_limit)
 
         def _adjust_cap_min(year: int, base: Optional[float]) -> Optional[float]:
-            base_val = base if base is not None else 0.0
+            if base is None:
+                return None
+            base_val = base
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 return min(base_val, cap_limit)
             # Keep user-specified minima for later years when there is no existing capacity.
             if cap_limit <= 0.0:
@@ -825,17 +844,19 @@ class _ConversionRowsBuilder:
             return base_val
 
         def _adjust_cap_res_min(year: int, base: Optional[float]) -> Optional[float]:
-            base_val = base if base is not None else 0.0
+            if base is None:
+                return None
+            base_val = base
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 return min(base_val, cap_limit)
             return base_val
 
         def _adjust_cap_res_max(year: int, base: Optional[float]) -> Optional[float]:
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
-            if year < lockout_until_year and not is_indirect:
+            if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 if base is None:
                     return cap_limit
                 return min(float(base), cap_limit)
@@ -912,11 +933,22 @@ def tech_to_cesms_row(
     in_frac_min_val = _optional_frac("in_frac_min", in_frac_min_attr)
     in_frac_max_val = _optional_frac("in_frac_max", in_frac_max_attr)
 
-    if cap_max_attr is None:
-        raise ValueError(f"cap_max is required for technology '{tech.name}'")
-    cap_max_val = _require_finite(f"cap_max for {tech.name}", cap_max_attr, gt_zero=True)
-    max_units_val = _require_positive_int("max_units", max_units)
+    base_name, _ = _split_base_and_district(tech.name)
+    is_indirect = base_name.startswith("ind_")
 
+    if is_indirect:
+        cap_max_val = None
+    elif cap_max_attr is None:
+        raise ValueError(f"cap_max is required for technology '{tech.name}'")
+    else:
+        cap_max_val = _require_finite(f"cap_max for {tech.name}", cap_max_attr, gt_zero=True)
+
+    if is_indirect:
+        max_units_val = None
+    elif max_units is None:
+        raise ValueError(f"max_units is required for technology '{tech.name}'")
+    else:
+        max_units_val = _require_positive_int("max_units", max_units)
     cap_min_val = None
     if cap_min_attr is not None:
         cap_min_val = _require_finite(f"cap_min for {tech.name}", cap_min_attr, allow_zero=True, gt_zero=False)

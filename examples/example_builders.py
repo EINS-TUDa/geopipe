@@ -110,7 +110,6 @@ def build_energy_system(*, model_name: str, polygons: gpd.GeoDataFrame, district
     esb.set_polygons(polygons)
     if district_street_segments is not None:
         esb.set_district_street_segments(district_street_segments)
-    esb.set_technology_dependency_manager(default=True)
     esb.set_demands(default=True)
     esb.set_technology_registry(tech_reg)
     data_reg = create_local_data_registry(heat_demand_file, heating_shares_file)

@@ -8,9 +8,6 @@ ind_heat_pump:
   opex_cost_energy: 0     # €/MWh
   opex_cost_power: 13000  # €/MW
   capex_cost_power: 10100 # €/MWh
-  capex_cost_base: 10600  # €
-  cap_min: 0.005
-  cap_max: 0.11
 
 ind_gas_boiler:
   efficiency: 0.94
@@ -18,9 +15,7 @@ ind_gas_boiler:
   opex_cost_energy: 0
   opex_cost_power: 5000
   capex_cost_power: 1620
-  capex_cost_base: 7100
-  cap_min: 0.01
-  cap_max: 0.11
+
 
 ind_oil_boiler:
   efficiency: 0.925
@@ -28,9 +23,6 @@ ind_oil_boiler:
   opex_cost_energy: 0.0
   opex_cost_power: 6000
   capex_cost_power: 700
-  capex_cost_base: 11400
-  cap_min: 0.01
-  cap_max: 0.11
 
 ind_hydrogen_boiler:
   efficiency: 0.95 
@@ -38,9 +30,6 @@ ind_hydrogen_boiler:
   opex_cost_energy: 0
   opex_cost_power: 100000
   capex_cost_power: 200000
-  capex_cost_base: 11400
-  cap_min: 0.06
-  cap_max: 0.11
 
 heat_exchanger:
   efficiency: 0.99
