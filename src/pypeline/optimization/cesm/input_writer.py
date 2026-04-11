@@ -102,6 +102,7 @@ def _write_cesm_inputs_from_optimization_context(
         model_name: str,
         scenario_name: str,
         tss_name: str,
+    polygons_gdf: Any | None = None,
         inter_district_pipe_specs: Optional[dict] = None,
         local_dhn_costs: Optional[dict] = None,
         data_dir: Optional[PathLike] = None,

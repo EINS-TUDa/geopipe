@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from math import isfinite
 from typing import TYPE_CHECKING
 
 import geopandas as gpd  # used by gdf_to_nx and gdf_to_region_topologies
 import networkx as nx
+import pandas as pd
+from pypeline.topology_builder.abstract_topology_builder import AbstractTopologyBuilder
 
 if TYPE_CHECKING:
     from pypeline.energy_system.region import Region
+
+
+@dataclass(frozen=True)
+class _RegionTopologyProxy:
+    id: int
+    topology: nx.Graph
 
 
 def gdf_to_nx(gdf: gpd.GeoDataFrame) -> nx.Graph:
@@ -22,33 +31,7 @@ def gdf_to_nx(gdf: gpd.GeoDataFrame) -> nx.Graph:
     sub-edges inherit the row's attributes unchanged (use ``street_id`` to
     deduplicate attribute aggregations when needed).
     """
-    G: nx.Graph = nx.Graph()
-    if hasattr(gdf, "crs") and gdf.crs is not None:
-        G.graph["crs"] = gdf.crs
-
-    for _, row in gdf.iterrows():
-        geom = row.geometry
-        if geom is None:
-            continue
-
-        attrs = {col: row[col] for col in gdf.columns if col != "geometry"}
-
-        if geom.geom_type == "LineString":
-            lines = [geom]
-        elif geom.geom_type == "MultiLineString":
-            lines = list(geom.geoms)
-        else:
-            continue
-
-        for line in lines:
-            coords = list(line.coords)
-            for i in range(len(coords) - 1):
-                u = (float(coords[i][0]), float(coords[i][1]))
-                v = (float(coords[i + 1][0]), float(coords[i + 1][1]))
-                length = ((v[0] - u[0]) ** 2 + (v[1] - u[1]) ** 2) ** 0.5
-                G.add_edge(u, v, geometry=line, length=length, **attrs)
-
-    return G
+    return AbstractTopologyBuilder.gdf_to_nx(gdf)
 
 
 def _demand_nodes(
@@ -104,12 +87,7 @@ def gdf_to_region_topologies(
     The region key is stored in ``G.graph['id']`` for each graph.  Graphs are
     returned sorted by key value so that the ordering is deterministic.
     """
-    topologies: list[nx.Graph] = []
-    for key, group in gdf.groupby(key_column, sort=True):
-        G = gdf_to_nx(group.copy())
-        G.graph["id"] = key
-        topologies.append(G)
-    return topologies
+    return AbstractTopologyBuilder.gdf_to_region_topologies(gdf, key_column=key_column)
 
 
 def build_inter_dhn_pipes_from_topologies(
@@ -166,3 +144,172 @@ def build_inter_dhn_pipes_from_topologies(
             records[(region_b.id, region_a.id)] = payload
 
     return records
+
+
+def _ensure_street_length_column(
+    street_segments_gdf: gpd.GeoDataFrame,
+    *,
+    street_length_column: str,
+) -> gpd.GeoDataFrame:
+    segments = street_segments_gdf.copy()
+    if street_length_column not in segments.columns:
+        segments[street_length_column] = segments.geometry.length.astype(float)
+    else:
+        segments[street_length_column] = pd.to_numeric(
+            segments[street_length_column], errors="coerce"
+        ).fillna(segments.geometry.length.astype(float))
+    return segments
+
+
+def _resolve_demand_column(
+    street_segments_gdf: gpd.GeoDataFrame,
+    demand_column: str | None,
+) -> str:
+    if demand_column is not None:
+        if demand_column not in street_segments_gdf.columns:
+            raise ValueError(f"Missing demand column '{demand_column}' in street segments")
+        return demand_column
+    if "total_heat_demand" in street_segments_gdf.columns:
+        return "total_heat_demand"
+    if "_is_demand_street" in street_segments_gdf.columns:
+        return "_is_demand_street"
+    raise ValueError("Could not infer demand column; expected 'total_heat_demand' or '_is_demand_street'")
+
+
+def calculate_district_heat_grid_cost(
+    *,
+    polygons: gpd.GeoDataFrame,
+    district_id: int,
+    local_pipe_capex_eur_per_km: float,
+    street_segments_gdf: gpd.GeoDataFrame,
+    region_id_column: str = "id",
+    street_length_column: str = "street_length",
+    street_id_column: str = "street_id",
+    demand_column: str | None = None,
+) -> dict[str, float]:
+    """Compatibility helper: compute local DHN cost for a district from street segments."""
+    if region_id_column not in polygons.columns:
+        raise ValueError(f"Missing region id column '{region_id_column}' in polygons")
+    if region_id_column not in street_segments_gdf.columns:
+        raise ValueError(f"Missing region id column '{region_id_column}' in street segments")
+
+    segments = _ensure_street_length_column(
+        street_segments_gdf,
+        street_length_column=street_length_column,
+    )
+    resolved_demand_column = _resolve_demand_column(segments, demand_column)
+
+    if resolved_demand_column != "_is_demand_street":
+        segments[resolved_demand_column] = pd.to_numeric(
+            segments[resolved_demand_column], errors="coerce"
+        ).fillna(0.0)
+
+    mask = segments[region_id_column] == district_id
+    if not bool(mask.any()):
+        mask = segments[region_id_column].astype(str) == str(district_id)
+    district_segments = segments[mask].copy()
+    if district_segments.empty:
+        raise ValueError(f"No street segments found for district '{district_id}'")
+
+    topology = gdf_to_nx(district_segments)
+    return build_district_heat_grid_from_topology(
+        topology=topology,
+        pipe_capex_eur_per_km=local_pipe_capex_eur_per_km,
+        demand_column=resolved_demand_column,
+        street_length_column=street_length_column,
+        street_id_column=street_id_column,
+    )
+
+
+def build_district_heat_grid_from_polygons(
+    *,
+    polygons: gpd.GeoDataFrame,
+    local_pipe_capex_eur_per_km: float,
+    street_segments_gdf: gpd.GeoDataFrame,
+    region_id_column: str = "id",
+    street_length_column: str = "street_length",
+    street_id_column: str = "street_id",
+    demand_column: str | None = None,
+) -> dict[int, dict[str, float]]:
+    """Compatibility helper: compute local DHN costs for all polygon districts."""
+    if region_id_column not in polygons.columns:
+        raise ValueError(f"Missing region id column '{region_id_column}' in polygons")
+
+    payload: dict[int, dict[str, float]] = {}
+    district_ids = sorted({int(v) for v in polygons[region_id_column].dropna().tolist()})
+    for district_id in district_ids:
+        try:
+            result = calculate_district_heat_grid_cost(
+                polygons=polygons,
+                district_id=district_id,
+                local_pipe_capex_eur_per_km=local_pipe_capex_eur_per_km,
+                street_segments_gdf=street_segments_gdf,
+                region_id_column=region_id_column,
+                street_length_column=street_length_column,
+                street_id_column=street_id_column,
+                demand_column=demand_column,
+            )
+            payload[district_id] = {
+                "min_pipe_km": float(result.get("min_pipe_km", 0.0)),
+                "local_grid_capex_base_eur": 0.0,
+            }
+        except ValueError:
+            payload[district_id] = {
+                "min_pipe_km": 0.0,
+                "local_grid_capex_base_eur": 0.0,
+            }
+    return payload
+
+
+def build_inter_dhn_pipes_from_street_segments(
+    *,
+    polygons: gpd.GeoDataFrame,
+    street_segments_gdf: gpd.GeoDataFrame,
+    pipe_capex_eur_per_km: float,
+    region_id_column: str = "id",
+    street_length_column: str = "street_length",
+    demand_column: str | None = None,
+    min_interdistrict_pipe_length_m: float = 1.0,
+) -> dict[tuple[int, int], dict[str, float]]:
+    """Compatibility helper: compute inter-district pipes directly from street segments."""
+    if region_id_column not in polygons.columns:
+        raise ValueError(f"Missing region id column '{region_id_column}' in polygons")
+    if region_id_column not in street_segments_gdf.columns:
+        raise ValueError(f"Missing region id column '{region_id_column}' in street segments")
+
+    segments = _ensure_street_length_column(
+        street_segments_gdf,
+        street_length_column=street_length_column,
+    )
+    resolved_demand_column = _resolve_demand_column(segments, demand_column)
+
+    if resolved_demand_column != "_is_demand_street":
+        segments[resolved_demand_column] = pd.to_numeric(
+            segments[resolved_demand_column], errors="coerce"
+        ).fillna(0.0)
+
+    assigned = segments[segments[region_id_column].notna()].copy()
+    if assigned.empty:
+        return {}
+
+    region_topologies = gdf_to_region_topologies(assigned, key_column=region_id_column)
+    topology_by_id = {int(graph.graph["id"]): graph for graph in region_topologies}
+
+    ordered_ids = sorted({int(v) for v in polygons[region_id_column].dropna().tolist()})
+    regions: list[_RegionTopologyProxy] = []
+    for district_id in ordered_ids:
+        topology = topology_by_id.get(district_id)
+        if topology is not None:
+            regions.append(_RegionTopologyProxy(id=district_id, topology=topology))
+
+    if len(regions) < 2:
+        return {}
+
+    full_network = gdf_to_nx(segments)
+    return build_inter_dhn_pipes_from_topologies(
+        regions=regions,
+        full_network=full_network,
+        pipe_capex_eur_per_km=pipe_capex_eur_per_km,
+        demand_column=resolved_demand_column,
+        min_interdistrict_pipe_length_m=min_interdistrict_pipe_length_m,
+    )

@@ -2,28 +2,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
 
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from pypeline.energy_system.region_topology import (
-    RegionCaps,
     RegionTopologyConfig,
     RegionTopologyEngine,
 )
 from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.polygon_builder.polygon_builder import (
-    AbstractPolygonBuilder,
-    PolygonBuildError,
-    PolygonBuildResult,
+from pypeline.topology_builder.abstract_topology_builder import (
+    AbstractTopologyBuilder,
+    TopologyBuildError,
+    TopologyBuildResult,
 )
 
 """
 This module prepares the spatial topology, later consumed by the optimizer. 
 
-Pipeline: data -> street graph -> district polygons -> hand-off to optimizer.
+Pipeline: data -> street graph -> district subgraphs -> hand-off to optimizer.
 
 1) Input data prep:
      - Convert building heat demand into annual MWh values.
@@ -50,18 +47,9 @@ Pipeline: data -> street graph -> district polygons -> hand-off to optimizer.
              The path search follows Dijkstra cost expansion so the merge/splits are topologically valid and distance-aware.
          - The output of this stage is an assigned street-segment graph (streets_with_region)
 
-3) Polygon construction from assigned graph (region_topology.polygon_builder):
-         - Use the previously generated graphs as the boundary signal for polygon synthesis.
-         - Then runs a custom endpoint/dot-connection enclosure algo: 
-            Classify open endpoints, propose legal connectors, score candidates by enclosed-area gain
-            and iteratively close district hulls
-         - Emit district polygons from the final hulls and align them with district IDs from the street graph
-
 Files generated:
     - street_segments_{dataset}.geojson: street segments with assigned region IDs
-    - polygon_{dataset}.geojson: district polygons with region IDs
     - plots/district_topology_{dataset}.png: street graph colored by assigned region IDs
-    - plots/district_polygons_{dataset}.png: district polygons colored by region IDs
 
 Shortest path algo reference:
 - E. W. Dijkstra, “A Note on Two Problems in Connexion with Graphs,”
@@ -74,10 +62,38 @@ Shortest path algo reference:
 
 @dataclass(frozen=True)
 class _OutputPaths:
-    polygons_out: Path
     streets_out: Path
     topology_plot_out: Path
-    polygon_plot_out: Path
+
+
+@dataclass(frozen=True)
+class DijkstraTopologyBuilderConfig:
+    # required
+    input_dir: Path
+    output_dir: Path
+    buildings_file: str
+    streets_file: str
+    max_demand_mwh: float
+    max_street_length_km: float
+    demand_share_pct: float
+
+    # optional
+    polynesia: bool = True
+    city_column: str = "gemeindeschluessel"
+    clip_buffer_m: float = 200.0
+    connect_tolerance_m: float = 10.0
+    small_islands: bool = True
+    small_islands_max_segments: int = 60
+    segment_streets_by_building_projections: bool = True
+    segment_projection_buffer_m: float = 12.0
+    region_id_column: str = "id"
+    street_id_column: str = "street_id"
+    building_id_column: str = "building_objectid"
+    demand_building_column: str = "building_objectid"
+    demand_source_column: str = "heating:demand[Wh]"
+    demand_value_column: str = "annual_demand_mwh"
+    demand_street_indicator_column: str = "total_heat_demand"
+    demand_street_indicator_min: float = 0.0
 
 
 def _compute_output_paths(output_dir: Path, dataset_name: str, *, polynesia: bool) -> _OutputPaths:
@@ -86,10 +102,8 @@ def _compute_output_paths(output_dir: Path, dataset_name: str, *, polynesia: boo
     plots_dir.mkdir(parents=True, exist_ok=True)
     plot_suffix = "_polynesia" if polynesia else ""
     return _OutputPaths(
-        polygons_out=output_dir / f"polygon_{dataset_name}.geojson",
         streets_out=output_dir / f"street_segments_{dataset_name}.geojson",
         topology_plot_out=plots_dir / f"district_topology_{dataset_name}{plot_suffix}.png",
-        polygon_plot_out=plots_dir / f"district_polygons_{dataset_name}{plot_suffix}.png",
     )
 
 
@@ -102,44 +116,20 @@ def _resolve_input_file(input_dir: Path, file_name_or_relpath: str) -> Path:
     if rel.is_absolute():
         return rel
     candidate = input_dir / rel
-    if candidate.exists():
-        return candidate
-    # Legacy fallback: "input data" subfolder with a space
-    legacy = input_dir / "input data" / rel
-    if legacy.exists():
-        return legacy
     return candidate
 
 
-def _plot_polygons(polygons: gpd.GeoDataFrame, *, region_id_column: str, title: str, output_path: Path) -> None:
-    fig, ax = plt.subplots(figsize=(12, 12))
-    polygons.plot(ax=ax, alpha=0.35, edgecolor="black", linewidth=0.8)
-    if region_id_column in polygons.columns:
-        for _, row in polygons[[region_id_column, "geometry"]].iterrows():
-            geom = row["geometry"]
-            if geom is None or geom.is_empty:
-                continue
-            rp = geom.representative_point()
-            ax.text(float(rp.x), float(rp.y), str(int(row[region_id_column])), ha="center", va="center", fontsize=8)
-    ax.set_title(title)
-    ax.set_aspect("equal", adjustable="box")
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=300)
-    plt.close(fig)
-
-
 def _run_dijkstra_pipeline(
-        input_dir: Path,
-        output_dir: Path,
-        dataset_name: str,
-        request: DijkstraPolygonBuilderConfig,
-) -> Tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    *,
+    dataset_name: str,
+    request: DijkstraTopologyBuilderConfig,
+) -> TopologyBuildResult:
     """
     Execute the full Dijkstra topology pipeline and write all output artifacts.
-    Returns (polygons, district_street_segments) as GeoDataFrames.
+    Returns graph-first topology artifacts.
     """
-    buildings_path = _resolve_input_file(input_dir, request.buildings_file)
-    streets_path = _resolve_input_file(input_dir, request.streets_file)
+    buildings_path = _resolve_input_file(request.input_dir, request.buildings_file)
+    streets_path = _resolve_input_file(request.input_dir, request.streets_file)
 
     if not buildings_path.exists():
         raise FileNotFoundError(f"Buildings file not found: {buildings_path}")
@@ -163,7 +153,6 @@ def _run_dijkstra_pipeline(
         }
     )
 
-    b_for_algo = buildings.copy()
     city_value = None
     if (
             request.city_column
@@ -174,7 +163,6 @@ def _run_dijkstra_pipeline(
         if vals.empty:
             raise ValueError(f"No values in city column '{request.city_column}'")
         city_value = str(vals.mode().iloc[0])
-        b_for_algo = buildings[buildings[request.city_column].astype(str) == city_value].copy()
 
     topology_config = RegionTopologyConfig.from_required_caps(
         max_demand_mwh=request.max_demand_mwh,
@@ -205,28 +193,12 @@ def _run_dijkstra_pipeline(
         config=topology_config,
     )
 
-    polygons = RegionTopologyEngine.build_polygons_from_assigned_streets(
-        buildings=b_for_algo,
-        assigned_streets=streets_with_region,
-        demand_data=demand_by_building,
-        caps=RegionCaps(
-            max_demand_mwh=request.max_demand_mwh,
-            max_street_length_km=request.max_street_length_km,
-            max_nondemand_street_km=None,
-        ),
-        config=topology_config,
-    )
+    artifacts = _compute_output_paths(request.output_dir, dataset_name, polynesia=request.polynesia)
 
-    artifacts = _compute_output_paths(output_dir, dataset_name, polynesia=request.polynesia)
-
-    polygons.drop(columns=["_street_members", "_demand_street_members"], errors="ignore").to_file(
-        artifacts.polygons_out, driver="GeoJSON"
-    )
     streets_with_region.to_file(artifacts.streets_out, driver="GeoJSON")
 
     EnergySystemPlotter.plot_streets_colored_by_region(
         streets_with_region=streets_with_region,
-        polygons=polygons,
         output_path=artifacts.topology_plot_out,
         region_id_column=request.region_id_column,
         title=f"District topology: {dataset_name}",
@@ -237,13 +209,6 @@ def _run_dijkstra_pipeline(
         },
     )
 
-    _plot_polygons(
-        polygons,
-        region_id_column=request.region_id_column,
-        title=f"District polygons: {dataset_name}",
-        output_path=artifacts.polygon_plot_out,
-    )
-
     print(
         "check -> "
         f"raw street IDs split across regions: {mantra['raw_street_ids_split_across_regions']}, "
@@ -252,89 +217,50 @@ def _run_dijkstra_pipeline(
         f"junction-overload points: {mantra['junction_overload_points']}, "
         f"disconnected regions: {mantra['disconnected_regions']}"
     )
-    print(f"Wrote polygons:               {artifacts.polygons_out} ({len(polygons)} region features)")
     print(f"Wrote district street segments: {artifacts.streets_out} ({len(streets_with_region)} features)")
     print(f"Wrote topology plot:          {artifacts.topology_plot_out}")
-    print(f"Wrote polygon plot:           {artifacts.polygon_plot_out}")
 
-    return polygons, streets_with_region
+    assigned = streets_with_region[streets_with_region[request.region_id_column].notna()].copy()
+    if assigned.empty:
+        raise ValueError("Missing region-assigned street segments")
+
+    region_topologies = AbstractTopologyBuilder.gdf_to_region_topologies(
+        assigned,
+        key_column=request.region_id_column,
+    )
+    street_network = AbstractTopologyBuilder.gdf_to_nx(streets_with_region)
+
+    return TopologyBuildResult(
+        network=street_network,
+        region_topologies=region_topologies,
+        streets=streets_with_region,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Public builder class
 # ---------------------------------------------------------------------------
 
-class DijkstraPolygonBuilder(AbstractPolygonBuilder):
+class DijkstraTopologyBuilder(AbstractTopologyBuilder):
     """
-    Polygon builder based on Dijkstra-driven region topology.
+    Graph topology builder based on Dijkstra-driven region topology.
     """
 
-    def __init__(self,
-                 # required
-                 input_dir: Path,
-                 output_dir: Path,
-                 buildings_file: str,
-                 streets_file: str,
-                 max_demand_mwh: float,
-                 max_street_length_km: float,
-                 demand_share_pct: float,
-                 # optional
-                 polynesia: bool = True,
-                 city_column: str = "gemeindeschluessel",
-                 clip_buffer_m: float = 200.0,
-                 connect_tolerance_m: float = 10.0,
-                 small_islands: bool = True,
-                 small_islands_max_segments: int = 60,
-                 segment_streets_by_building_projections: bool = True,
-                 segment_projection_buffer_m: float = 12.0,
-                 region_id_column: str = "id",
-                 street_id_column: str = "street_id",
-                 building_id_column: str = "building_objectid",
-                 demand_building_column: str = "building_objectid",
-                 demand_source_column: str = "heating:demand[Wh]",
-                 demand_value_column: str = "annual_demand_mwh",
-                 demand_street_indicator_column: str = "total_heat_demand",
-                 demand_street_indicator_min: float = 0.0,
-                 ):
+    def __init__(self, config: DijkstraTopologyBuilderConfig):
+        self.config = config
 
-        self.input_dir = input_dir
-        self.output_dir = output_dir
-        self.buildings_file = buildings_file
-        self.streets_file = streets_file
-        self.max_demand_mwh = max_demand_mwh
-        self.max_street_length_km = max_street_length_km
-        self.demand_share_pct = demand_share_pct
-        self.polynesia = polynesia
-
-        self.city_column = city_column
-        self.clip_buffer_m = clip_buffer_m
-        self.connect_tolerance_m = connect_tolerance_m
-        self.small_islands = small_islands
-        self.small_islands_max_segments = small_islands_max_segments
-        self.segment_streets_by_building_projections = segment_streets_by_building_projections
-        self.segment_projection_buffer_m = segment_projection_buffer_m
-        self.region_id_column = region_id_column
-        self.street_id_column = street_id_column
-        self.building_id_column = building_id_column
-        self.demand_building_column = demand_building_column
-        self.demand_source_column = demand_source_column
-        self.demand_value_column = demand_value_column
-        self.demand_street_indicator_column = demand_street_indicator_column
-        self.demand_street_indicator_min = demand_street_indicator_min
-
-    def build(self) -> PolygonBuildResult:
+    def build(self) -> TopologyBuildResult:
         """
         Runs the full pipeline (street graph construction, district assignment,
-        polygon synthesis) and writes all output artifacts to output_dir.
+        district graph extraction) and writes all output artifacts to output_dir.
         """
 
-        dataset_name = self.input_dir.parent.name
+        dataset_name = self.config.input_dir.parent.name
+
         try:
             return _run_dijkstra_pipeline(
-                input_dir=self.input_dir,
-                output_dir=self.output_dir,
                 dataset_name=dataset_name,
-                request=...,
+                request=self.config,
             )
         except Exception as exc:
-            raise PolygonBuildError("Error when creating the polygons.") from exc
+            raise TopologyBuildError("Error when building topology.") from exc

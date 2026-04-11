@@ -95,18 +95,40 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 def local_heat_demand_query(dataset: FileDataset, query: dict) -> float:
     if query["key"] != "residential_heat_demand":
         raise ValueError("local_heat_demand_query only supports 'residential_heat_demand' key")
-    # TODO: Maybe account for additional demands via demand.yaml here. Decide how to deal with "dataset" which is not needed for this query as the heat demand lives on the edges of the region graph.
-    region: nx.Graph = query["region"]
-    seen: set = set()
-    total_wh = 0.0
-    for _, _, d in region.edges(data=True):
-        sid = d.get("street_id")
-        if sid is not None and sid in seen:
-            continue
-        if sid is not None:
-            seen.add(sid)
-        total_wh += float(d.get("total_heat_demand", 0.0))
-    return total_wh / 1_000_000.0
+    region = query["region"]
+
+    if isinstance(region, nx.Graph):
+        seen: set = set()
+        total_wh = 0.0
+        for _, _, d in region.edges(data=True):
+            sid = d.get("street_id")
+            if sid is not None and sid in seen:
+                continue
+            if sid is not None:
+                seen.add(sid)
+            total_wh += float(d.get("total_heat_demand", 0.0))
+        return total_wh / 1_000_000.0
+
+    if isinstance(region, gpd.GeoDataFrame):
+        data = dataset.get_data()
+        if not isinstance(data, gpd.GeoDataFrame):
+            raise TypeError("Local heat-demand dataset must resolve to a GeoDataFrame")
+
+        region_in = region if data.crs == region.crs else region.to_crs(data.crs)
+        boundary_gdf = gpd.GeoDataFrame(geometry=[region_in.geometry.union_all()], crs=region_in.crs)
+        joined = gpd.sjoin(data, boundary_gdf, predicate="within", how="inner")
+
+        if "qnutzwaerme_2020_kwh" in joined.columns:
+            total_kwh = pd.to_numeric(joined["qnutzwaerme_2020_kwh"], errors="coerce").fillna(0.0).sum()
+            return float(total_kwh) / 1_000_000.0
+
+        if "total_heat_demand" in joined.columns:
+            total_wh = pd.to_numeric(joined["total_heat_demand"], errors="coerce").fillna(0.0).sum()
+            return float(total_wh) / 1_000_000.0
+
+        raise ValueError("No supported heat-demand column found (expected 'qnutzwaerme_2020_kwh' or 'total_heat_demand')")
+
+    raise TypeError("local_heat_demand_query expects region as nx.Graph or GeoDataFrame")
 
 
 def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusTechnology, float]:
@@ -123,11 +145,20 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusT
                        "Fernwaerme": CensusTechnology.District_Heating,
                        "kein_Energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    region: nx.Graph = query["region"]
-    region_crs = region.graph.get("crs")
-    boundary_gdf = gpd.GeoDataFrame(
-        geometry=[MultiPoint(list(region.nodes)).convex_hull], crs=region_crs
-    )
+    region = query["region"]
+    if isinstance(region, nx.Graph):
+        region_crs = region.graph.get("crs")
+        boundary_gdf = gpd.GeoDataFrame(
+            geometry=[MultiPoint(list(region.nodes)).convex_hull], crs=region_crs
+        )
+    elif isinstance(region, gpd.GeoDataFrame):
+        boundary_gdf = gpd.GeoDataFrame(
+            geometry=[region.geometry.union_all()],
+            crs=region.crs,
+        )
+        region_crs = boundary_gdf.crs
+    else:
+        raise TypeError("census_south_hessen_query expects region as nx.Graph or GeoDataFrame")
 
     gdf = dataset.get_data()
     if region_crs is not None and gdf.crs != region_crs:
@@ -154,7 +185,7 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusT
     tech_shares = {k: float(v) for k, v in tech_shares.items()}
 
     name_mapping = query.get("name_mapping", {})
-    if query["name_mapping"]:
+    if name_mapping:
         mapped_shares = {v: tech_shares[k] for k,v in name_mapping.items() if v is not None}
         # ensure values sum to 1
         total_mapped = sum(mapped_shares.values())

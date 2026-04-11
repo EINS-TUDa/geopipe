@@ -8,9 +8,9 @@ from pypeline.energy_system.heating_shares import resolve_fernwaerme_districts
 def neuburg_dhn_ok_t() -> None:
     """Checks Fernwärme districts have feasible local and remote DHN connectivity."""
     root = Path(__file__).resolve().parents[2]
-    polygon_path = root / "examples" / "neuburg" / "output data" / "polygon_neuburg.geojson"
-    street_segments_path = root / "examples" / "neuburg" / "output data" / "street_segments_neuburg.geojson"
-    heating_shares_path = root / "examples" / "neuburg" / "input data" / "heating_shares_neuburg.geojson"
+    polygon_path = root / "examples" / "neuburg" / "output_data" / "polygon_neuburg.geojson"
+    street_segments_path = root / "examples" / "neuburg" / "output_data" / "street_segments_neuburg.geojson"
+    heating_shares_path = root / "examples" / "neuburg" / "input_data" / "heating_shares_neuburg.geojson"
 
     polygons = gpd.read_file(polygon_path)
     street_segments = gpd.read_file(street_segments_path)

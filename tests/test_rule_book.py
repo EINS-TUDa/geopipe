@@ -45,7 +45,6 @@ def _build_region(heat_output, other_output, include_extra=False):
 
     region = Region(
         id_=1,
-        polygon=None,
         region_demands=[region_demand],
         region_technologies=region_technologies,
     )
@@ -110,7 +109,6 @@ def min_grid_supply_t():
 
     region = Region(
         id_=2,
-        polygon=None,
         region_demands=[region_demand],
         region_technologies=[heat_region_tech],
     )

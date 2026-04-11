@@ -175,14 +175,14 @@ def _safe_int(raw, fallback: int = 0) -> int:
 class Region:
     def __init__(self,
                  id_: int,
-                 topology: nx.Graph,
-                 region_demands: list["RegionDemand"],
-                 region_technologies: list[RegionTechnology],
+                 topology: nx.Graph | None = None,
+                 region_demands: list["RegionDemand"] | None = None,
+                 region_technologies: list[RegionTechnology] | None = None,
                  local_dhn_capex_base_eur: float | None = None):
         self.id = id_
-        self.topology = topology
-        self.region_demands = region_demands
-        self.region_technologies = region_technologies
+        self.topology = topology if topology is not None else nx.Graph()
+        self.region_demands = region_demands if region_demands is not None else []
+        self.region_technologies = region_technologies if region_technologies is not None else []
         self.local_dhn_capex_base_eur = local_dhn_capex_base_eur
 
     @property
@@ -190,7 +190,7 @@ class Region:
         """Convex hull of topology nodes, usable as a polygon geometry for visualisation."""
         nodes = list(self.topology.nodes)
         if not nodes:
-            return None
+            raise ValueError(f"Region {self.id} has no topology nodes")
         return MultiPoint(nodes).convex_hull
 
     @property

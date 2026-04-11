@@ -362,7 +362,9 @@ class RegionTopologyGeometry(RegionTopologyBase):
 def _segment_streets_by_building_projections(streets: gpd.GeoDataFrame, buildings: gpd.GeoDataFrame, *, street_id_column: str, projection_buffer_m: float) -> gpd.GeoDataFrame:
     if streets.empty or buildings.empty or projection_buffer_m <= 0:
         return streets
-    lines = streets[[street_id_column, 'geometry']].copy().reset_index(drop=True)
+    lines = streets.copy().reset_index(drop=True)
+    if street_id_column not in lines.columns:
+        raise ValueError(f"Missing street id column '{street_id_column}' in streets")
     bpts = buildings[['geometry']].copy().reset_index(drop=True)
     bpts['geometry'] = bpts.geometry.representative_point()
     line_probe = lines[['geometry']].copy()
@@ -2207,7 +2209,7 @@ def build_region_topology(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFr
         area = b.geometry.union_all().convex_hull.buffer(float(cfg.clip_buffer_m))
         s = s[s.geometry.intersects(area)].copy()
     polygons = polygon_builder(buildings=b, streets=s, demand_data=demand_data, **cfg.polygon_builder_kwargs(caps=caps, keep_internal_columns=True))
-    streets_with_region = s[[cfg.street_id_column, 'geometry']].copy().explode(index_parts=False).reset_index(drop=True)
+    streets_with_region = s.copy().explode(index_parts=False).reset_index(drop=True)
     if cfg.segment_streets_by_building_projections and (not b.empty):
         streets_with_region = _segment_streets_by_building_projections(streets_with_region, b, street_id_column=cfg.street_id_column, projection_buffer_m=float(cfg.segment_projection_buffer_m))
     streets_with_region['_street_key'] = range(len(streets_with_region))
@@ -2236,12 +2238,3 @@ class RegionTopologyEngine(RegionTopologyGeometry):
     @staticmethod
     def build(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame, config: RegionTopologyConfig) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, dict[str, int]]:
         return build_region_topology(buildings=buildings, streets=streets, demand_data=demand_data, config=config)
-
-    @staticmethod
-    def build_polygons_from_assigned_streets(*, buildings: gpd.GeoDataFrame, assigned_streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame | None, caps: RegionCaps, config: RegionTopologyConfig) -> gpd.GeoDataFrame:
-        return polygon_builder(
-            buildings=buildings,
-            streets=assigned_streets,
-            demand_data=demand_data,
-            **config.polygon_builder_kwargs(caps=caps, segment_streets_by_building_projections=False, keep_internal_columns=True),
-        )

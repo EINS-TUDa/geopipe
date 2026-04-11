@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 """
-CLI entry point for building district polygon topology.
+CLI entry point for building district topology graphs.
 
-All pipeline logic lives in pypeline.polygon_builder.dijkstra_builder.
+All pipeline logic lives in pypeline.topology_builder.dijkstra_builder.
 
 Usage:
-    python -m pypeline.polygon_builder.cli <dataset_folder> \
+    python -m pypeline.topology_builder.dijkstra_cli <dataset_folder> \
         --buildings-file buildings_heat_demand.geojson \
         --streets-file linear_heat_density.geojson \
         --max-demand-mwh 15000 \
@@ -20,9 +20,9 @@ Output is written to <dataset_folder>/output_data/.
 import argparse
 from pathlib import Path
 
-from pypeline.polygon_builder.dijkstra_builder import (
-    DijkstraPolygonBuilderConfig,
-    DijkstraPolygonBuilder,
+from pypeline.topology_builder.dijkstra_builder import (
+    DijkstraTopologyBuilder,
+    DijkstraTopologyBuilderConfig,
 )
 
 
@@ -42,10 +42,18 @@ def _resolve_dataset_folder(dataset: str) -> Path:
 def main() -> None:
     # Use a temporary default instance to read the field defaults — avoids
     # duplicating the default values here in the CLI.
-    _defaults = DijkstraPolygonBuilderConfig(input_dir=Path(), output_dir=Path())
+    _defaults = DijkstraTopologyBuilderConfig(
+        input_dir=Path(),
+        output_dir=Path(),
+        buildings_file="buildings.geojson",
+        streets_file="streets.geojson",
+        max_demand_mwh=15_000.0,
+        max_street_length_km=15.0,
+        demand_share_pct=75.0,
+    )
 
     parser = argparse.ArgumentParser(
-        description="Build district polygon topology for a dataset folder.",
+        description="Build district topology graphs for a dataset folder.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("dataset", help="Path to the dataset folder (must contain input_data/).")
@@ -68,7 +76,7 @@ def main() -> None:
     if not input_dir.exists():
         raise FileNotFoundError(f"input_data/ directory not found in: {dataset_folder}")
 
-    cfg = DijkstraPolygonBuilderConfig(
+    cfg = DijkstraTopologyBuilderConfig(
         input_dir=input_dir,
         output_dir=output_dir,
         buildings_file=args.buildings_file,
@@ -83,7 +91,7 @@ def main() -> None:
         segment_projection_buffer_m=args.segment_projection_buffer_m,
     )
 
-    DijkstraPolygonBuilder(cfg).build()
+    DijkstraTopologyBuilder(cfg).build()
 
 
 if __name__ == "__main__":

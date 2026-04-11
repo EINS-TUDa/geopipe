@@ -14,7 +14,8 @@ from matplotlib.font_manager import FontProperties
 import contextily as ctx
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point
+from shapely import voronoi_polygons
+from shapely.geometry import MultiPoint, Point
 from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME, HEAT_EXCHANGER_NAMES
 
@@ -28,14 +29,15 @@ class PlotDefaults:
     REGION_FILL_ALPHA = 0.5
     REGION_FILL_COLOR = "grey"
     REGION_BOUNDARY_LINEWIDTH = 0.8
-    PIE_RADIUS_BASE = 0.005
-    PIE_RADIUS_AREA_SCALE = 0.02
+    PIE_RADIUS_BASE = 0.01
+    PIE_RADIUS_AREA_SCALE = 0.025
+    PIE_RADIUS_DEMAND_SCALE = 0.03
     PIE_LABEL_MAP_SPAN_SCALE = 0.025
     PIE_LABEL_RADIUS_SCALE = 1.7
     CENTRAL_EXPLODE_SCALE = 0.25
     MIN_SLICE_SHARE = 0.001
     ID_FONT_SIZE = 10.0
-    LABEL_FONT_SIZE = 2.0
+    LABEL_FONT_SIZE = 6.0
     PIE_MAX_RADIUS_SCALE = 0.05
 
 @dataclass
@@ -85,6 +87,143 @@ class EnergySystemPlotter:
             return {}
         palette = plt.get_cmap("tab20", len(ids))
         return {rid: palette(idx) for idx, rid in enumerate(ids)}
+
+    @staticmethod
+    def _build_voronoi_region_geometries(regions: list[Any]) -> list[Any]:
+        if not regions:
+            raise ValueError("Energy system has no regions for Voronoi geometry")
+
+        seed_points: list[Point] = []
+        all_node_points: list[tuple[float, float]] = []
+
+        for idx, region in enumerate(regions):
+            region_id = int(getattr(region, "id_", idx))
+            topology = getattr(region, "topology", None)
+            nodes = list(topology.nodes) if topology is not None else []
+            if not nodes:
+                raise ValueError(f"Region {region_id} has no topology nodes for Voronoi geometry")
+
+            region_nodes: list[tuple[float, float]] = []
+            for node in nodes:
+                if not isinstance(node, tuple) or len(node) < 2:
+                    raise ValueError(f"Region {region_id} has invalid node coordinate: {node}")
+                region_nodes.append((float(node[0]), float(node[1])))
+
+            all_node_points.extend(region_nodes)
+            seed_points.append(MultiPoint(region_nodes).representative_point())
+
+        seed_keys = {(round(float(pt.x), 9), round(float(pt.y), 9)) for pt in seed_points}
+        if len(seed_keys) != len(seed_points):
+            raise ValueError("Voronoi region seeds are not unique")
+
+        envelope_source = MultiPoint(all_node_points).convex_hull
+        minx, miny, maxx, maxy = envelope_source.bounds
+        map_span = max(float(maxx - minx), float(maxy - miny), 1.0)
+        clip_geom = envelope_source.buffer(map_span * 0.25)
+
+        voronoi_cells = voronoi_polygons(MultiPoint(seed_points), extend_to=clip_geom, ordered=True)
+        cells = list(getattr(voronoi_cells, "geoms", []))
+        if len(cells) != len(seed_points):
+            raise ValueError("Voronoi output cell count does not match region count")
+
+        region_geoms: list[Any] = []
+        for idx, cell in enumerate(cells):
+            region_geom = cell.intersection(clip_geom).buffer(0)
+            if region_geom is None or region_geom.is_empty:
+                region_id = int(getattr(regions[idx], "id_", idx))
+                raise ValueError(f"Voronoi geometry is empty for region {region_id}")
+            region_geoms.append(region_geom)
+
+        return region_geoms
+
+    @staticmethod
+    def build_topology_plot_polygons_from_demand_file(
+        *,
+        streets_with_region: gpd.GeoDataFrame,
+        region_id_column: str,
+        demand_file: Path,
+        energy_system: EnergySystem,
+        street_id_column: str = "street_id",
+        demand_column: str = "annual_demand_mwh",
+        demand_scale_factor: float = 1.0,
+    ) -> gpd.GeoDataFrame:
+        if not demand_file.exists():
+            raise FileNotFoundError(f"Demand file not found for topology plotting: {demand_file}")
+        if region_id_column not in streets_with_region.columns:
+            raise ValueError(f"Missing region id column '{region_id_column}' in streets_with_region")
+        if street_id_column not in streets_with_region.columns:
+            raise ValueError(f"Missing street id column '{street_id_column}' in streets_with_region")
+
+        demand_gdf = gpd.read_file(demand_file)
+        if street_id_column not in demand_gdf.columns:
+            raise ValueError(f"Missing street id column '{street_id_column}' in demand file '{demand_file}'")
+        if demand_column not in demand_gdf.columns:
+            raise ValueError(f"Missing demand column '{demand_column}' in demand file '{demand_file}'")
+
+        street_to_region = streets_with_region[[street_id_column, region_id_column]].dropna().copy()
+        if street_to_region.empty:
+            raise ValueError("No region-assigned streets available for topology plotting")
+
+        street_to_region[street_id_column] = street_to_region[street_id_column].astype(str)
+        street_to_region[region_id_column] = pd.to_numeric(street_to_region[region_id_column], errors="coerce")
+        street_to_region = street_to_region.dropna(subset=[region_id_column])
+        if street_to_region.empty:
+            raise ValueError("No valid region ids available after numeric conversion")
+        street_to_region[region_id_column] = street_to_region[region_id_column].astype(int)
+        street_to_region = street_to_region.drop_duplicates(subset=[street_id_column, region_id_column])
+
+        demand_by_street = demand_gdf[[street_id_column, demand_column]].copy()
+        demand_by_street[street_id_column] = demand_by_street[street_id_column].astype(str)
+        demand_by_street[demand_column] = (
+            pd.to_numeric(demand_by_street[demand_column], errors="coerce").fillna(0.0)
+            * float(demand_scale_factor)
+        )
+        demand_by_street = demand_by_street.groupby(street_id_column, as_index=False)[demand_column].sum()
+
+        merged = street_to_region.merge(demand_by_street, on=street_id_column, how="left")
+        merged[demand_column] = pd.to_numeric(merged[demand_column], errors="coerce").fillna(0.0)
+        demand_by_region = merged.groupby(region_id_column)[demand_column].sum().to_dict()
+
+        if not energy_system.regions:
+            raise ValueError("Energy system has no regions for topology plotting")
+
+        rows: list[dict[str, Any]] = []
+        for idx, region in enumerate(energy_system.regions):
+            region_id = int(getattr(region, "id_", idx))
+            rows.append(
+                {
+                    "id": region_id,
+                    "annual_demand_mwh": float(demand_by_region.get(region_id, 0.0)),
+                    "geometry": region.boundary,
+                }
+            )
+
+        crs = getattr(energy_system.regions[0], "crs", None)
+        return gpd.GeoDataFrame(rows, geometry="geometry", crs=crs)
+
+    @staticmethod
+    def build_topology_plot_polygons_from_energy_system(
+        *,
+        energy_system: EnergySystem,
+        demand_name: str,
+    ) -> gpd.GeoDataFrame:
+        if not energy_system.regions:
+            raise ValueError("Energy system has no regions for topology plotting")
+
+        rows: list[dict[str, Any]] = []
+        for idx, region in enumerate(energy_system.regions):
+            region_id = int(getattr(region, "id_", idx))
+            demand = region.get_demand(demand_name)
+            rows.append(
+                {
+                    "id": region_id,
+                    "annual_demand_mwh": float(demand.value),
+                    "geometry": region.boundary,
+                }
+            )
+
+        crs = getattr(energy_system.regions[0], "crs", None)
+        return gpd.GeoDataFrame(rows, geometry="geometry", crs=crs)
 
     @staticmethod
     def _find_pie_center_inside_polygon(
@@ -251,7 +390,7 @@ class EnergySystemPlotter:
         title: str = "Districts by streets",
         caps_legend: dict[str, Any] | None = None,
     ) -> None:
-        """Render a compact topology plot for polygon pipeline outputs."""
+        """Renders a street-graph plot."""
         s = streets_with_region
         region_ids = [int(v) for v in sorted(s[region_id_column].dropna().unique())]
 
@@ -305,6 +444,9 @@ class EnergySystemPlotter:
             fig.subplots_adjust(top=1.0 - top_panel_h - 0.02)
 
         if table_rows:
+            use_gwh = bool(table_rows) and all(float(demand_mwh_by_region.get(int(rid), 0.0)) > 1000.0 for rid in table_rows)
+            demand_divisor = 1000.0 if use_gwh else 1.0
+            demand_unit = "GWh" if use_gwh else "MWh"
             split_idx = min(25, (len(table_rows) + 1) // 2)
             left_rows = table_rows[:split_idx]
             right_rows = table_rows[split_idx:50]
@@ -321,14 +463,14 @@ class EnergySystemPlotter:
                 cell_rows = [
                     [
                         f"{int(rid)}",
-                        f"{float(demand_mwh_by_region.get(int(rid), 0.0)):.1f}",
+                        f"{float(demand_mwh_by_region.get(int(rid), 0.0)) / demand_divisor:.1f}",
                         f"{float(length_km_by_region.get(int(rid), 0.0)):.2f}",
                     ]
                     for rid in rows
                 ]
                 table = table_ax.table(
                     cellText=cell_rows,
-                    colLabels=["ID", "MWh", "KM"],
+                    colLabels=["ID", demand_unit, "KM"],
                     cellLoc="center",
                     colLoc="center",
                     bbox=[0.0, 0.0, 1.0, 1.0],
@@ -379,6 +521,7 @@ class EnergySystemPlotter:
         *,
         demand_name: str | None,
         kind: str,
+        region_geoms: list[Any],
         demand_values_by_region: dict[int, float] | None,
         tech_outputs_by_region: dict[int, dict[str, float]] | None,
     ) -> PlotContext:
@@ -396,7 +539,7 @@ class EnergySystemPlotter:
         maxy = -math.inf
 
         for region_idx, region in enumerate(regions):
-            region_geom = region.boundary
+            region_geom = region_geoms[region_idx]
             demand = region.get_demand(demand_name)
 
             if demand_overrides and region_idx in demand_overrides:
@@ -796,18 +939,28 @@ class EnergySystemPlotter:
         if ax is None:
             _, ax = plt.subplots(figsize=self._DEFAULT_FIGSIZE)
 
+        regions = self.energy_system.regions
+        region_geoms = self._build_voronoi_region_geometries(regions)
+
         context = self._build_plot_context(
             demand_name=demand_name,
             kind=kind,
+            region_geoms=region_geoms,
             demand_values_by_region=demand_values_by_region,
             tech_outputs_by_region=tech_outputs_by_region,
         )
+        demand_values_for_units = [max(0.0, float(data.demand_value)) for data in context.region_plot_data.values()]
+        use_gwh = kind == PlotDefaults.KIND and bool(demand_values_for_units) and all(val > 400.0 for val in demand_values_for_units)
         inv_max_region_area = 1.0 / context.max_region_area
-        region_ids = [int(getattr(region, "id_", idx)) for idx, region in enumerate(self.energy_system.regions)]
+        max_region_demand = max(
+            (max(0.0, float(data.demand_value)) for data in context.region_plot_data.values()),
+            default=0.0,
+        )
+        inv_max_region_demand = (1.0 / max_region_demand) if max_region_demand > 0.0 else 0.0
+        region_ids = [int(getattr(region, "id_", idx)) for idx, region in enumerate(regions)]
         region_color_map = self._build_region_id_color_map(region_ids)
-        region_geoms = [region.boundary for region in self.energy_system.regions]
 
-        for region_idx, region in enumerate(self.energy_system.regions):
+        for region_idx, region in enumerate(regions):
             region_geom = region_geoms[region_idx]
             other_region_geoms = [g for j, g in enumerate(region_geoms) if j != region_idx]
             region_draw = gpd.GeoSeries([region_geom], crs=region.crs)
@@ -835,8 +988,13 @@ class EnergySystemPlotter:
             tech_outputs = data.tech_outputs
             centroid = region_geom.centroid
             area_norm = context.area_by_region[region_idx] * inv_max_region_area
+            demand_norm = (max(0.0, float(demand_value)) * inv_max_region_demand) if inv_max_region_demand > 0.0 else 0.0
             base_radius = context.map_span * PlotDefaults.PIE_RADIUS_BASE
-            proposed_radius = context.map_span * (PlotDefaults.PIE_RADIUS_BASE + PlotDefaults.PIE_RADIUS_AREA_SCALE * (area_norm ** 0.5))
+            proposed_radius = context.map_span * (
+                PlotDefaults.PIE_RADIUS_BASE
+                + PlotDefaults.PIE_RADIUS_AREA_SCALE * (area_norm ** 0.5)
+                + PlotDefaults.PIE_RADIUS_DEMAND_SCALE * (demand_norm ** 0.5)
+            )
             pie_radius = self._cap_pie_radius_to_polygon_fit(
                 region_geom,
                 preferred_x=float(centroid.x),
@@ -923,16 +1081,22 @@ class EnergySystemPlotter:
             pie_scale = donut.pie_radius / (context.map_span * PlotDefaults.PIE_MAX_RADIUS_SCALE)
             self._draw_glyph_centered_text(ax, x=x, y=y, text=str(region_id), fontsize=PlotDefaults.ID_FONT_SIZE * pie_scale, fontweight="bold", zorder=4.2)
 
-            demand_value_text = f"{demand_value / 1000:.1f} MWh" if kind == PlotDefaults.KIND else f"{demand_value:.1f} kW"
+            if kind == PlotDefaults.KIND:
+                demand_display = (float(demand_value) / 1000.0) if use_gwh else float(demand_value)
+                demand_unit = "GWh" if use_gwh else "MWh"
+                demand_value_text = f"{demand_display:.1f} {demand_unit}"
+            else:
+                demand_value_text = f"{demand_value:.1f} kW"
             dhn_percent = max(0.0, min(100.0, float(dhn_share) * 100.0))
             demand_label = rf"$\mathbf{{{demand_value_text}}}\ \mathit{{({dhn_percent:.1f}\%\ DHN)}}$"
+            label_font_size = max(2.0, min(PlotDefaults.LABEL_FONT_SIZE, PlotDefaults.LABEL_FONT_SIZE * pie_scale))
             ax.text(
                 x,
                 y - donut.label_edge_offset,
                 demand_label,
                 ha="center",
                 va="center",
-                fontsize=PlotDefaults.LABEL_FONT_SIZE,
+                fontsize=label_font_size,
                 zorder=4,
                 bbox={"facecolor": "white", "edgecolor": "black", "linewidth": 1.0, "pad": 1.5},
             )
@@ -946,7 +1110,10 @@ class EnergySystemPlotter:
             if label not in merged_legend:
                 merged_legend[label] = self._COMMODITY_COLORS["other"] if label == "import" else self._COMMODITY_COLORS.get(label, self._COMMODITY_COLORS["other"])
         legend_techs = sorted(merged_legend.keys(), key=lambda k: self._FAMILY_ORDER.get(k, 99))
-        legend_elements = [Patch(facecolor=merged_legend[label], label=label) for label in legend_techs]
+        legend_elements = [
+            Patch(facecolor=merged_legend[label], label=("pipe" if label == "import" else label))
+            for label in legend_techs
+        ]
         if demand_name and context.has_unsupplied:
             legend_elements.append(Patch(facecolor=self._UNSUPPLIED_COLOR, label="Unsupplied Demand"))
         if legend_elements:
@@ -975,8 +1142,12 @@ class EnergySystemPlotter:
         kind: str,
     ) -> YearPlotInputs:
         kpis = optimization_results.get("kpis", {}) if isinstance(optimization_results, dict) else {}
+        energy_year_map = kpis.get("energy_by_tech_year", {}) if isinstance(kpis, dict) else {}
+
         metric_key = "energy_by_tech_year" if kind == PlotDefaults.KIND else "cap_active_by_tech_year"
         tech_year_map = kpis.get(metric_key, {}) if isinstance(kpis, dict) else {}
+
+        demand_year_map = energy_year_map if isinstance(energy_year_map, dict) and energy_year_map else tech_year_map
 
         is_visual_supply_tech = self._is_visual_supply_tech
         technology_bucket = self._technology_bucket
@@ -1012,14 +1183,15 @@ class EnergySystemPlotter:
                         return str(matched)
             return None
 
-        year_value_cache: dict[str, float] = {}
+        year_value_cache: dict[tuple[int, str], float] = {}
 
-        def cached_year_value(cp_key: str) -> float:
-            if cp_key in year_value_cache:
-                return year_value_cache[cp_key]
-            series = tech_year_map.get(cp_key, {})
-            value = float(series.get(str(year), series.get(year, 0.0)) or 0.0)
-            year_value_cache[cp_key] = value
+        def cached_year_value(cp_key: str, *, metric_map: dict[str, Any]) -> float:
+            map_key = (id(metric_map), cp_key)
+            if map_key in year_value_cache:
+                return year_value_cache[map_key]
+            series = metric_map.get(cp_key, {}) if isinstance(metric_map, dict) else {}
+            value = float(series.get(str(year), series.get(year, 0.0)) or 0.0) if isinstance(series, dict) else 0.0
+            year_value_cache[map_key] = value
             return value
 
         demand_values_by_region: dict[int, float] = {}
@@ -1029,7 +1201,10 @@ class EnergySystemPlotter:
 
         for idx, region in enumerate(regions):
             demand_cp = "HeatDemand" if single_region else f"HeatDemand_D{idx}"
-            demand_values_by_region[idx] = cached_year_value(demand_cp)
+            demand_value = cached_year_value(demand_cp, metric_map=demand_year_map)
+            if demand_value <= 0.0 and demand_name:
+                demand_value = float(region.get_demand(demand_name).value)
+            demand_values_by_region[idx] = max(0.0, demand_value)
             demand = region.get_demand(demand_name) if demand_name else None
             demand_commodity_in = demand.demand.commodity_in if demand else None
 
@@ -1043,7 +1218,7 @@ class EnergySystemPlotter:
                 if cp_key is None:
                     continue
 
-                value = cached_year_value(cp_key)
+                value = cached_year_value(cp_key, metric_map=tech_year_map)
                 if value > 0:
                     label = technology_bucket(r_tech.technology)
                     per_region[label] = per_region.get(label, 0.0) + value
