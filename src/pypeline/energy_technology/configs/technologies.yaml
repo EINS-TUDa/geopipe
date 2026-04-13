@@ -28,16 +28,15 @@ ind_hydrogen_boiler:
   efficiency: 0.95 
   technical_lifetime: 20
   opex_cost_energy: 0
-  opex_cost_power: 100000
-  capex_cost_power: 200000
+  opex_cost_power: 177000
+  capex_cost_power: 5000
 
 heat_exchanger:
   efficiency: 0.99
   technical_lifetime: 25
   opex_cost_energy: 0
-  opex_cost_power: 25000
-  capex_cost_power: 0
-  capex_cost_base: 1360000
+  opex_cost_power: 1000
+  capex_cost_power: 193000
   cap_min: 0.01
   cap_max: 100000000.0
 
@@ -47,11 +46,11 @@ heat_exchanger:
 
 cen_heat_pump:
   efficiency: 3.1
-  technical_lifetime: 28
+  technical_lifetime: 25
   opex_cost_energy: 0
-  opex_cost_power: 150000
-  capex_cost_power: 31000
-  capex_cost_base: 53000
+  opex_cost_power: 15000
+  capex_cost_power: 586000
+  capex_cost_base: 125000
   cap_min: 0.3
   cap_max: 20.0
 
@@ -60,8 +59,8 @@ cen_gas_boiler:
   technical_lifetime: 25
   opex_cost_energy: 0
   opex_cost_power: 2000
-  capex_cost_power: 100000
-  capex_cost_base: 65000
+  capex_cost_power: 107000
+  capex_cost_base: 5400
   cap_min: 0.5
   cap_max: 10
 
@@ -69,9 +68,9 @@ cen_oil_boiler:
   efficiency: 0.93
   technical_lifetime: 20
   opex_cost_energy: 0
-  opex_cost_power: 6500
+  opex_cost_power: 1500
   capex_cost_power: 149000
-  capex_cost_base: 18000
+  capex_cost_base: 5400
   cap_min: 0.1
   cap_max: 1.0
 
