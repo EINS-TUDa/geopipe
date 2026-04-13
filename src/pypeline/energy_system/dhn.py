@@ -4,10 +4,9 @@ Only owns graph-based DHN calculations shared by orchestrators.
 """
 
 from __future__ import annotations
-
+from collections.abc import Hashable
 from math import isfinite
 import networkx as nx
-
 from pypeline.energy_system.core import Region
 
 
@@ -22,6 +21,50 @@ def _demand_nodes(
             nodes.add(u)
             nodes.add(v)
     return nodes
+
+
+def _normalize_region_owner(raw: object) -> int | None:
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isfinite(value):
+        return None
+    return int(value)
+
+
+def _edge_owner_by_pair(
+    full_network: nx.Graph,
+    *,
+    region_id_column: str,
+) -> dict[frozenset[Hashable], int | None]:
+    owners: dict[frozenset[Hashable], int | None] = {}
+    for u, v, data in full_network.edges(data=True):
+        owners[frozenset((u, v))] = _normalize_region_owner(data.get(region_id_column))
+    return owners
+
+
+def _legal_pair_network(
+    full_network: nx.Graph,
+    *,
+    region_a_id: int,
+    region_b_id: int,
+    edge_owner_by_pair: dict[frozenset[Hashable], int | None],
+) -> nx.Graph:
+    """Returns legal pipe-routing edges for a region pair.
+
+    Legal edges are unowned streets and streets owned by the region pair. 
+    Edges owned by a third region are excluded.
+    """
+    allowed_owners = {None, int(region_a_id), int(region_b_id)}
+
+    def _allow_edge(u: Hashable, v: Hashable, _allowed: set[int | None] = allowed_owners) -> bool:
+        owner = edge_owner_by_pair.get(frozenset((u, v)))
+        return owner in _allowed
+
+    return nx.subgraph_view(full_network, filter_edge=_allow_edge)
 
 
 def build_district_heat_grid_from_topology(
@@ -56,9 +99,10 @@ def build_inter_dhn_pipes_from_topologies(
     full_network: nx.Graph,
     pipe_capex_eur_per_km: float,
     demand_column: str = "total_heat_demand",
+    region_id_column: str = "id",
     min_interdistrict_pipe_length_m: float = 1.0,
 ) -> dict[tuple[int, int], dict[str, float]]:
-    """Compute inter-district pipe specs using shortest path on the full street network."""
+    """Compute inter-district pipe specs using legal shortest paths on the street network."""
     capex_per_km = float(pipe_capex_eur_per_km)
     if not isfinite(capex_per_km) or capex_per_km < 0.0:
         raise ValueError("pipe_capex_eur_per_km must be finite and >= 0")
@@ -66,6 +110,7 @@ def build_inter_dhn_pipes_from_topologies(
         return {}
 
     records: dict[tuple[int, int], dict[str, float]] = {}
+    edge_owner_map = _edge_owner_by_pair(full_network, region_id_column=region_id_column)
 
     for i, region_a in enumerate(regions):
         for j, region_b in enumerate(regions):
@@ -77,9 +122,18 @@ def build_inter_dhn_pipes_from_topologies(
             if not sources or not targets:
                 continue
 
+            legal_network = _legal_pair_network(
+                full_network,
+                region_a_id=int(region_a.id),
+                region_b_id=int(region_b.id),
+                edge_owner_by_pair=edge_owner_map,
+            )
+
             try:
                 dist = nx.multi_source_dijkstra_path_length(
-                    full_network, sources=sources, weight="length"
+                    legal_network,
+                    sources=sources,
+                    weight="length",
                 )
             except nx.NetworkXNoPath:
                 continue

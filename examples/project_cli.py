@@ -4,7 +4,6 @@ Use this file as the primary command-line entry point for running any case/examp
 """
 
 from __future__ import annotations
-
 import argparse
 import curses
 import importlib
@@ -13,15 +12,8 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
-
 import matplotlib.pyplot as plt
-
-from examples.example_registry import (
-    ScenarioEntry,
-    discover_scenarios,
-    get_scenario_by_name,
-    run_scenario,
-)
+from examples.example_registry import (ScenarioEntry, discover_scenarios, get_scenario_by_name, run_scenario)
 from examples.example_runner import ScenarioExecutionResult
 
 
