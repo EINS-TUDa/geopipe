@@ -3,12 +3,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-
 @dataclass(frozen=True)
 class Unit(ABC):
-    """
-    Defines the units for the data input for the energy system model
-    """
+    """Defines the units for the data input for the energy system model."""
+
     power: str
     energy: str
     co2_emissions: str
@@ -16,6 +14,7 @@ class Unit(ABC):
     cost_power: str
     co2_spec: str
     money: str
+
 
 @dataclass(frozen=True)
 class UnitKW(Unit):
@@ -27,6 +26,7 @@ class UnitKW(Unit):
     co2_spec: str = "kg/kWh"
     money: str = "EUR"
 
+
 @dataclass(frozen=True)
 class UnitMW(Unit):
     power: str = "MW"
@@ -37,6 +37,7 @@ class UnitMW(Unit):
     co2_spec: str = "kg/kWh"
     money: str = "k EUR"
 
+
 @dataclass(frozen=True)
 class UnitGW(Unit):
     power: str = "GW"
@@ -46,6 +47,7 @@ class UnitGW(Unit):
     cost_power: str = "EUR/kW"
     co2_spec: str = "kg/kWh"
     money: str = "Mio EUR"
+
 
 class UnitEnum(Enum):
     KW = "kW"

@@ -1,6 +1,6 @@
 import geopandas as gpd
 from shapely.geometry import LineString
-from pypeline.energy_system.region_topology import RegionTopologyGeometry
+from pypeline.topology_builder.region_topology_builder import RegionTopologyGeometry
 
 
 def _streets_from_lines(lines):

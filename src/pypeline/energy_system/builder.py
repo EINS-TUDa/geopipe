@@ -1,17 +1,22 @@
-from __future__ import annotations
+"""Energy-system orchestration and policy wiring.
 
-from dataclasses import dataclass, field
+Only owns assembly flow and cross-region policy decisions.
+"""
+
+from __future__ import annotations
 from pathlib import Path
 from typing import Any
-import geopandas as gpd
 import networkx as nx
-import pandas as pd
 import yaml
 
 from pypeline.data.data_registry import DataRegistry
 from pypeline.data.dataset import CensusTechnology
-from pypeline.energy_system.demand import Demand
-from pypeline.energy_system.region import Region, RegionBuilder
+from pypeline.energy_system.core import Demand, EnergySystem, Region
+from pypeline.energy_system.dhn import (
+    build_district_heat_grid_from_topology,
+    build_inter_dhn_pipes_from_topologies,
+)
+from pypeline.energy_system.region import RegionBuilder
 from pypeline.energy_system.rule_book import (
     DEFAULT_HEAT_GRID_COST_DATASET,
     DEFAULT_HEAT_GRID_DEMAND_NAME,
@@ -23,31 +28,9 @@ from pypeline.energy_system.rule_book import (
     PRIMARY_HEAT_EXCHANGER,
     RegionRuleBook,
 )
-from pypeline.energy_system.unit import Unit, UnitEnum
-from pypeline.energy_system.dhn import (
-    build_district_heat_grid_from_topology,
-    build_inter_dhn_pipes_from_topologies,
-)
+from pypeline.units import Unit, UnitEnum
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 
-
-__all__ = (
-    "EnergySystem",
-    "EnergySystemBuilder",
-    "JsonEnergySystemBuilder",
-)
-
-@dataclass(slots=True)
-class EnergySystem:
-    name: str
-    regions: list[Region]
-    units: Unit
-    street_network: nx.Graph | None = None
-    technology_registry: TechnologyRegistry | None = None
-    commodity_config: dict[str, Any] = field(default_factory=dict)
-    constraints: dict[str, dict[int, float]] = field(default_factory=dict)
-    data_dir: str | Path | None = None
-    inter_district_pipe_specs: dict[tuple[int, int], dict[str, float]] | None = None
 
 class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
@@ -64,27 +47,17 @@ class EnergySystemBuilder:
         self.demands: list[Demand] | None = None
         self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
         self.pipe_technology_name: str = "heat_pipe"
+        self._dhn_central_seed_cache: dict[int, str] = {}
 
     def set_unit(self, input_unit: UnitEnum):
         self.unit = input_unit.unit
         return self
 
     def set_street_network(self, network: nx.Graph):
-        """Explicitly set the full street network used for inter-district routing.
-
-        If not set, ``build()`` will query the data registry for a ``street_network``
-        key.  If neither is available, ``build()`` raises a ``ValueError``.
-        """
         self.street_network = network
         return self
 
     def set_region_topologies(self, topologies: list[nx.Graph]):
-        """Set the region topologies directly as a list of NetworkX graphs.
-
-        Each graph represents the street network of one region.  If a graph carries
-        a pre-assigned integer ID in ``G.graph['id']``, that value is used as the
-        region ID; otherwise the list index is used.
-        """
         self.region_topologies = list(topologies)
         return self
 
@@ -111,6 +84,20 @@ class EnergySystemBuilder:
         if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
             raise TypeError("demands must be a list of Demand instances.")
         self.demands = demands
+        return self
+
+    def set_region_builder_config(self, config: dict[str, Any] | None, *, merge: bool = True):
+        if config is None:
+            return self
+        if not isinstance(config, dict):
+            raise TypeError("region_builder_config must be a mapping")
+
+        if self.region_builder_config is None or not merge:
+            self.region_builder_config = dict(config)
+        else:
+            merged = dict(self.region_builder_config)
+            merged.update(config)
+            self.region_builder_config = merged
         return self
 
     def _set_default_demands(self):
@@ -147,13 +134,12 @@ class EnergySystemBuilder:
             ),
         ]
 
-    def set_district_street_segments(self, street_segments: gpd.GeoDataFrame | None):
-        self.district_street_segments_gdf = None if street_segments is None else street_segments.copy()
-        return self
-
     def _load_default_commodity_config(self) -> dict[str, Any]:
         root = Path(__file__).resolve().parents[1]
-        candidates = [root / "energy_technology" / "configs" / "commodities.yaml", root.parent / "configs" / "commodities.yaml"]
+        candidates = [
+            root / "energy_technology" / "configs" / "commodities.yaml",
+            root.parent / "configs" / "commodities.yaml",
+        ]
         for candidate in candidates:
             if candidate.exists():
                 cfg = yaml.safe_load(candidate.read_text(encoding="utf-8"))
@@ -189,7 +175,7 @@ class EnergySystemBuilder:
 
     def set_default_region_builder_config(self):
         self.region_builder_config = {
-            "cap_factor_ind_technologies": 1.1,  # Factor to increase the capacity of individual technologies over the minimum required capacity
+            "cap_factor_ind_technologies": 1.1,
             "min_heat_grid_output_mwh": 0.0,
             "min_heat_grid_share": None,
             "heat_grid_demand_name": DEFAULT_HEAT_GRID_DEMAND_NAME,
@@ -280,13 +266,51 @@ class EnergySystemBuilder:
                 )
             )
 
-    def _resolve_street_network(self) -> nx.Graph:
-        """Return the full street network for inter-district routing.
+    def _infer_dhn_central_seed_base(self, topology: nx.Graph, district_id: int) -> str:
+        district_id_i = int(district_id)
+        cached = self._dhn_central_seed_cache.get(district_id_i)
+        if cached:
+            return cached
 
-        Resolution order:
-        1. Explicitly set via ``set_street_network()``.
-        2. Queried from the data registry using key ``"street_network"``.
-        """
+        base_query = {
+            "key": "heating_shares",
+            "region": topology,
+            "base_crs": self.base_crs,
+            "name_mapping": {},
+        }
+        raw_shares = self.data_registry.query(base_query)
+        if not isinstance(raw_shares, dict):
+            raise TypeError(
+                f"Heating share query must return a mapping, got {type(raw_shares)} for district {district_id_i}"
+            )
+
+        candidates: list[tuple[str, float]] = [
+            ("cen_gas_boiler", float(raw_shares.get(CensusTechnology.Gas, 0.0) or 0.0)),
+            ("cen_oil_boiler", float(raw_shares.get(CensusTechnology.Oil, 0.0) or 0.0)),
+            (
+                "cen_biomass_woodpellets",
+                float(raw_shares.get(CensusTechnology.Wood, 0.0) or 0.0)
+                + float(raw_shares.get(CensusTechnology.Biomass, 0.0) or 0.0),
+            ),
+        ]
+        candidates.sort(key=lambda entry: (entry[1], entry[0]), reverse=True)
+
+        viable = [
+            (name, score)
+            for name, score in candidates
+            if score > 0.0 and self.technology_registry.has_technology(name)
+        ]
+        if not viable:
+            raise ValueError(
+                "Unable to infer district-heating central technology from local fuel shares "
+                f"for district {district_id_i}. Expected positive Gas/Heizoel/Wood/Biomass shares."
+            )
+
+        selected = viable[0][0]
+        self._dhn_central_seed_cache[district_id_i] = selected
+        return selected
+
+    def _resolve_street_network(self) -> nx.Graph:
         if self.street_network is not None:
             return self.street_network
         if self.data_registry is not None:
@@ -303,24 +327,24 @@ class EnergySystemBuilder:
         )
 
     def build(self) -> EnergySystem:
-        # verify the required attributes are set
         self.verify()
+        self._dhn_central_seed_cache = {}
 
-        # setup region builder
         rb = RegionBuilder(
             base_crs=self.base_crs,
             data_registry=self.data_registry,
-            technology_registry=self.technology_registry)
+            technology_registry=self.technology_registry,
+        )
         rb.set_demands(self.demands)
         if not self.region_builder_config:
             self.set_default_region_builder_config()
         rb.set_config(self.region_builder_config)
+        rb.set_dhn_central_seed_base_resolver(self._infer_dhn_central_seed_base)
 
         self._ensure_heat_grid_rules()
         if self.region_rule_book:
             rb.set_rule_book(self.region_rule_book)
 
-        # build one Region per topology graph
         regions: list[Region] = []
         for idx, topology in enumerate(self.region_topologies):
             region_id = topology.graph.get("id", idx)
@@ -328,7 +352,6 @@ class EnergySystemBuilder:
                 region_id = idx
             regions.append(rb.build(topology=topology, region_id=region_id))
 
-        # pre-compute local DHN costs and inter-district pipe specs
         pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
         for region in regions:
             cost = build_district_heat_grid_from_topology(
@@ -337,7 +360,6 @@ class EnergySystemBuilder:
             )
             region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
 
-        # resolve the full street network for inter-district routing
         street_network = self._resolve_street_network()
 
         inter_district_pipe_specs = None
@@ -348,7 +370,6 @@ class EnergySystemBuilder:
                 pipe_capex_eur_per_km=1.0,
             )
 
-        # create the energy system
         es = EnergySystem(
             name=self.energy_system_name,
             regions=regions,
@@ -359,7 +380,6 @@ class EnergySystemBuilder:
             inter_district_pipe_specs=inter_district_pipe_specs,
         )
 
-        # apply energy system rule book if set
         if self.rule_book:
             es = self.rule_book.apply(es)
 
@@ -376,11 +396,5 @@ class EnergySystemBuilder:
             raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
         if not isinstance(self.technology_registry, TechnologyRegistry):
             raise ValueError(
-                f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}")
-
-
-class JsonEnergySystemBuilder(EnergySystemBuilder):
-    def set_topology_from_json(self, json_file_path: str, key_column: str = "gemeindeschluessel"):
-        from pypeline.energy_system.dhn import gdf_to_region_topologies
-        gdf = gpd.read_file(json_file_path).to_crs(self.base_crs)
-        self.set_region_topologies(gdf_to_region_topologies(gdf, key_column=key_column))
+                f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
+            )

@@ -11,7 +11,7 @@ from pypeline.data.dataset import CensusTechnology
 from pypeline.data.default_datasets import get_default_residential_heat_demand_profile_dataset, \
     get_default_residential_electricity_demand_profile_dataset, \
     get_default_residential_yearly_electricity_demand_dataset
-from pypeline.energy_system.unit import UnitEnum
+from pypeline.units import UnitEnum
 
 
 def ***REMOVED***_waermeatlas_heat_demand_query(dataset: PostgreSQLDataset, query: dict) -> float:

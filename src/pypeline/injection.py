@@ -1,11 +1,10 @@
+"""Supports injecting demand and supply into the energy system."""
+
 from __future__ import annotations
-
 from typing import Any
-
 import geopandas as gpd
 import pandas as pd
-
-from pypeline.energy_system.energy_system import EnergySystem
+from pypeline.energy_system.core import EnergySystem
 
 
 def resolve_region_technology(region: Any, technology_name: str) -> Any:
@@ -78,7 +77,7 @@ def apply_injected_techs(energy_system: EnergySystem, injected_techs: list[dict[
             target.initial_energy_output = initial_output
 
 
-def _find_segment_indices(streets: gpd.GeoDataFrame, *, street_id_column: str, segment_id: Any) -> list[int]:
+def find_segment_indices(streets: gpd.GeoDataFrame, *, street_id_column: str, segment_id: Any) -> list[int]:
     if street_id_column not in streets.columns:
         raise ValueError(f"Missing street id column '{street_id_column}' in street segments")
 
@@ -106,13 +105,13 @@ def _resolve_injection_target_index(
     if segment_id is None:
         raise ValueError("Injection requires 'street_segment_id'")
 
-    idxs = _find_segment_indices(streets, street_id_column=street_id_column, segment_id=segment_id)
+    idxs = find_segment_indices(streets, street_id_column=street_id_column, segment_id=segment_id)
     if not idxs:
         raise ValueError(f"Injection references unknown street_segment_id '{segment_id}'")
     return int(idxs[0])
 
 
-def _apply_injections(
+def apply_injections(
     streets: gpd.GeoDataFrame,
     *,
     injections: list[dict[str, Any]],
@@ -229,3 +228,11 @@ def _apply_injections(
             )
 
     return enriched, float(injected_demand_mwh), injected_techs
+
+
+__all__ = [
+    "resolve_region_technology",
+    "apply_injected_techs",
+    "find_segment_indices",
+    "apply_injections",
+]

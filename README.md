@@ -35,5 +35,5 @@ uv run mkdocs serve
 
 ## Getting Started
 
-Run examples via run_ `examples.py` and select the example you want to run in the terminal.
-It will continue to prompt you for optional injections and plotting.
+Run examples via `project_cli.py` and select the example you want to run in the terminal.
+It will continue to prompt you for optional demand/supply injections and then give result visualization options.

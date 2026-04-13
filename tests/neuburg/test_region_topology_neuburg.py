@@ -3,7 +3,7 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.energy_system.region_topology import RegionTopologyGeometry, build_region_topology, RegionTopologyConfig
+from pypeline.topology_builder.region_topology_builder import RegionTopologyGeometry, build_region_topology, RegionTopologyConfig
 
 
 def _count_overloaded_junction_multi_region_violations(streets_with_region: gpd.GeoDataFrame, *, tolerance_m: float = 10.0) -> int:
@@ -95,7 +95,7 @@ def neuburg_topology_t() -> None:
         demand_street_indicator_min=0.0,
     )
 
-    _, streets_with_region, _ = build_region_topology(
+    streets_with_region, _ = build_region_topology(
         buildings=buildings,
         streets=streets,
         demand_data=demand,

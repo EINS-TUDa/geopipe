@@ -20,8 +20,8 @@ from __future__ import annotations
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pypeline.energy_system.energy_system import HEAT_EXCHANGER_NAMES
-from pypeline.energy_system.io_utils import _canon_co
+from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
+from pypeline.optimization.cesm.io_utils import _canon_co
 from pypeline.energy_technology.technology import (
     Technology,
     extract_district_id_from_name as _extract_district_id_from_name,

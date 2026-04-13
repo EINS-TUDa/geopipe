@@ -1,7 +1,7 @@
 """Backend-agnostic optimization context.
 
 Defines :class:`OptimizationContext`, a flat numerical representation of an
-:class:`~pypeline.energy_system.energy_system.EnergySystem` + :class:`~pypeline.energy_system.scenario.Scenario`
+:class:`~pypeline.energy_system.core.EnergySystem` + :class:`~pypeline.energy_system.core.Scenario`
 pair.  All domain logic (region topology, demand profiles, technology shares)
 is resolved here so that solver backends only need to consume plain dicts /
 lists / DataFrames.
@@ -20,18 +20,10 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence
-import numpy as np
 
-from pypeline.energy_system.demand import RegionDemand
-from pypeline.energy_system.energy_system import EnergySystem
+from pypeline.energy_system.core import EnergySystem, RegionDemand, Scenario
 from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME
-from pypeline.energy_system.io_utils import (
-    commodity_config_from_energy_system,
-    polygons_from_energy_system,
-    resolve_retain_schedule,
-)
-from pypeline.energy_system.scenario import Scenario
-from pypeline.energy_system.tss import four_times_indices
+from pypeline.optimization.tss import four_times_indices
 from pypeline.validation import (
     assert_fractional,
     normalize_shares_or_zero,

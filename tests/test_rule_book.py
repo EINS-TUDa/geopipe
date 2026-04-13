@@ -1,9 +1,7 @@
 import pandas as pd
 import pytest
-from pypeline.energy_system.demand import Demand, RegionDemand
-from pypeline.energy_system.region import Region
+from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand
 from pypeline.energy_system.rule_book import ( MinimumHeatGridOutputRule, MinimumHeatGridConstraintRule,)
-from pypeline.energy_system.energy_system import EnergySystem
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 
 

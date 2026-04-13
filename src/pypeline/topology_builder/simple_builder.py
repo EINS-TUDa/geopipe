@@ -1,5 +1,12 @@
+"""Simple scenario-driven topology builder.
+
+Owns YAML-based region assignment and optional injection handling.
+Does not own generic graph conversion primitives.
+"""
+
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -8,11 +15,27 @@ import networkx as nx
 import pandas as pd
 import yaml
 
-from pypeline.injection import _apply_injections, _find_segment_indices
-from pypeline.topology_builder.abstract_topology_builder import (
+from pypeline.topology_builder.core import (
     AbstractTopologyBuilder,
     TopologyBuildResult,
+    gdf_to_nx,
+    gdf_to_region_topologies,
 )
+from pypeline.injection import (
+    apply_injections as apply_topology_injections,
+    find_segment_indices,
+)
+
+
+@dataclass(frozen=True)
+class SimpleTopologyBuilderConfig:
+    streets_file: Path
+    scenario_file: Path
+    region_id_column: str = "id"
+    street_id_column: str = "street_id"
+    demand_column: str = "total_heat_demand"
+    street_length_column: str = "street_length"
+    apply_injections: bool = True
 
 
 def load_scenario_yaml(config_file: Path) -> dict[str, Any]:
@@ -38,7 +61,7 @@ def _resolve_region_anchor_indices(
 
     indices: list[int] = []
     for segment_id in segment_ids:
-        hit = _find_segment_indices(streets, street_id_column=street_id_column, segment_id=segment_id)
+        hit = find_segment_indices(streets, street_id_column=street_id_column, segment_id=segment_id)
         if not hit:
             raise ValueError(f"Unknown street_segment_id '{segment_id}' in regions[{region_idx}]")
         indices.extend(hit)
@@ -106,7 +129,7 @@ def _expand_region_with_shortest_paths(
                 if sid is None:
                     continue
                 selected.update(
-                    _find_segment_indices(streets, street_id_column=street_id_column, segment_id=sid)
+                    find_segment_indices(streets, street_id_column=street_id_column, segment_id=sid)
                 )
 
     return sorted(selected)
@@ -154,7 +177,7 @@ def _assign_regions(
         resolved_indices = seed_indices
         if len(seed_indices) > 1:
             if full_network is None:
-                full_network = AbstractTopologyBuilder.gdf_to_nx(assigned)
+                full_network = gdf_to_nx(assigned)
             resolved_indices = _expand_region_with_shortest_paths(
                 assigned,
                 seed_indices=seed_indices,
@@ -220,7 +243,7 @@ def _run_simple_pipeline(
     injected_demand_mwh = 0.0
     injected_techs: list[dict[str, Any]] = []
     if apply_injections:
-        streets, injected_demand_mwh, injected_techs = _apply_injections(
+        streets, injected_demand_mwh, injected_techs = apply_topology_injections(
             streets,
             injections=injections,
             street_id_column=street_id_column,
@@ -232,14 +255,14 @@ def _run_simple_pipeline(
     if assigned.empty:
         raise ValueError("Missing region-assigned street segments")
 
-    region_topologies = AbstractTopologyBuilder.gdf_to_region_topologies(
+    region_topologies = gdf_to_region_topologies(
         assigned,
         key_column=region_id_column,
     )
     if not region_topologies:
         raise ValueError("No region topologies built")
 
-    street_network = AbstractTopologyBuilder.gdf_to_nx(streets)
+    street_network = gdf_to_nx(streets)
     return TopologyBuildResult(
         network=street_network,
         region_topologies=region_topologies,
@@ -270,6 +293,18 @@ class SimpleTopologyBuilder(AbstractTopologyBuilder):
         self.demand_column = demand_column
         self.street_length_column = street_length_column
         self.apply_injections = apply_injections
+
+    @classmethod
+    def from_config(cls, config: SimpleTopologyBuilderConfig) -> "SimpleTopologyBuilder":
+        return cls(
+            streets_file=config.streets_file,
+            scenario_file=config.scenario_file,
+            region_id_column=config.region_id_column,
+            street_id_column=config.street_id_column,
+            demand_column=config.demand_column,
+            street_length_column=config.street_length_column,
+            apply_injections=config.apply_injections,
+        )
 
     def build(self) -> TopologyBuildResult:
         return _run_simple_pipeline(

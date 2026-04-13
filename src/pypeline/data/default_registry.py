@@ -11,7 +11,7 @@ from pypeline.data import (
 from sqlalchemy import text
 
 from pypeline.data.dataset import SimpleDataset, FileDataset, CensusTechnology
-from pypeline.energy_system.unit import UnitEnum
+from pypeline.units import UnitEnum
 
 
 def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:

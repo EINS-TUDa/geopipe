@@ -1,8 +1,11 @@
 from __future__ import annotations
 from pathlib import Path
 
-from examples.run_models import ScenarioCaseConfig, ScenarioRunOutput
-from examples.example_api import render_topology_plot, run_scenario_case
+from examples.example_runner import (
+    ScenarioCaseConfig,
+    ScenarioExecutionResult,
+    run_scenario_case,
+)
 
 project_root = Path(__file__).resolve().parents[2]
 CASE_DIR = Path(__file__).resolve().parent
@@ -24,16 +27,15 @@ CASE_CONFIG = ScenarioCaseConfig(
     lockout_years=2,
     apply_injections=True,
     region_builder_config_overrides={
-        "min_heat_grid_share": 0.0,
+        "min_heat_grid_share": 0.1,
         "heat_grid_names": ("heat_exchanger",),
     },
-    output_plots_dir=CASE_DIR / "output_data" / "plots",
     expected_region_ids=(0, 1),
 )
 
 
-def main() -> ScenarioRunOutput:
-    summary = run_scenario_case(CASE_CONFIG)
+def main(*, apply_injections: bool | None = None) -> ScenarioExecutionResult:
+    summary = run_scenario_case(CASE_CONFIG, apply_injections=apply_injections)
     print("Case 1 completed.")
     print(f"regions={summary.regions}, network_edges={summary.network_edges}")
     print(f"injected_demand={summary.injected_demand:.2f}, injected_tech_count={summary.injected_tech_count}")
@@ -41,5 +43,4 @@ def main() -> ScenarioRunOutput:
 
 
 if __name__ == "__main__":
-    run_output = main()
-    render_topology_plot(run_output)
+    main()

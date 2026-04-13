@@ -1,61 +1,91 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from examples.run_models import DijkstraScenarioConfig, ScenarioCaseConfig, ScenarioRunOutput
-from pypeline.runtime import (
+from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
+from pypeline.plot.plotter import EnergySystemPlotter
+from pypeline.factory import (
     build_energy_system,
     build_scenario,
     create_cesm_backend,
 )
-from pypeline.optimization.cesm.input_writer import write_cesm_inputs_from_energy_system
-from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
-from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder import DijkstraTopologyBuilder, DijkstraTopologyBuilderConfig, SimpleTopologyBuilder
-from pypeline.topology_builder.analysis import edge_metrics_from_topology_result, streets_for_topology_plot
+from pypeline.topology_builder.cli.simple import build_topology_from_case
+from pypeline.topology_builder.cli.dijkstra import build_topology_from_dataset
+from pypeline.topology_builder.core import (
+    edge_metrics_from_topology_result,
+    streets_for_topology_plot,
+)
 
 
-def render_topology_plot(run_output: Mapping[str, Any]) -> Path:
-    if not isinstance(run_output, Mapping):
-        raise TypeError("run_output must be a mapping")
+@dataclass(frozen=True)
+class ScenarioCaseConfig:
+    project_root: Path
+    scenario_file: Path
+    streets_file: Path
+    heat_demand_file: Path
+    heating_shares_file: Path
+    model_name: str
+    scenario_name: str
+    tss_name: str
+    demand_name: str
+    start_year: int
+    end_year: int
+    year_gap: int
+    retain_existing_output_drop_per_year: float
+    lockout_years: int
+    region_builder_config_overrides: dict[str, Any] | None = None
+    expected_region_ids: tuple[int, ...] | None = None
+    apply_injections: bool = False
 
-    required_keys = (
-        "plotter",
-        "streets_with_region",
-        "topology_plot_polygons",
-        "region_id_column",
-        "topology_plot_title",
-        "topology_plot_filename",
-        "plots_dir",
-    )
-    missing = [key for key in required_keys if key not in run_output]
-    if missing:
-        raise ValueError(f"run_output is missing required topology plot keys: {missing}")
 
-    plotter = run_output["plotter"]
-    streets_with_region = run_output["streets_with_region"]
-    polygons = run_output["topology_plot_polygons"]
-    region_id_column = str(run_output["region_id_column"])
-    title = str(run_output["topology_plot_title"])
-    filename = str(run_output["topology_plot_filename"])
-    plots_dir = Path(run_output["plots_dir"])
+@dataclass(frozen=True)
+class DijkstraScenarioConfig:
+    project_root: Path
+    input_dir: Path
+    output_dir: Path
+    buildings_file: str
+    streets_file: str
+    heat_demand_file: Path
+    heating_shares_file: Path
+    model_name: str
+    scenario_name: str
+    tss_name: str
+    demand_name: str
+    start_year: int
+    end_year: int
+    year_gap: int
+    retain_existing_output_drop_per_year: float
+    lockout_years: int
+    max_demand_mwh: float
+    max_street_length_km: float
+    demand_share_pct: float
+    polynesia: bool
+    city_column: str
+    region_builder_config_overrides: dict[str, Any] | None = None
 
-    if not isinstance(plotter, EnergySystemPlotter):
-        raise TypeError("run_output['plotter'] must be an EnergySystemPlotter")
 
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    output_path = plots_dir / filename
-    plotter.plot_streets_colored_by_region(
-        streets_with_region=streets_with_region,
-        polygons=polygons,
-        output_path=output_path,
-        region_id_column=region_id_column,
-        title=title,
-    )
-    print(f"Saved topology plot: {output_path}")
-    return output_path
+@dataclass(frozen=True)
+class ScenarioExecutionResult:
+    regions: int
+    network_edges: int
+    network_edges_assigned: int
+    injected_demand: float
+    injected_tech_count: int
+    demand_name: str
+    results_raw: dict[str, Any] | Any
+    results_report_html: Path | None
+    years: list[int]
+    plotter: EnergySystemPlotter
+    plots_dir: Path
+    project_root: Path
+    streets_with_region: Any
+    topology_plot_polygons: Any
+    region_id_column: str
+    topology_plot_title: str
+    topology_plot_filename: str
+    results_obj: Any = None
 
 
 def build_case_energy_system_from_scenario(
@@ -69,11 +99,12 @@ def build_case_energy_system_from_scenario(
     apply_injections: bool,
     project_root: Path,
 ):
-    topology_result = SimpleTopologyBuilder(
-        streets_file=streets_file,
-        scenario_file=scenario_file,
+    topology_result = build_topology_from_case(
+        case=scenario_file.parent,
+        streets_file=str(streets_file),
+        scenario_file=str(scenario_file),
         apply_injections=apply_injections,
-    ).build()
+    )
 
     energy_system = build_energy_system(
         model_name=model_name,
@@ -102,6 +133,14 @@ def _slug(text: str) -> str:
     return "_".join(str(text).strip().lower().split())
 
 
+def _case_plots_dir(config: ScenarioCaseConfig) -> Path:
+    return config.scenario_file.parent / "output_data" / "plots"
+
+
+def _dijkstra_plots_dir(config: DijkstraScenarioConfig) -> Path:
+    return config.output_dir / "plots"
+
+
 def _write_results_report(
     *,
     output_dir: Path,
@@ -120,7 +159,7 @@ def _write_results_report(
     )
 
 
-def _build_scenario_run_output(
+def _build_execution_result(
     *,
     topology_result: Any,
     assigned_edges: int,
@@ -133,8 +172,8 @@ def _build_scenario_run_output(
     project_root: Path,
     streets_for_plot: Any,
     model_name: str,
-) -> ScenarioRunOutput:
-    return ScenarioRunOutput(
+) -> ScenarioExecutionResult:
+    return ScenarioExecutionResult(
         regions=int(len(topology_result.region_topologies)),
         network_edges=assigned_edges,
         network_edges_assigned=assigned_edges,
@@ -159,7 +198,13 @@ def _build_scenario_run_output(
     )
 
 
-def run_scenario_case_fast(config: ScenarioCaseConfig) -> dict[str, float | int]:
+def run_scenario_case(
+    config: ScenarioCaseConfig,
+    *,
+    apply_injections: bool | None = None,
+) -> ScenarioExecutionResult:
+    effective_apply_injections = config.apply_injections if apply_injections is None else bool(apply_injections)
+
     energy_system, topology_result = build_case_energy_system_from_scenario(
         scenario_file=config.scenario_file,
         streets_file=config.streets_file,
@@ -167,52 +212,7 @@ def run_scenario_case_fast(config: ScenarioCaseConfig) -> dict[str, float | int]
         heat_demand_file=config.heat_demand_file,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
-        apply_injections=config.apply_injections,
-        project_root=config.project_root,
-    )
-
-    _validate_case_regions(config, topology_result.region_topologies)
-    _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
-
-    scenario = build_scenario(
-        model_name=f"{config.model_name}FastCheck",
-        scenario_name=f"{config.scenario_name}FastCheck",
-        tss_name=config.tss_name,
-        start_year=config.start_year,
-        end_year=config.end_year,
-        year_gap=config.year_gap,
-        retain_existing_output_drop_per_year=config.retain_existing_output_drop_per_year,
-        lockout_years=config.lockout_years,
-    )
-
-    write_cesm_inputs_from_energy_system(
-        energy_system,
-        scenario,
-        workdir=config.project_root / "CESM",
-        model_name=f"{config.model_name}FastCheck",
-        scenario_name=f"{config.scenario_name}FastCheck",
-        tss_name=config.tss_name,
-        demand_name=config.demand_name,
-    )
-
-    return {
-        "regions": int(len(topology_result.region_topologies)),
-        "network_edges": assigned_edges,
-        "network_edges_assigned": assigned_edges,
-        "injected_demand": float(topology_result.injected_demand_mwh),
-        "injected_tech_count": int(len(topology_result.injected_techs)),
-    }
-
-
-def run_scenario_case(config: ScenarioCaseConfig) -> ScenarioRunOutput:
-    energy_system, topology_result = build_case_energy_system_from_scenario(
-        scenario_file=config.scenario_file,
-        streets_file=config.streets_file,
-        model_name=config.model_name,
-        heat_demand_file=config.heat_demand_file,
-        heating_shares_file=config.heating_shares_file,
-        region_builder_config_overrides=config.region_builder_config_overrides,
-        apply_injections=config.apply_injections,
+        apply_injections=effective_apply_injections,
         project_root=config.project_root,
     )
 
@@ -220,7 +220,8 @@ def run_scenario_case(config: ScenarioCaseConfig) -> ScenarioRunOutput:
     _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
     streets_for_plot = streets_for_topology_plot(topology_result, region_id_column="id")
 
-    config.output_plots_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir = _case_plots_dir(config)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
     scenario = build_scenario(
         model_name=config.model_name,
@@ -243,7 +244,7 @@ def run_scenario_case(config: ScenarioCaseConfig) -> ScenarioRunOutput:
     solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
     results_obj = solution.results
     report_path = _write_results_report(
-        output_dir=config.output_plots_dir,
+        output_dir=plots_dir,
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         results_obj=results_obj,
@@ -255,10 +256,11 @@ def run_scenario_case(config: ScenarioCaseConfig) -> ScenarioRunOutput:
             "start_year": config.start_year,
             "end_year": config.end_year,
             "year_gap": config.year_gap,
+            "apply_injections": effective_apply_injections,
         },
     )
 
-    return _build_scenario_run_output(
+    return _build_execution_result(
         topology_result=topology_result,
         assigned_edges=assigned_edges,
         demand_name=config.demand_name,
@@ -266,15 +268,15 @@ def run_scenario_case(config: ScenarioCaseConfig) -> ScenarioRunOutput:
         report_path=report_path,
         scenario=scenario,
         energy_system=energy_system,
-        plots_dir=config.output_plots_dir,
+        plots_dir=plots_dir,
         project_root=config.project_root,
         streets_for_plot=streets_for_plot,
         model_name=config.model_name,
     )
 
 
-def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioRunOutput:
-    topology_config = DijkstraTopologyBuilderConfig(
+def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionResult:
+    topology_result = build_topology_from_dataset(
         input_dir=config.input_dir,
         output_dir=config.output_dir,
         buildings_file=config.buildings_file,
@@ -285,8 +287,6 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioRunOutput:
         polynesia=config.polynesia,
         city_column=config.city_column,
     )
-
-    topology_result = DijkstraTopologyBuilder(topology_config).build()
     _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
     streets_for_plot = streets_for_topology_plot(topology_result, region_id_column="id")
 
@@ -301,7 +301,8 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioRunOutput:
     )
     energy_system.data_dir = config.project_root / "data"
 
-    config.output_plots_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir = _dijkstra_plots_dir(config)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
     scenario = build_scenario(
         model_name=config.model_name,
@@ -324,7 +325,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioRunOutput:
     solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
     results_obj = solution.results
     report_path = _write_results_report(
-        output_dir=config.output_plots_dir,
+        output_dir=plots_dir,
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         results_obj=results_obj,
@@ -339,7 +340,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioRunOutput:
         },
     )
 
-    return _build_scenario_run_output(
+    return _build_execution_result(
         topology_result=topology_result,
         assigned_edges=assigned_edges,
         demand_name=config.demand_name,
@@ -347,7 +348,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioRunOutput:
         report_path=report_path,
         scenario=scenario,
         energy_system=energy_system,
-        plots_dir=config.output_plots_dir,
+        plots_dir=plots_dir,
         project_root=config.project_root,
         streets_for_plot=streets_for_plot,
         model_name=config.model_name,

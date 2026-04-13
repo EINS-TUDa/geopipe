@@ -3,8 +3,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
 
-from pypeline.energy_system.energy_system import EnergySystem
-from pypeline.energy_system.scenario import Scenario
+from pypeline.energy_system.core import EnergySystem, Scenario
 
 
 @dataclass

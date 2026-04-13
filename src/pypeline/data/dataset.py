@@ -6,7 +6,7 @@ import geopandas as gpd
 import pandas as pd
 from sqlalchemy import text
 from pypeline.data.database_connection import DatabaseConnection
-from pypeline.energy_system.unit import UnitEnum
+from pypeline.units import UnitEnum
 
 class CensusTechnology(Enum):
     Gas = "Gas"

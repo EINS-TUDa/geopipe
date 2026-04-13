@@ -1,64 +1,21 @@
-from __future__ import annotations
+"""Dijkstra-driven topology builder orchestration.
 
+Only owns end-to-end pipeline wiring for dataset-driven region topology generation.
+"""
+
+from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.energy_system.region_topology import (
+from pypeline.topology_builder.region_topology_builder import (
     RegionTopologyConfig,
-    RegionTopologyEngine,
+    build_region_topology,
 )
 from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.abstract_topology_builder import (
-    AbstractTopologyBuilder,
-    TopologyBuildError,
-    TopologyBuildResult,
-)
+from pypeline.topology_builder.core import (AbstractTopologyBuilder, TopologyBuildError, TopologyBuildResult, gdf_to_nx, gdf_to_region_topologies)
 
-"""
-This module prepares the spatial topology, later consumed by the optimizer. 
-
-Pipeline: data -> street graph -> district subgraphs -> hand-off to optimizer.
-
-1) Input data prep:
-     - Convert building heat demand into annual MWh values.
-     - Input selection is explicit (files + caps are passed by the caller).
-
-    Input Data requierements:
-    Assumptions:
-        - Files use a compatible projected CRS (meter-based distance logic)
-        - Buildings file (point geometry):
-            - a stable building identifier (building_objectid by default)
-            - annual heat demand source (heating:demand[Wh] by default)
-            - optional city filter column (gemeindeschluessel by default)
-        - Streets file (line geometry):
-            - street line geometry that can be intersected/split into a graph
-            - optional city filter column matching buildings
-            - optional street demand indicator (total_heat_demand by default)
-
-2) Street graph construction and district assignment (region_topology.topology_builder):
-         - Convert the line network into a graph representation where street
-             segments are nodes and geometric intersections define connectivity.
-         - Propagate district ownership over that graph while respecting planning constraints.
-         - When a region is disconnected or undersized, the algorithm searches for
-             feasible connector paths. 
-             The path search follows Dijkstra cost expansion so the merge/splits are topologically valid and distance-aware.
-         - The output of this stage is an assigned street-segment graph (streets_with_region)
-
-Files generated:
-    - street_segments_{dataset}.geojson: street segments with assigned region IDs
-    - plots/district_topology_{dataset}.png: street graph colored by assigned region IDs
-
-Shortest path algo reference:
-- E. W. Dijkstra, “A Note on Two Problems in Connexion with Graphs,”
-    Numerische Mathematik 1 (1959), pp. 269–271.
-"""
-
-# ---------------------------------------------------------------------------
-# Output path helpers
-# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class _OutputPaths:
@@ -68,7 +25,6 @@ class _OutputPaths:
 
 @dataclass(frozen=True)
 class DijkstraTopologyBuilderConfig:
-    # required
     input_dir: Path
     output_dir: Path
     buildings_file: str
@@ -77,7 +33,6 @@ class DijkstraTopologyBuilderConfig:
     max_street_length_km: float
     demand_share_pct: float
 
-    # optional
     polynesia: bool = True
     city_column: str = "gemeindeschluessel"
     clip_buffer_m: float = 200.0
@@ -107,16 +62,11 @@ def _compute_output_paths(output_dir: Path, dataset_name: str, *, polynesia: boo
     )
 
 
-# ---------------------------------------------------------------------------
-# Core build pipeline
-# ---------------------------------------------------------------------------
-
 def _resolve_input_file(input_dir: Path, file_name_or_relpath: str) -> Path:
     rel = Path(file_name_or_relpath)
     if rel.is_absolute():
         return rel
-    candidate = input_dir / rel
-    return candidate
+    return input_dir / rel
 
 
 def _run_dijkstra_pipeline(
@@ -124,10 +74,6 @@ def _run_dijkstra_pipeline(
     dataset_name: str,
     request: DijkstraTopologyBuilderConfig,
 ) -> TopologyBuildResult:
-    """
-    Execute the full Dijkstra topology pipeline and write all output artifacts.
-    Returns graph-first topology artifacts.
-    """
     buildings_path = _resolve_input_file(request.input_dir, request.buildings_file)
     streets_path = _resolve_input_file(request.input_dir, request.streets_file)
 
@@ -155,9 +101,9 @@ def _run_dijkstra_pipeline(
 
     city_value = None
     if (
-            request.city_column
-            and request.city_column in buildings.columns
-            and request.city_column in streets.columns
+        request.city_column
+        and request.city_column in buildings.columns
+        and request.city_column in streets.columns
     ):
         vals = buildings[request.city_column].dropna().astype(str)
         if vals.empty:
@@ -186,7 +132,7 @@ def _run_dijkstra_pipeline(
         demand_street_indicator_min=request.demand_street_indicator_min,
     )
 
-    _, streets_with_region, mantra = RegionTopologyEngine.build(
+    streets_with_region, mantra = build_region_topology(
         buildings=buildings,
         streets=streets,
         demand_data=demand_by_building,
@@ -224,11 +170,11 @@ def _run_dijkstra_pipeline(
     if assigned.empty:
         raise ValueError("Missing region-assigned street segments")
 
-    region_topologies = AbstractTopologyBuilder.gdf_to_region_topologies(
+    region_topologies = gdf_to_region_topologies(
         assigned,
         key_column=request.region_id_column,
     )
-    street_network = AbstractTopologyBuilder.gdf_to_nx(streets_with_region)
+    street_network = gdf_to_nx(streets_with_region)
 
     return TopologyBuildResult(
         network=street_network,
@@ -237,24 +183,17 @@ def _run_dijkstra_pipeline(
     )
 
 
-# ---------------------------------------------------------------------------
-# Public builder class
-# ---------------------------------------------------------------------------
-
 class DijkstraTopologyBuilder(AbstractTopologyBuilder):
-    """
-    Graph topology builder based on Dijkstra-driven region topology.
-    """
+    """Graph topology builder based on Dijkstra-driven region topology."""
 
     def __init__(self, config: DijkstraTopologyBuilderConfig):
         self.config = config
 
-    def build(self) -> TopologyBuildResult:
-        """
-        Runs the full pipeline (street graph construction, district assignment,
-        district graph extraction) and writes all output artifacts to output_dir.
-        """
+    @classmethod
+    def from_config(cls, config: DijkstraTopologyBuilderConfig) -> "DijkstraTopologyBuilder":
+        return cls(config)
 
+    def build(self) -> TopologyBuildResult:
         dataset_name = self.config.input_dir.parent.name
 
         try:

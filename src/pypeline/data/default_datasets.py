@@ -1,5 +1,5 @@
 from pypeline.data.dataset import SimpleDataset, CSVDataset
-from pypeline.energy_system.unit import UnitEnum
+from pypeline.units import UnitEnum
 
 def get_default_residential_heat_demand_profile_dataset() -> CSVDataset:
     return CSVDataset(

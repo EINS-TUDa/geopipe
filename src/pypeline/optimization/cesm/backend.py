@@ -24,8 +24,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
-from pypeline.energy_system.energy_system import EnergySystem
-from pypeline.energy_system.scenario import Scenario
+from pypeline.energy_system.core import EnergySystem, Scenario
 from pypeline.optimization.cesm.input_writer import write_cesm_inputs_from_energy_system
 from pypeline.optimization.cesm.result_parser import (
     backfill_missing_commodity_timeseries,

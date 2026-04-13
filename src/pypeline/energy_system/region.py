@@ -1,12 +1,16 @@
+"""Per-region realization from topology, demand data, and technology registry.
+
+Oly owns region-local technology cloning and demand/technology realization.
+"""
+
 from __future__ import annotations
+from collections.abc import Callable
 
 from pypeline.data.data_registry import DataRegistry
-from pypeline.data.dataset import CensusTechnology
-from pypeline.validation import normalize_shares_or_zero, to_int_id
-from pypeline.energy_system.demand import Demand, RegionDemand
+from pypeline.validation import normalize_shares_or_zero
+from pypeline.energy_system.core import Demand, Region, RegionDemand
 from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES, PRIMARY_HEAT_EXCHANGER, RegionRuleBook
 import networkx as nx
-from shapely.geometry import MultiPoint
 
 from pypeline.energy_technology.technology import (
     CENTRAL_TECH_PREFIX,
@@ -141,17 +145,6 @@ def _canonical_regional_name(name: str) -> str:
     return result
 
 
-def _is_regional_clone(name: str) -> bool:
-    base_no_unit = _strip_unit_suffix(name)
-    base, district_suffix = _split_district_suffix(base_no_unit)
-    if district_suffix is None:
-        return False
-    canonical_base = _canonical_regional_base(base)
-    if _is_central_base(canonical_base):
-        return True
-    return canonical_base in {"heat_grid", PRIMARY_HEAT_EXCHANGER}
-
-
 def _is_other_district_clone(name: str, district_id: int) -> bool:
     canonical = _canonical_regional_name(name)
     base_no_unit = _strip_unit_suffix(canonical)
@@ -163,45 +156,6 @@ def _is_other_district_clone(name: str, district_id: int) -> bool:
         return False
     expected = _localized_name(canonical_base, district_id)
     return base_no_unit != expected
-
-
-def _safe_int(raw, fallback: int = 0) -> int:
-    try:
-        return to_int_id(raw)
-    except Exception:
-        return fallback
-
-
-class Region:
-    def __init__(self,
-                 id_: int,
-                 topology: nx.Graph | None = None,
-                 region_demands: list["RegionDemand"] | None = None,
-                 region_technologies: list[RegionTechnology] | None = None,
-                 local_dhn_capex_base_eur: float | None = None):
-        self.id = id_
-        self.topology = topology if topology is not None else nx.Graph()
-        self.region_demands = region_demands if region_demands is not None else []
-        self.region_technologies = region_technologies if region_technologies is not None else []
-        self.local_dhn_capex_base_eur = local_dhn_capex_base_eur
-
-    @property
-    def boundary(self):
-        """Convex hull of topology nodes, usable as a polygon geometry for visualisation."""
-        nodes = list(self.topology.nodes)
-        if not nodes:
-            raise ValueError(f"Region {self.id} has no topology nodes")
-        return MultiPoint(nodes).convex_hull
-
-    @property
-    def crs(self):
-        return self.topology.graph.get("crs")
-
-    def get_demand(self, name: str) -> RegionDemand | None:
-        for demand in self.region_demands:
-            if demand.demand.demand_type == name:
-                return demand
-        return None
 
 
 class RegionBuilder:
@@ -216,49 +170,7 @@ class RegionBuilder:
         self.rule_book = None
         self.config = None
         self.demands = None
-        self._dhn_central_seed_cache: dict[int, str] = {}
-
-    def _infer_dhn_central_seed_base(self, topology: nx.Graph, district_id: int) -> str:
-        cached = self._dhn_central_seed_cache.get(int(district_id))
-        if cached:
-            return cached
-
-        base_query = {
-            "key": "heating_shares",
-            "region": topology,
-            "base_crs": self.base_crs,
-            "name_mapping": {},
-        }
-        raw_shares = self.data_registry.query(base_query)
-        if not isinstance(raw_shares, dict):
-            raise TypeError(f"Heating share query must return a mapping, got {type(raw_shares)} for district {district_id}")
-
-        candidates: list[tuple[str, float]] = [
-            ("cen_gas_boiler", float(raw_shares.get(CensusTechnology.Gas, 0.0) or 0.0)),
-            ("cen_oil_boiler", float(raw_shares.get(CensusTechnology.Oil, 0.0) or 0.0)),
-            (
-                "cen_biomass_woodpellets",
-                float(raw_shares.get(CensusTechnology.Wood, 0.0) or 0.0)
-                + float(raw_shares.get(CensusTechnology.Biomass, 0.0) or 0.0),
-            ),
-        ]
-        candidates.sort(key=lambda entry: (entry[1], entry[0]), reverse=True)
-
-        viable = [
-            (name, score)
-            for name, score in candidates
-            if score > 0.0 and self.technology_registry.has_technology(name)
-        ]
-        if not viable:
-            raise ValueError(
-                "Unable to infer district-heating central technology from local fuel shares "
-                f"for district {district_id}. Expected positive Gas/Heizoel/Wood/Biomass shares."
-            )
-
-        selected = viable[0][0]
-
-        self._dhn_central_seed_cache[int(district_id)] = selected
-        return selected
+        self._dhn_central_seed_base_resolver: Callable[[nx.Graph, int], str] | None = None
 
     def set_demands(self, demands: list[Demand]):
         if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
@@ -275,6 +187,21 @@ class RegionBuilder:
     def set_config(self, config: dict):
         self.config = config
         return self
+
+    def set_dhn_central_seed_base_resolver(
+        self,
+        resolver: Callable[[nx.Graph, int], str] | None,
+    ):
+        self._dhn_central_seed_base_resolver = resolver
+        return self
+
+    def _resolve_dhn_central_seed_base(self, topology: nx.Graph, district_id: int) -> str:
+        if self._dhn_central_seed_base_resolver is None:
+            raise ValueError(
+                "DHN central seed resolver is not configured on RegionBuilder. "
+                "Use set_dhn_central_seed_base_resolver()."
+            )
+        return self._dhn_central_seed_base_resolver(topology, district_id)
 
 
     def build_demands(self, topology: nx.Graph) -> list[RegionDemand]:
@@ -303,12 +230,8 @@ class RegionBuilder:
         suffix = _district_suffix(district_id)
         registry = self.technology_registry
         regional_base_names = _regional_base_names(registry)
-        regional_base_set = set(regional_base_names)
 
-        # Create localized clones for regional technologies
-        localized: dict[str, str] = {
-            base: _localized_name(base, district_id) for base in regional_base_names
-        }
+        localized: dict[str, str] = {base: _localized_name(base, district_id) for base in regional_base_names}
 
         for base_name, localized_base in localized.items():
             if not registry.has_technology(base_name):
@@ -488,7 +411,6 @@ class RegionBuilder:
         technologies_with_shares: set[str] = set()
         central_seed_outputs: dict[str, float] = {}
         central_seed_profile_peaks: dict[str, float] = {}
-        suffix = _district_suffix(district_id)
         registry = self.technology_registry
         raw_names = registry.get_all(return_type="name")
         all_regional_tokens = set(_all_regional_base_tokens(registry))
@@ -585,7 +507,7 @@ class RegionBuilder:
                     and tech == localized_heat_exchanger
                     and initial_energy_output > 0.0
                 ):
-                    central_seed_base = self._infer_dhn_central_seed_base(topology, district_id)
+                    central_seed_base = self._resolve_dhn_central_seed_base(topology, district_id)
                     localized_central_default = localized_map.get(central_seed_base)
                     if not localized_central_default:
                         raise ValueError(

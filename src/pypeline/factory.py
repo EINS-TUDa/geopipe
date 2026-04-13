@@ -1,15 +1,14 @@
 from __future__ import annotations
-
 import os
 import sys
 from pathlib import Path
 from typing import Any
-
-from pypeline import EnergySystemBuilder, TechnologyRegistry
 from pypeline.data.default_registry import get_default_data_registry
+from pypeline.energy_system.builder import EnergySystemBuilder
+from pypeline.energy_system.core import Scenario
 from pypeline.injection import apply_injected_techs
 from pypeline.energy_system.rule_book import EnergySystemRuleBook
-from pypeline.energy_system.scenario import Scenario
+from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm import CESMOptimizationBackend
 
 
@@ -24,7 +23,6 @@ def create_local_data_registry(heat_demand_file: Path, heating_shares_file: Path
         local_heat_demand_file=heat_demand_file,
         local_heating_shares_file=heating_shares_file,
     )
-
 
 def create_cesm_backend(
     project_root: Path,
@@ -56,7 +54,6 @@ def create_cesm_backend(
         demand_name=demand_name,
     )
 
-
 def build_energy_system(
     *,
     model_name: str,
@@ -79,13 +76,12 @@ def build_energy_system(
     builder.set_data_registry(create_local_data_registry(heat_demand_file, heating_shares_file))
     builder.set_default_region_builder_config()
     if region_builder_config_overrides:
-        builder.region_builder_config.update(region_builder_config_overrides)
+        builder.set_region_builder_config(region_builder_config_overrides, merge=True)
     builder.set_energy_system_rule_book(rulebook if rulebook is not None else EnergySystemRuleBook())
 
     energy_system = builder.build()
     apply_injected_techs(energy_system, injected_techs or [])
     return energy_system
-
 
 def build_scenario(
     *,

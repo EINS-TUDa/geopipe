@@ -17,8 +17,8 @@ Typical call chain::
     ConversionSubProcess rows (one per tech / district combination)
 
 Public entry point: :func:`write_cesm_inputs_from_energy_system` — takes a
-full :class:`~pypeline.energy_system.energy_system.EnergySystem` and
-:class:`~pypeline.energy_system.scenario.Scenario`, builds the context
+full :class:`~pypeline.energy_system.core.EnergySystem` and
+:class:`~pypeline.energy_system.core.Scenario`, builds the context
 internally, then delegates to :func:`_write_cesm_inputs_from_om`.
 """
 from __future__ import annotations
@@ -32,8 +32,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from pypeline.energy_system.energy_system import EnergySystem
-from pypeline.energy_system.io_utils import (
+from pypeline.energy_system.core import EnergySystem, Scenario
+from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
+from pypeline.optimization.cesm.io_utils import (
     _canon_co,
     _convsubproc_dataframe,
     commodity_config_from_energy_system as _commodity_config_from_energy_system,
@@ -44,7 +45,6 @@ from pypeline.energy_system.io_utils import (
     _scenario_df,
     _tss_df,
 )
-from pypeline.energy_system.scenario import Scenario
 from pypeline.energy_technology.technology import Technology
 from pypeline.energy_technology.technology_registry import TechnologyRegistry, get_default_technology_registry
 from pypeline.optimization.cesm.conversion_rows import (
@@ -555,8 +555,7 @@ def _write_cesm_inputs_from_optimization_context(
     total_min_dhn = float(sum(min_dhn_targets.values())) if min_dhn_targets else 0.0
     total_min_heat_grid = float(sum(min_heat_grid_targets.values())) if min_heat_grid_targets else 0.0
 
-    from pypeline.energy_system.energy_system import HEAT_EXCHANGER_NAMES as _HX_NAMES
-    _hx_base_names: tuple[str, ...] = _HX_NAMES
+    _hx_base_names: tuple[str, ...] = HEAT_EXCHANGER_NAMES
 
     for tech in sel_list:
         cin = _canon_co(tech.commodity_in)

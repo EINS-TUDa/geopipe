@@ -1,3 +1,8 @@
+"""Rules and rulebook containers for region and system constraints.
+
+Only owns rule abstractions and concrete rule implementations.
+"""
+
 from abc import ABC, abstractmethod
 import math
 from typing import TYPE_CHECKING, Any, Dict, Optional
@@ -26,7 +31,7 @@ def _matches_tech_name(name: str | None, candidates: tuple[str, ...]) -> bool:
             return True
     return False
 if TYPE_CHECKING:
-    from pypeline.energy_system.region import Region
+    from pypeline.energy_system.core import Region
 
 
 def _extract_region_id(region: "Region") -> Optional[int]:

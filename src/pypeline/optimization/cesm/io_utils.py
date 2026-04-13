@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 import math
 import logging
-import geopandas as gpd
 import numpy as np
 import pandas as pd
 from pypeline.validation import sanitize_price_map
@@ -46,8 +45,8 @@ CONV_SUBPROC_PARAM_COLS: tuple[str, ...] = (
 )
 
 if TYPE_CHECKING:
-    from pypeline.energy_system.energy_system import EnergySystem
-    from pypeline.energy_system.scenario import Scenario
+    from pypeline.energy_system.core import EnergySystem
+    from pypeline.energy_system.core import Scenario
 
 
 def _canon_co(name: Optional[str]) -> str:
@@ -65,12 +64,6 @@ def _canon_co(name: Optional[str]) -> str:
     if m == "external":
         return "External"
     return name
-
-
-def _load_numeric_txt(path: Path) -> np.ndarray:
-    txt = Path(path).read_text(encoding="utf-8").strip().replace("\n", " ")
-    vals = [v for v in txt.split(" ") if v != ""]
-    return np.asarray([float(x) for x in vals], dtype=float)
 
 
 def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.ndarray) -> Path:
@@ -176,33 +169,6 @@ def _write_techmap_workbook(
     )
 
 
-def _param_cols() -> list[str]:
-    return [
-        "spec_co2",
-        "efficiency",
-        "technical_lifetime",
-        "technical_availability",
-        "c_rate",
-        "efficiency_charge",
-        "is_storage",
-        "opex_cost_energy",
-        "opex_cost_power",
-        "capex_cost_power",
-        "max_eout",
-        "min_eout",
-        "cap_min",
-        "cap_max",
-        "cap_res_min",
-        "cap_res_max",
-        "out_frac_min",
-        "out_frac_max",
-        "in_frac_min",
-        "in_frac_max",
-        "availability_profile",
-        "output_profile",
-    ]
-
-
 def commodity_config_from_energy_system(es: "EnergySystem") -> tuple[dict[str, float], dict[str, float]]:
     """Extract and validate commodity grid/supply prices from an EnergySystem."""
     config_raw = getattr(es, "commodity_config", None)
@@ -250,27 +216,3 @@ def resolve_retain_schedule(
         return None
     start_year = years[0]
     return [(1.0 - drop_val) ** (year - start_year) for year in years]
-
-
-def polygons_from_energy_system(es: "EnergySystem") -> Optional[gpd.GeoDataFrame]:
-    """Collect region boundaries from an EnergySystem into one GeoDataFrame."""
-    regions = getattr(es, "regions", []) or []
-    rows: list[dict] = []
-    crs = None
-    for region in regions:
-        boundary = getattr(region, "boundary", None)
-        if boundary is None:
-            continue
-        if crs is None:
-            crs = getattr(region, "crs", None)
-        rows.append({"geometry": boundary, "id": region.id})
-    if not rows:
-        return None
-
-    gdf = gpd.GeoDataFrame(rows, crs=crs)
-    try:
-        if gdf.crs is None or getattr(gdf.crs, "is_geographic", False):
-            gdf = gdf.to_crs(3035)
-    except Exception:
-        pass
-    return gdf

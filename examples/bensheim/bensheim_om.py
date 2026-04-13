@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from examples.run_models import DijkstraScenarioConfig, ScenarioRunOutput
-from examples.example_api import run_dijkstra_scenario
+from examples.example_runner import (
+    DijkstraScenarioConfig,
+    ScenarioExecutionResult,
+    run_dijkstra_scenario,
+)
 
 
 project_root = Path(__file__).resolve().parents[2]
@@ -31,7 +34,6 @@ SCENARIO_CONFIG = DijkstraScenarioConfig(
     demand_share_pct=75.0,
     polynesia=False,
     city_column="gemeindeschluessel",
-    output_plots_dir=BENSHEIM_DIR / "plots",
     region_builder_config_overrides={
         "min_heat_grid_share": 0.20,
         "heat_grid_names": ("heat_exchanger",),
@@ -39,7 +41,7 @@ SCENARIO_CONFIG = DijkstraScenarioConfig(
 )
 
 
-def main() -> ScenarioRunOutput:
+def main(*, apply_injections: bool | None = None) -> ScenarioExecutionResult:
     run_output = run_dijkstra_scenario(SCENARIO_CONFIG)
     report_path = run_output.results_report_html
     if report_path is not None:
