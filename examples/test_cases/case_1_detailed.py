@@ -1,5 +1,6 @@
 import os
 import sys
+import sqlite3
 from pathlib import Path
 
 from examples.example_runner import ScenarioCaseConfig, _validate_case_regions, _case_plots_dir, _write_results_report
@@ -8,9 +9,12 @@ from pypeline.energy_system import Scenario
 from pypeline.factory import create_local_data_registry
 from pypeline.injection import apply_injected_techs
 from pypeline.optimization import CESMOptimizationBackend
+from pypeline.plot.plotter import EnergySystemPlotter
 from pypeline.topology_builder.cli.simple import _resolve_case_folder, _resolve_case_file
 from pypeline.topology_builder.core import edge_metrics_from_topology_result, streets_for_topology_plot
 from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
+from cesm.core.plotter import Plotter as CesmPlotter, PlotType
+from cesm.core.data_access import DAO
 
 project_root = Path(__file__).resolve().parents[2]
 CASE_DIR = Path(__file__).resolve().parent
@@ -135,5 +139,58 @@ def main():
             "apply_injections": effective_apply_injections,
         },
     )
+
+    # --- 1) Street topology plot ---
+    topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
+        energy_system=energy_system,
+        demand_name=config.demand_name,
+    )
+    topology_plot_path = plots_dir / "case1_street_topology.png"
+    EnergySystemPlotter.plot_streets_colored_by_region(
+        streets_with_region=streets_for_plot,
+        polygons=topology_polygons,
+        output_path=topology_plot_path,
+        region_id_column="id",
+        title=f"District topology: {config.model_name}",
+    )
+    print(f"Saved topology plot: {topology_plot_path}")
+
+    # --- 2) Technology mix plot ---
+    plotter = EnergySystemPlotter(energy_system)
+    years = scenario.years()
+    mix_plot_paths = plotter.save_default_mix_plots(
+        results_obj.raw,
+        years=years,
+        plots_dir=plots_dir,
+        demand_name=config.demand_name,
+    )
+    print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
+
+    # --- 3) Sankey diagrams via CESM plot module ---
+    db_path = Path(results_obj.raw["db"])
+    if not db_path.is_absolute():
+        db_path = project_root / db_path
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        dao = DAO(conn)
+        sankey_plotter = CesmPlotter(dao)
+        for year in years:
+            sankey_fig = sankey_plotter.plot_sankey(year=year)
+            sankey_output = plots_dir / f"sankey_{year}.html"
+            sankey_fig.write_html(str(sankey_output))
+            print(f"Saved Sankey diagram: {sankey_output}")
+
+        # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
+        heat_commodities = [
+            co for co in dao.get_set("commodity")
+            if "residential_heat_D" in str(co)
+        ]
+        for commodity in heat_commodities:
+            sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+            sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+    finally:
+        conn.close()
+
 
 main()

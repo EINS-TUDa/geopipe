@@ -26,6 +26,8 @@ CASE_CONFIG = ScenarioCaseConfig(
     retain_existing_output_drop_per_year=0.05,
     lockout_years=2,
     apply_injections=True,
+    default_central_tech="CHP",
+    min_distance = 5,
     region_builder_config_overrides={
         "min_heat_grid_share": 0.1,
         "heat_grid_names": ("heat_exchanger",),
