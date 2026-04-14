@@ -27,7 +27,6 @@ def _validate_cesm_paths(cesm_dir: Path, model_name: str) -> tuple[Path, Path, P
     workbook = techmap_dir / f"{model_name}.xlsx"
     required = [
         ("CESM folder", cesm_dir),
-        ("CESM core folder", cesm_dir / "core"),
         ("CESM Data directory", data_dir),
         ("Techmap directory", techmap_dir),
     ]
@@ -42,20 +41,6 @@ def _validate_cesm_paths(cesm_dir: Path, model_name: str) -> tuple[Path, Path, P
 
 
 def main() -> int:
-    import sys as _sys
-    cwd = Path.cwd().resolve()
-    if (cwd / "core").exists():
-        cesm_root = cwd
-    elif (cwd / "CESM" / "core").exists():
-        cesm_root = (cwd / "CESM").resolve()
-    else:
-        cesm_root = None
-    if cesm_root:
-        paths_to_add = {str(cesm_root), str(cesm_root / "core"), str(cesm_root.parent)}
-        for p in list(paths_to_add):
-            if p not in _sys.path:
-                _sys.path.insert(0, p)
-
     from cesm.core.input_parser import Parser  # type: ignore
     from cesm.core.model import Model  # type: ignore
 
@@ -65,7 +50,7 @@ def main() -> int:
     ap.add_argument("-s", "--scenario", required=True, help="Scenario name as in the XLSX Scenario sheet")
     args = ap.parse_args()
     root = Path(args.workdir).resolve()
-    cesm_dir = root / "CESM" if (root / "CESM" / "core").exists() else root
+    cesm_dir = root / "CESM" if (root / "CESM" / "Data").exists() else root
     model_name = args.model
     scenario_name = args.scenario
     run_name = f"{model_name}-{scenario_name}"
