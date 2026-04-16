@@ -29,6 +29,7 @@ class ScenarioCaseConfig:
     model_name: str
     scenario_name: str
     tss_name: str
+    dt_hours: int
     demand_name: str
     start_year: int
     end_year: int
@@ -52,6 +53,7 @@ class DijkstraScenarioConfig:
     model_name: str
     scenario_name: str
     tss_name: str
+    dt_hours: int
     demand_name: str
     start_year: int
     end_year: int
@@ -238,6 +240,7 @@ def run_scenario_case(
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
+        dt_hours=config.dt_hours,
         scenario=scenario,
         demand_name=config.demand_name,
     )
@@ -252,6 +255,7 @@ def run_scenario_case(
             "model_name": config.model_name,
             "scenario_name": config.scenario_name,
             "tss_name": config.tss_name,
+            "dt_hours": config.dt_hours,
             "demand_name": config.demand_name,
             "start_year": config.start_year,
             "end_year": config.end_year,
@@ -319,6 +323,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
+        dt_hours=config.dt_hours,
         scenario=scenario,
         demand_name=config.demand_name,
     )
@@ -333,6 +338,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
             "model_name": config.model_name,
             "scenario_name": config.scenario_name,
             "tss_name": config.tss_name,
+            "dt_hours": config.dt_hours,
             "demand_name": config.demand_name,
             "start_year": config.start_year,
             "end_year": config.end_year,

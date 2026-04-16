@@ -43,6 +43,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         model_name: Optional[str],
         scenario_name: Optional[str],
         tss_name: Optional[str],
+        dt_hours: int = 4,
         workdir: str | Path = "CESM",
         cli: Optional[List[str]] = None,
         run_args: Optional[List[str]] = None,
@@ -64,6 +65,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.model_name = model_name
         self.scenario_name = scenario_name
         self.tss_name = tss_name
+        self.dt_hours = int(dt_hours)
         self.run_subdir = run_subdir or (f"{self.model_name}-{self.scenario_name}" if self.model_name and self.scenario_name else None)
         self.results_db_name = results_db_name
 
@@ -117,6 +119,7 @@ class CESMOptimizationBackend(OptimizationBackend):
             model_name=self.model_name,
             scenario_name=self.scenario_name,
             tss_name=self.tss_name,
+            dt_hours=self.dt_hours,
             demand_name=demand_name,
             retain_existing_output_factor=self.retain_existing_output_factor,
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,

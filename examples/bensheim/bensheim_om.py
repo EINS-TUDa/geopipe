@@ -23,6 +23,7 @@ SCENARIO_CONFIG = DijkstraScenarioConfig(
     model_name="Bensheim",
     scenario_name="Base4twk",
     tss_name="4ThinWeeks",
+    dt_hours=3,
     demand_name="residential_heat",
     start_year=2020,
     end_year=2030,

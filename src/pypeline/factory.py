@@ -30,6 +30,7 @@ def create_cesm_backend(
     model_name: str,
     scenario_name: str,
     tss_name: str,
+    dt_hours: int,
     scenario: Scenario,
     demand_name: str,
 ) -> CESMOptimizationBackend:
@@ -50,6 +51,7 @@ def create_cesm_backend(
         model_name=model_name,
         scenario_name=scenario_name,
         tss_name=tss_name,
+        dt_hours=dt_hours,
         scenario=scenario,
         demand_name=demand_name,
     )

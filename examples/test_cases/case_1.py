@@ -19,6 +19,7 @@ CASE_CONFIG = ScenarioCaseConfig(
     model_name="Case1",
     scenario_name="BaseCase1",
     tss_name="4ThinWeeks",
+    dt_hours=4,
     demand_name="residential_heat",
     start_year=2020,
     end_year=2030,
