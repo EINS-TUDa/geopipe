@@ -12,15 +12,14 @@ from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm import CESMOptimizationBackend
 
 
-def create_local_data_registry(heat_demand_file: Path, heating_shares_file: Path):
-    if not heat_demand_file.exists():
-        raise FileNotFoundError(f"Missing heat demand file: {heat_demand_file}")
+def create_local_data_registry(
+    heating_shares_file: Path,
+):
     if not heating_shares_file.exists():
         raise FileNotFoundError(f"Missing heating shares file: {heating_shares_file}")
 
     return get_default_data_registry(
         mode="local",
-        local_heat_demand_file=heat_demand_file,
         local_heating_shares_file=heating_shares_file,
     )
 
@@ -61,7 +60,6 @@ def build_energy_system(
     model_name: str,
     region_topologies: list,
     street_network,
-    heat_demand_file: Path,
     heating_shares_file: Path,
     region_builder_config_overrides: dict | None,
     rulebook: EnergySystemRuleBook | None = None,
@@ -75,7 +73,11 @@ def build_energy_system(
     builder.set_street_network(street_network)
     builder.set_demands(default=True)
     builder.set_technology_registry(tech_registry)
-    builder.set_data_registry(create_local_data_registry(heat_demand_file, heating_shares_file))
+    builder.set_data_registry(
+        create_local_data_registry(
+            heating_shares_file=heating_shares_file,
+        )
+    )
     builder.set_default_region_builder_config()
     if region_builder_config_overrides:
         builder.set_region_builder_config(region_builder_config_overrides, merge=True)

@@ -15,7 +15,6 @@ from pypeline.topology_builder.dijkstra_builder import (
 _DEFAULTS = DijkstraTopologyBuilderConfig(
     input_dir=Path(),
     output_dir=Path(),
-    buildings_file="buildings.geojson",
     streets_file="streets.geojson",
     max_demand_mwh=15_000.0,
     max_street_length_km=15.0,
@@ -40,7 +39,6 @@ def build_topology_from_dataset(
     *,
     input_dir: str | Path,
     output_dir: str | Path,
-    buildings_file: str,
     streets_file: str,
     max_demand_mwh: float,
     max_street_length_km: float,
@@ -54,7 +52,6 @@ def build_topology_from_dataset(
     cfg = DijkstraTopologyBuilderConfig(
         input_dir=Path(input_dir).expanduser().resolve(),
         output_dir=Path(output_dir).expanduser().resolve(),
-        buildings_file=buildings_file,
         streets_file=streets_file,
         max_demand_mwh=max_demand_mwh,
         max_street_length_km=max_street_length_km,
@@ -74,7 +71,6 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("dataset", help="Path to the dataset folder (must contain input_data/).")
-    parser.add_argument("--buildings-file", required=True, help="Buildings GeoJSON filename inside input_data/.")
     parser.add_argument("--streets-file", required=True, help="Streets GeoJSON filename inside input_data/.")
     parser.add_argument("--max-demand-mwh", type=float, required=True, help="Maximum heat demand per district in MWh.")
     parser.add_argument("--max-street-length-km", type=float, required=True, help="Maximum street length per district in km.")
@@ -96,7 +92,6 @@ def main() -> None:
     build_topology_from_dataset(
         input_dir=input_dir,
         output_dir=output_dir,
-        buildings_file=args.buildings_file,
         streets_file=args.streets_file,
         max_demand_mwh=args.max_demand_mwh,
         max_street_length_km=args.max_street_length_km,

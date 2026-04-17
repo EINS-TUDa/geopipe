@@ -24,7 +24,6 @@ class ScenarioCaseConfig:
     project_root: Path
     scenario_file: Path
     streets_file: Path
-    heat_demand_file: Path
     heating_shares_file: Path
     model_name: str
     scenario_name: str
@@ -46,9 +45,7 @@ class DijkstraScenarioConfig:
     project_root: Path
     input_dir: Path
     output_dir: Path
-    buildings_file: str
     streets_file: str
-    heat_demand_file: Path
     heating_shares_file: Path
     model_name: str
     scenario_name: str
@@ -95,7 +92,6 @@ def build_case_energy_system_from_scenario(
     scenario_file: Path,
     streets_file: Path,
     model_name: str,
-    heat_demand_file: Path,
     heating_shares_file: Path,
     region_builder_config_overrides: dict[str, Any] | None,
     apply_injections: bool,
@@ -112,7 +108,6 @@ def build_case_energy_system_from_scenario(
         model_name=model_name,
         region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
-        heat_demand_file=heat_demand_file,
         heating_shares_file=heating_shares_file,
         region_builder_config_overrides=region_builder_config_overrides,
         injected_techs=topology_result.injected_techs,
@@ -211,7 +206,6 @@ def run_scenario_case(
         scenario_file=config.scenario_file,
         streets_file=config.streets_file,
         model_name=config.model_name,
-        heat_demand_file=config.heat_demand_file,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
         apply_injections=effective_apply_injections,
@@ -283,7 +277,6 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
     topology_result = build_topology_from_dataset(
         input_dir=config.input_dir,
         output_dir=config.output_dir,
-        buildings_file=config.buildings_file,
         streets_file=config.streets_file,
         max_demand_mwh=config.max_demand_mwh,
         max_street_length_km=config.max_street_length_km,
@@ -298,7 +291,6 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         model_name=config.model_name,
         region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
-        heat_demand_file=config.heat_demand_file,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
         injected_techs=None,

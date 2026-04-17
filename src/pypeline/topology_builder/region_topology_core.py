@@ -696,7 +696,7 @@ def _region_seed_builder_impl(
 
     return seed_rows
 
-def _build_region_topology_impl(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame, config: RegionTopologyConfig) -> tuple[gpd.GeoDataFrame, dict[str, int]]:
+def _build_region_topology_impl(*, buildings: gpd.GeoDataFrame, streets: gpd.GeoDataFrame, demand_data: pd.DataFrame | gpd.GeoDataFrame | None, config: RegionTopologyConfig) -> tuple[gpd.GeoDataFrame, dict[str, int]]:
     """Build region assignment for street segments from building demand inputs.
 
     Small-island merge heuristics and disconnected-region diagnostics run on

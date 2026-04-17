@@ -837,7 +837,10 @@ class _ConversionRowsBuilder:
             if hydrogen_related and year < hydrogen_start_year:
                 return 0.0
             if year < lockout_until_year and not is_indirect and not is_heat_grid:
-                return min(base_val, cap_limit)
+                # During lockout we keep existing capacity via cap_res_* and cap_max,
+                # but must not force minimum new-build unit activation (cap_min),
+                # otherwise CESM's build_min_activation can become infeasible.
+                return 0.0
             # Keep user-specified minima for later years when there is no existing capacity.
             if cap_limit <= 0.0:
                 return base_val

@@ -14,7 +14,6 @@ CASE_CONFIG = ScenarioCaseConfig(
     project_root=project_root,
     scenario_file=CASE_DIR / "case_1.yaml",
     streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
-    heat_demand_file=CASE_DIR / "input_data" / "buildings_heat_demand.geojson",
     heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson",
     model_name="Case1",
     scenario_name="BaseCase1",

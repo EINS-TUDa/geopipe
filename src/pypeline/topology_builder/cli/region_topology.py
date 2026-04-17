@@ -14,51 +14,93 @@ from pypeline.topology_builder.region_topology_builder import (
 )
 
 
-def _read_demand_data(path: Path) -> pd.DataFrame | gpd.GeoDataFrame:
-    suffix = path.suffix.lower()
-    if suffix in {".csv", ".txt"}:
-        return pd.read_csv(path)
-    if suffix in {".parquet", ".pq"}:
-        return pd.read_parquet(path)
-    return gpd.read_file(path)
-
-
-def _derive_demand_data_from_buildings(
-    buildings: gpd.GeoDataFrame,
+def _normalize_streets_for_topology(
+    streets: gpd.GeoDataFrame,
     *,
-    building_id_column: str,
-    demand_building_column: str,
-    demand_value_column: str,
-    demand_source_column: str,
-) -> pd.DataFrame:
-    if building_id_column not in buildings.columns:
-        raise ValueError(f"Missing building id column '{building_id_column}' in buildings data")
-    if demand_source_column not in buildings.columns:
+    street_id_column: str,
+    demand_street_indicator_column: str,
+) -> gpd.GeoDataFrame:
+    s = streets.copy()
+    if s.empty:
+        raise ValueError("Streets file is empty")
+
+    geom_types = set(s.geometry.geom_type.dropna().astype(str).tolist())
+    lineal_types = {"LineString", "MultiLineString"}
+    if not geom_types.issubset(lineal_types):
+        non_line_mask = ~s.geometry.geom_type.isin(list(lineal_types))
+        if bool(non_line_mask.any()):
+            s.loc[non_line_mask, "geometry"] = s.loc[non_line_mask, "geometry"].boundary
+
+    s = s.explode(index_parts=False).reset_index(drop=True)
+    s = s[s.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+    if s.empty:
+        raise ValueError("No line-like street geometries after normalization")
+
+    if demand_street_indicator_column not in s.columns:
+        for candidate in (
+            "total_heat_demand",
+            "qnutzwaerme_2020_kwh",
+            "raumwaerme",
+            "heating:demand[Wh]",
+            "heat_demand",
+        ):
+            if candidate in s.columns:
+                s[demand_street_indicator_column] = pd.to_numeric(s[candidate], errors="coerce").fillna(0.0)
+                break
+
+    if demand_street_indicator_column not in s.columns:
         raise ValueError(
-            f"Missing demand source column '{demand_source_column}' in buildings data. "
-            "Provide --demand-file or adjust --demand-source-column."
+            f"Missing demand street indicator column '{demand_street_indicator_column}' in streets file"
         )
 
-    demand_wh = pd.to_numeric(buildings[demand_source_column], errors="coerce").fillna(0.0)
-    return pd.DataFrame(
+    if (
+        street_id_column not in s.columns
+        or s[street_id_column].isna().any()
+        or not s[street_id_column].is_unique
+    ):
+        s[street_id_column] = range(len(s))
+
+    return s
+
+
+def _buildings_and_demand_from_streets(
+    streets: gpd.GeoDataFrame,
+    *,
+    city_column: str | None,
+    building_id_column: str,
+    demand_building_column: str,
+    demand_street_indicator_column: str,
+    demand_value_column: str,
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+    demand_mwh = pd.to_numeric(
+        streets[demand_street_indicator_column], errors="coerce"
+    ).fillna(0.0) / 1_000_000.0
+
+    pseudo_ids = pd.Series(range(len(streets)), dtype="int64")
+    geometry = streets.geometry.representative_point().reset_index(drop=True)
+
+    data: dict[str, pd.Series] = {building_id_column: pseudo_ids}
+    if city_column and city_column in streets.columns:
+        data[city_column] = streets[city_column].reset_index(drop=True)
+
+    pseudo_buildings = gpd.GeoDataFrame(data=data, geometry=geometry, crs=streets.crs)
+    demand_by_building = pd.DataFrame(
         {
-            demand_building_column: buildings[building_id_column],
-            demand_value_column: demand_wh / 1_000_000.0,
+            demand_building_column: pseudo_buildings[building_id_column],
+            demand_value_column: demand_mwh.reset_index(drop=True),
         }
     )
+    return pseudo_buildings, demand_by_building
 
 
 def run_region_topology_from_files(
     *,
-    buildings_file: str | Path,
     streets_file: str | Path,
     output_streets_file: str | Path,
     max_demand_mwh: float,
     max_street_length_km: float,
     demand_share_pct: float,
-    demand_file: str | Path | None = None,
     output_mantra_file: str | Path | None = None,
-    demand_source_column: str = "heating:demand[Wh]",
     city_column: str | None = REGION_TOPOLOGY_DEFAULTS.city_column,
     city_value: str | None = REGION_TOPOLOGY_DEFAULTS.city_value,
     clip_buffer_m: float = REGION_TOPOLOGY_DEFAULTS.clip_buffer_m,
@@ -76,23 +118,23 @@ def run_region_topology_from_files(
     demand_street_indicator_column: str | None = REGION_TOPOLOGY_DEFAULTS.demand_street_indicator_column,
     demand_street_indicator_min: float = REGION_TOPOLOGY_DEFAULTS.demand_street_indicator_min,
 ) -> tuple[Path, dict[str, int]]:
-    buildings_path = Path(buildings_file).expanduser().resolve()
     streets_path = Path(streets_file).expanduser().resolve()
     out_path = Path(output_streets_file).expanduser().resolve()
 
-    buildings = gpd.read_file(buildings_path)
-    streets = gpd.read_file(streets_path)
+    streets = _normalize_streets_for_topology(
+        gpd.read_file(streets_path),
+        street_id_column=street_id_column,
+        demand_street_indicator_column=str(demand_street_indicator_column),
+    )
 
-    if demand_file is None:
-        demand_data = _derive_demand_data_from_buildings(
-            buildings,
-            building_id_column=building_id_column,
-            demand_building_column=demand_building_column,
-            demand_value_column=demand_value_column,
-            demand_source_column=demand_source_column,
-        )
-    else:
-        demand_data = _read_demand_data(Path(demand_file).expanduser().resolve())
+    buildings, demand_data = _buildings_and_demand_from_streets(
+        streets,
+        city_column=city_column,
+        building_id_column=building_id_column,
+        demand_building_column=demand_building_column,
+        demand_street_indicator_column=str(demand_street_indicator_column),
+        demand_value_column=demand_value_column,
+    )
 
     config = RegionTopologyConfig.from_required_caps(
         max_demand_mwh=max_demand_mwh,
@@ -142,20 +184,16 @@ def main() -> None:
     defaults = REGION_TOPOLOGY_DEFAULTS
 
     parser = argparse.ArgumentParser(
-        description="Build region topology from buildings, streets, and demand data.",
+        description="Build region topology from streets only (buildings and demand are derived from streets).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--buildings-file", required=True, help="Path to building geometries file")
     parser.add_argument("--streets-file", required=True, help="Path to street geometries file")
-    parser.add_argument("--demand-file", help="Optional demand file (CSV/Parquet/Geo file)")
     parser.add_argument("--output-streets-file", required=True, help="Output path for region-assigned streets")
     parser.add_argument("--output-mantra-file", help="Optional JSON output path for diagnostic mantra")
 
     parser.add_argument("--max-demand-mwh", type=float, required=True)
     parser.add_argument("--max-street-length-km", type=float, required=True)
     parser.add_argument("--demand-share-pct", type=float, required=True)
-
-    parser.add_argument("--demand-source-column", default="heating:demand[Wh]")
 
     parser.add_argument("--city-column", default=defaults.city_column)
     parser.add_argument("--city-value", default=defaults.city_value)
@@ -182,15 +220,12 @@ def main() -> None:
     args = parser.parse_args()
 
     out_path, mantra = run_region_topology_from_files(
-        buildings_file=args.buildings_file,
         streets_file=args.streets_file,
-        demand_file=args.demand_file,
         output_streets_file=args.output_streets_file,
         output_mantra_file=args.output_mantra_file,
         max_demand_mwh=args.max_demand_mwh,
         max_street_length_km=args.max_street_length_km,
         demand_share_pct=args.demand_share_pct,
-        demand_source_column=args.demand_source_column,
         city_column=args.city_column,
         city_value=args.city_value,
         clip_buffer_m=args.clip_buffer_m,
