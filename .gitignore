@@ -10,3 +10,4 @@ output_data/*
 plots/*
 .claude
 *.log
+*.html
