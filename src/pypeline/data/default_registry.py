@@ -92,43 +92,40 @@ def ***REMOVED***_kwp_query(dataset: PostgreSQLDataset, query: dict) -> float:
 
     return total_demand
 
-def local_heat_demand_query(dataset: FileDataset, query: dict) -> float:
-    if query["key"] != "residential_heat_demand":
-        raise ValueError("local_heat_demand_query only supports 'residential_heat_demand' key")
-    region = query["region"]
 
-    if isinstance(region, nx.Graph):
-        seen: set = set()
-        total_wh = 0.0
-        for _, _, d in region.edges(data=True):
-            sid = d.get("street_id")
-            if sid is not None and sid in seen:
-                continue
-            if sid is not None:
-                seen.add(sid)
-            total_wh += float(d.get("total_heat_demand", 0.0))
-        return total_wh / 1_000_000.0
+def _graph_region_total_heat_mwh(region: nx.Graph) -> float:
+    seen: set = set()
+    total_wh = 0.0
+    for _, _, d in region.edges(data=True):
+        sid = d.get("street_id")
+        if sid is not None and sid in seen:
+            continue
+        if sid is not None:
+            seen.add(sid)
+        total_wh += float(d.get("total_heat_demand", 0.0))
+    return total_wh / 1_000_000.0
 
-    if isinstance(region, gpd.GeoDataFrame):
-        data = dataset.get_data()
-        if not isinstance(data, gpd.GeoDataFrame):
-            raise TypeError("Local heat-demand dataset must resolve to a GeoDataFrame")
 
-        region_in = region if data.crs == region.crs else region.to_crs(data.crs)
-        boundary_gdf = gpd.GeoDataFrame(geometry=[region_in.geometry.union_all()], crs=region_in.crs)
-        joined = gpd.sjoin(data, boundary_gdf, predicate="within", how="inner")
+class GraphHeatDemandDataset(SimpleDataset):
+    """Graph based residential heat demand dataset"""
 
-        if "qnutzwaerme_2020_kwh" in joined.columns:
-            total_kwh = pd.to_numeric(joined["qnutzwaerme_2020_kwh"], errors="coerce").fillna(0.0).sum()
-            return float(total_kwh) / 1_000_000.0
+    def __init__(self):
+        super().__init__(
+            keys=["residential_heat_demand"],
+            unit=UnitEnum.KWH,
+            data=0.0,
+            priority=6,
+        )
 
-        if "total_heat_demand" in joined.columns:
-            total_wh = pd.to_numeric(joined["total_heat_demand"], errors="coerce").fillna(0.0).sum()
-            return float(total_wh) / 1_000_000.0
+    def _default_query(self, query: dict) -> float:
+        if query["key"] != "residential_heat_demand":
+            raise ValueError("GraphHeatDemandDataset only supports 'residential_heat_demand' key")
 
-        raise ValueError("No supported heat-demand column found (expected 'qnutzwaerme_2020_kwh' or 'total_heat_demand')")
+        region = query.get("region")
+        if not isinstance(region, nx.Graph):
+            raise ValueError("Requires region as nx.Graph")
 
-    raise TypeError("local_heat_demand_query expects region as nx.Graph or GeoDataFrame")
+        return _graph_region_total_heat_mwh(region)
 
 
 def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusTechnology, float]:
@@ -202,7 +199,6 @@ def census_south_hessen_query(dataset: FileDataset, query: dict) -> dict[CensusT
 def _create_default_datasets(
     *,
     mode: str,
-    local_heat_demand_file: str | Path | None,
     local_heating_shares_file: str | Path | None,
 ) -> list:
     ***REMOVED***_conn = DatabaseConnection(
@@ -264,28 +260,17 @@ def _create_default_datasets(
         ))
         return datasets
 
-    if local_heat_demand_file is None or local_heating_shares_file is None:
+    if local_heating_shares_file is None:
         raise ValueError(
-            "Local mode requires explicit local_heat_demand_file and local_heating_shares_file; "
-            "implicit fallback paths are disabled."
+            "Local mode requires explicit local_heating_shares_file."
         )
 
-    heat_file = Path(local_heat_demand_file)
     shares_file = Path(local_heating_shares_file)
-    if not heat_file.exists():
-        raise FileNotFoundError(f"Local heat demand file not found: {heat_file}")
     if not shares_file.exists():
         raise FileNotFoundError(f"Local heating shares file not found: {shares_file}")
 
-    datasets.insert(0, FileDataset(
-        keys=["residential_heat_demand"],
-        file_path=str(heat_file),
-        query_function=local_heat_demand_query,
-        unit=UnitEnum.KWH,
-        priority=6,
-        regional_validity=None,
-        load_data_kwargs={"layer": "WAH_Punkte"} if heat_file.suffix.lower() == ".gpkg" else None,
-    ))
+    datasets.insert(0, GraphHeatDemandDataset())
+
     datasets.insert(1, FileDataset(
         keys=["heating_shares"],
         file_path=str(shares_file),
@@ -299,7 +284,6 @@ def _create_default_datasets(
 def get_default_data_registry(
     *,
     mode: str,
-    local_heat_demand_file: str | Path | None = None,
     local_heating_shares_file: str | Path | None = None,
 ) -> DataRegistry:
     """
@@ -309,7 +293,8 @@ def get_default_data_registry(
     - '***REMOVED***': infDB-backed demand/heating-shares datasets.
     - 'local': local-file demand/heating-shares datasets.
 
-    Strict behavior: local requires explicit file paths.
+    Strict behavior: local requires explicit heating-shares file path.
+    Residential heat demand is resolved from graph edge attributes in local mode.
     """
     if mode not in {"***REMOVED***", "local"}:
         raise ValueError("mode must be one of: '***REMOVED***', 'local'")
@@ -317,7 +302,6 @@ def get_default_data_registry(
     registry = DataRegistry()
     for dataset in _create_default_datasets(
         mode=mode,
-        local_heat_demand_file=local_heat_demand_file,
         local_heating_shares_file=local_heating_shares_file,
     ):
         registry.register(dataset)
@@ -336,7 +320,6 @@ if __name__ == "__main__":
 
     registry = get_default_data_registry(
         mode="local",
-        local_heat_demand_file="data/WaermeatlasHessen.gpkg",
         local_heating_shares_file="data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson",
     )
     for ds in registry.get_datasets():

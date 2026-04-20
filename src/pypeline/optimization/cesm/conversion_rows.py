@@ -21,7 +21,7 @@ import math
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
-from pypeline.optimization.cesm.io_utils import _canon_co
+from pypeline.optimization.cesm.io_utils import ( _canon_co,_format_year_profile,_profile_to_map_and_scalar)
 from pypeline.energy_technology.technology import (
     Technology,
     extract_district_id_from_name as _extract_district_id_from_name,
@@ -626,34 +626,17 @@ class _ConversionRowsBuilder:
 
     # Profile utilities ------------------------------------------------------
     def _format_profile(self, pairs: List[Tuple[int, float]]) -> str | None:
-        if not pairs:
-            return None
-        segments = []
-        for year, value in pairs:
-            year_i = int(year)
-            val_f = float(value)
-            segments.append(f"{year_i} {val_f:.10g}")
-        return "[" + " ; ".join(segments) + "]"
+        return _format_year_profile(pairs)
 
     def _profile_to_map(self, value: Any) -> Dict[int, float]:
         mapping: Dict[int, float] = {}
         if not self.scenario_years:
             return mapping
-        if isinstance(value, str):
-            raw = value.strip()
-            if raw.startswith("[") and raw.endswith("]"):
-                body = raw[1:-1]
-                for chunk in body.split(";"):
-                    parts = chunk.strip().split()
-                    if len(parts) < 2:
-                        continue
-                    year_i = int(float(parts[0]))
-                    val_f = float(parts[1])
-                    mapping[year_i] = val_f
-                return mapping
-        if value is None:
+        mapping, scalar = _profile_to_map_and_scalar(value, ignore_invalid=False)
+        if mapping:
             return mapping
-        scalar = float(value)
+        if scalar is None:
+            return mapping
         for year in self.scenario_years:
             mapping[year] = scalar
         return mapping
@@ -748,15 +731,6 @@ class _ConversionRowsBuilder:
             if tech.name.startswith(prefix):
                 return
 
-        name_lower = tech.name.lower()
-
-        def _has_h2(value: Any) -> bool:
-            return isinstance(value, str) and "hydrogen" in value.lower()
-
-        cin = tech.commodity_in
-        cout = tech.commodity_out
-        hydrogen_related = "hydrogen" in name_lower or _has_h2(cin) or _has_h2(cout)
-
         cap_limit = max(0.0, float(existing_capacity or 0.0))
         base_name, _ = _split_base_and_district(tech.name)
         is_indirect = base_name.startswith("ind_")
@@ -767,8 +741,6 @@ class _ConversionRowsBuilder:
                 cap_limit = max(cap_limit, existing_output / 8760.0)
         first_year = self.scenario_years[0]
         lockout_until_year = self.lockout_until_year if self.lockout_until_year is not None else first_year
-
-        hydrogen_start_year = 2030
 
         def _coerce_default(value: Any) -> Optional[float]:
             if value is None:
@@ -809,11 +781,6 @@ class _ConversionRowsBuilder:
                     row[col] = formatted
 
         def _adjust_cap_max(year: int, base: Optional[float]) -> Optional[float]:
-            if hydrogen_related:
-                if year < hydrogen_start_year:
-                    return 0.0
-                if base is None:
-                    return UNBOUNDED_CAP
             if is_indirect and year == first_year:
                 # First year: allow scaling only for technologies that already exist.
                 if cap_limit <= 0.0:
@@ -834,10 +801,11 @@ class _ConversionRowsBuilder:
             if base is None:
                 return None
             base_val = base
-            if hydrogen_related and year < hydrogen_start_year:
-                return 0.0
             if year < lockout_until_year and not is_indirect and not is_heat_grid:
-                return min(base_val, cap_limit)
+                # During lockout we keep existing capacity via cap_res_* and cap_max,
+                # but must not force minimum new-build unit activation (cap_min),
+                # otherwise CESM's build_min_activation can become infeasible.
+                return 0.0
             # Keep user-specified minima for later years when there is no existing capacity.
             if cap_limit <= 0.0:
                 return base_val
@@ -847,15 +815,11 @@ class _ConversionRowsBuilder:
             if base is None:
                 return None
             base_val = base
-            if hydrogen_related and year < hydrogen_start_year:
-                return 0.0
             if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 return min(base_val, cap_limit)
             return base_val
 
         def _adjust_cap_res_max(year: int, base: Optional[float]) -> Optional[float]:
-            if hydrogen_related and year < hydrogen_start_year:
-                return 0.0
             if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 if base is None:
                     return cap_limit

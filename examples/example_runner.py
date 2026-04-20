@@ -1,22 +1,16 @@
-from __future__ import annotations
+"""Orchestrates end-to-end any example case by building topology and energy systems, 
+executing CESM optimization, and producing plots and reports."""
 
+from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
 from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.factory import (
-    build_energy_system,
-    build_scenario,
-    create_cesm_backend,
-)
+from pypeline.factory import (build_energy_system,build_scenario,create_cesm_backend)
 from pypeline.topology_builder.cli.simple import build_topology_from_case
 from pypeline.topology_builder.cli.dijkstra import build_topology_from_dataset
-from pypeline.topology_builder.core import (
-    edge_metrics_from_topology_result,
-    streets_for_topology_plot,
-)
+from pypeline.topology_builder.core import (edge_metrics_from_topology_result,streets_for_topology_plot)
 
 
 @dataclass(frozen=True)
@@ -24,17 +18,20 @@ class ScenarioCaseConfig:
     project_root: Path
     scenario_file: Path
     streets_file: Path
-    heat_demand_file: Path
     heating_shares_file: Path
     model_name: str
     scenario_name: str
     tss_name: str
+    dt_hours: int
     demand_name: str
     start_year: int
     end_year: int
     year_gap: int
     retain_existing_output_drop_per_year: float
     lockout_years: int
+    commodity_activation_year_by_name: dict[str, int] | None = None
+    technology_activation_year_by_name: dict[str, int] | None = None
+    constraints_overrides: dict[str, Any] | None = None
     region_builder_config_overrides: dict[str, Any] | None = None
     expected_region_ids: tuple[int, ...] | None = None
     apply_injections: bool = False
@@ -45,13 +42,12 @@ class DijkstraScenarioConfig:
     project_root: Path
     input_dir: Path
     output_dir: Path
-    buildings_file: str
     streets_file: str
-    heat_demand_file: Path
     heating_shares_file: Path
     model_name: str
     scenario_name: str
     tss_name: str
+    dt_hours: int
     demand_name: str
     start_year: int
     end_year: int
@@ -63,6 +59,8 @@ class DijkstraScenarioConfig:
     demand_share_pct: float
     polynesia: bool
     city_column: str
+    commodity_activation_year_by_name: dict[str, int] | None = None
+    technology_activation_year_by_name: dict[str, int] | None = None
     region_builder_config_overrides: dict[str, Any] | None = None
 
 
@@ -93,9 +91,10 @@ def build_case_energy_system_from_scenario(
     scenario_file: Path,
     streets_file: Path,
     model_name: str,
-    heat_demand_file: Path,
     heating_shares_file: Path,
     region_builder_config_overrides: dict[str, Any] | None,
+    commodity_activation_year_by_name: dict[str, int] | None,
+    technology_activation_year_by_name: dict[str, int] | None,
     apply_injections: bool,
     project_root: Path,
 ):
@@ -110,10 +109,11 @@ def build_case_energy_system_from_scenario(
         model_name=model_name,
         region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
-        heat_demand_file=heat_demand_file,
         heating_shares_file=heating_shares_file,
         region_builder_config_overrides=region_builder_config_overrides,
         injected_techs=topology_result.injected_techs,
+        commodity_activation_year_by_name=commodity_activation_year_by_name,
+        technology_activation_year_by_name=technology_activation_year_by_name,
     )
     energy_system.data_dir = project_root / "data"
     return energy_system, topology_result
@@ -205,16 +205,60 @@ def run_scenario_case(
 ) -> ScenarioExecutionResult:
     effective_apply_injections = config.apply_injections if apply_injections is None else bool(apply_injections)
 
+    commodity_activation_year_by_name: dict[str, int] = {
+        str(name).strip().lower(): int(year)
+        for name, year in (config.commodity_activation_year_by_name or {}).items()
+        if str(name).strip()
+    }
+    technology_activation_year_by_name: dict[str, int] = {
+        str(name).strip().lower(): int(year)
+        for name, year in (config.technology_activation_year_by_name or {}).items()
+        if str(name).strip()
+    }
+    if config.constraints_overrides:
+        legacy_map = config.constraints_overrides.get("commodity_activation_year")
+        if legacy_map is not None and not isinstance(legacy_map, dict):
+            raise ValueError("constraints_overrides['commodity_activation_year'] must be a mapping")
+        for name, year in (legacy_map or {}).items():
+            key = str(name).strip().lower()
+            if not key:
+                continue
+            commodity_activation_year_by_name[key] = int(year)
+
+        if "hydrogen_start_year" in config.constraints_overrides:
+            commodity_activation_year_by_name["hydrogen"] = int(config.constraints_overrides["hydrogen_start_year"])
+
+        tech_map = config.constraints_overrides.get("technology_activation_year")
+        if tech_map is not None and not isinstance(tech_map, dict):
+            raise ValueError("constraints_overrides['technology_activation_year'] must be a mapping")
+        for name, year in (tech_map or {}).items():
+            key = str(name).strip().lower()
+            if not key:
+                continue
+            technology_activation_year_by_name[key] = int(year)
+
     energy_system, topology_result = build_case_energy_system_from_scenario(
         scenario_file=config.scenario_file,
         streets_file=config.streets_file,
         model_name=config.model_name,
-        heat_demand_file=config.heat_demand_file,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
+        commodity_activation_year_by_name=commodity_activation_year_by_name or None,
+        technology_activation_year_by_name=technology_activation_year_by_name or None,
         apply_injections=effective_apply_injections,
         project_root=config.project_root,
     )
+
+    if config.constraints_overrides:
+        merged_constraints = dict(energy_system.constraints or {})
+        for key, value in config.constraints_overrides.items():
+            if key in {"commodity_activation_year", "technology_activation_year", "hydrogen_start_year"}:
+                continue
+            if isinstance(value, dict) and isinstance(merged_constraints.get(key), dict):
+                merged_constraints[key] = {**merged_constraints[key], **value}
+            else:
+                merged_constraints[key] = value
+        energy_system.constraints = merged_constraints
 
     _validate_case_regions(config, topology_result.region_topologies)
     _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
@@ -238,6 +282,7 @@ def run_scenario_case(
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
+        dt_hours=config.dt_hours,
         scenario=scenario,
         demand_name=config.demand_name,
     )
@@ -252,6 +297,7 @@ def run_scenario_case(
             "model_name": config.model_name,
             "scenario_name": config.scenario_name,
             "tss_name": config.tss_name,
+            "dt_hours": config.dt_hours,
             "demand_name": config.demand_name,
             "start_year": config.start_year,
             "end_year": config.end_year,
@@ -279,7 +325,6 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
     topology_result = build_topology_from_dataset(
         input_dir=config.input_dir,
         output_dir=config.output_dir,
-        buildings_file=config.buildings_file,
         streets_file=config.streets_file,
         max_demand_mwh=config.max_demand_mwh,
         max_street_length_km=config.max_street_length_km,
@@ -294,10 +339,11 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         model_name=config.model_name,
         region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
-        heat_demand_file=config.heat_demand_file,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
         injected_techs=None,
+        commodity_activation_year_by_name=config.commodity_activation_year_by_name,
+        technology_activation_year_by_name=config.technology_activation_year_by_name,
     )
     energy_system.data_dir = config.project_root / "data"
 
@@ -319,6 +365,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
+        dt_hours=config.dt_hours,
         scenario=scenario,
         demand_name=config.demand_name,
     )
@@ -333,6 +380,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
             "model_name": config.model_name,
             "scenario_name": config.scenario_name,
             "tss_name": config.tss_name,
+            "dt_hours": config.dt_hours,
             "demand_name": config.demand_name,
             "start_year": config.start_year,
             "end_year": config.end_year,

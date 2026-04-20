@@ -6,6 +6,7 @@ Only owns rule abstractions and concrete rule implementations.
 from abc import ABC, abstractmethod
 import math
 from typing import TYPE_CHECKING, Any, Dict, Optional
+from pypeline.data.dataset import CensusTechnology
 from pypeline.data.data_registry import DataRegistry
 from pypeline.energy_technology.technology import (
     DHN_TECH_BASE_NAMES,
@@ -450,6 +451,76 @@ class MinimumHeatGridConstraintRule(EnergySystemRule):
         existing = constraints.get(key, {}) if isinstance(constraints.get(key, {}), dict) else {}
         existing.update(targets)
         constraints[key] = existing
+        energy_system.constraints = constraints
+        return energy_system
+
+
+class CommodityActivationYearRule(EnergySystemRule):
+    """Set first active year for selected commodities.
+
+    Only commodities explicitly listed in activation_year_by_commodity are gated before their activation year
+    """
+
+    def __init__(self, *, activation_year_by_commodity: Dict[str, int], overwrite: bool = True) -> None:
+        self.activation_year_by_commodity = {
+            str(commodity).strip().lower(): int(year)
+            for commodity, year in (activation_year_by_commodity or {}).items()
+            if str(commodity).strip()
+        }
+        self.overwrite = bool(overwrite)
+
+    def apply(self, energy_system):
+        if not self.activation_year_by_commodity:
+            return energy_system
+
+        constraints = energy_system.constraints if energy_system.constraints is not None else {}
+        existing = constraints.get("commodity_activation_year", {}) if isinstance(constraints, dict) else {}
+        if not isinstance(existing, dict):
+            existing = {}
+
+        for commodity, year in self.activation_year_by_commodity.items():
+            if year < 0:
+                raise ValueError(f"Activation year must be >= 0 for commodity '{commodity}'")
+            if self.overwrite or commodity not in existing:
+                existing[commodity] = int(year)
+
+        constraints["commodity_activation_year"] = existing
+        energy_system.constraints = constraints
+        return energy_system
+
+
+class TechnologyActivationYearRule(EnergySystemRule):
+    """Set first active year for selected conversion technologies.
+
+    Keys are conversion process names. District clones can be targeted by base
+    technology names in the CESM writer layer (for example ind_oil_boiler will
+    also match ind_oil_boiler_D0).
+    """
+
+    def __init__(self, *, activation_year_by_technology: Dict[str, int], overwrite: bool = True) -> None:
+        self.activation_year_by_technology = {
+            str(technology).strip().lower(): int(year)
+            for technology, year in (activation_year_by_technology or {}).items()
+            if str(technology).strip()
+        }
+        self.overwrite = bool(overwrite)
+
+    def apply(self, energy_system):
+        if not self.activation_year_by_technology:
+            return energy_system
+
+        constraints = energy_system.constraints if energy_system.constraints is not None else {}
+        existing = constraints.get("technology_activation_year", {}) if isinstance(constraints, dict) else {}
+        if not isinstance(existing, dict):
+            existing = {}
+
+        for technology, year in self.activation_year_by_technology.items():
+            if year < 0:
+                raise ValueError(f"Activation year must be >= 0 for technology '{technology}'")
+            if self.overwrite or technology not in existing:
+                existing[technology] = int(year)
+
+        constraints["technology_activation_year"] = existing
         energy_system.constraints = constraints
         return energy_system
 

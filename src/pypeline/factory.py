@@ -7,20 +7,19 @@ from pypeline.data.default_registry import get_default_data_registry
 from pypeline.energy_system.builder import EnergySystemBuilder
 from pypeline.energy_system.core import Scenario
 from pypeline.injection import apply_injected_techs
-from pypeline.energy_system.rule_book import EnergySystemRuleBook
+from pypeline.energy_system.rule_book import (CommodityActivationYearRule,EnergySystemRuleBook,TechnologyActivationYearRule)
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm import CESMOptimizationBackend
 
 
-def create_local_data_registry(heat_demand_file: Path, heating_shares_file: Path):
-    if not heat_demand_file.exists():
-        raise FileNotFoundError(f"Missing heat demand file: {heat_demand_file}")
+def create_local_data_registry(
+    heating_shares_file: Path,
+):
     if not heating_shares_file.exists():
         raise FileNotFoundError(f"Missing heating shares file: {heating_shares_file}")
 
     return get_default_data_registry(
         mode="local",
-        local_heat_demand_file=heat_demand_file,
         local_heating_shares_file=heating_shares_file,
     )
 
@@ -30,6 +29,7 @@ def create_cesm_backend(
     model_name: str,
     scenario_name: str,
     tss_name: str,
+    dt_hours: int,
     scenario: Scenario,
     demand_name: str,
 ) -> CESMOptimizationBackend:
@@ -50,6 +50,7 @@ def create_cesm_backend(
         model_name=model_name,
         scenario_name=scenario_name,
         tss_name=tss_name,
+        dt_hours=dt_hours,
         scenario=scenario,
         demand_name=demand_name,
     )
@@ -59,11 +60,12 @@ def build_energy_system(
     model_name: str,
     region_topologies: list,
     street_network,
-    heat_demand_file: Path,
     heating_shares_file: Path,
     region_builder_config_overrides: dict | None,
     rulebook: EnergySystemRuleBook | None = None,
     injected_techs: list[dict[str, Any]] | None = None,
+    commodity_activation_year_by_name: dict[str, int] | None = None,
+    technology_activation_year_by_name: dict[str, int] | None = None,
 ):
     tech_registry = TechnologyRegistry()
     tech_registry.load_from_default()
@@ -73,7 +75,11 @@ def build_energy_system(
     builder.set_street_network(street_network)
     builder.set_demands(default=True)
     builder.set_technology_registry(tech_registry)
-    builder.set_data_registry(create_local_data_registry(heat_demand_file, heating_shares_file))
+    builder.set_data_registry(
+        create_local_data_registry(
+            heating_shares_file=heating_shares_file,
+        )
+    )
     builder.set_default_region_builder_config()
     if region_builder_config_overrides:
         builder.set_region_builder_config(region_builder_config_overrides, merge=True)
@@ -81,6 +87,17 @@ def build_energy_system(
 
     energy_system = builder.build()
     apply_injected_techs(energy_system, injected_techs or [])
+    if commodity_activation_year_by_name:
+        energy_system = CommodityActivationYearRule(
+            activation_year_by_commodity=commodity_activation_year_by_name,
+            overwrite=True,
+        ).apply(energy_system)
+    if technology_activation_year_by_name:
+        energy_system = TechnologyActivationYearRule(
+            activation_year_by_technology=technology_activation_year_by_name,
+            overwrite=True,
+        ).apply(energy_system)
+
     return energy_system
 
 def build_scenario(

@@ -28,7 +28,7 @@ def build_region_topology(
     *,
     buildings: gpd.GeoDataFrame,
     streets: gpd.GeoDataFrame,
-    demand_data: pd.DataFrame | gpd.GeoDataFrame,
+    demand_data: pd.DataFrame | gpd.GeoDataFrame | None,
     config: RegionTopologyConfig,
 ) -> tuple[gpd.GeoDataFrame, dict[str, int]]:
     return _build_region_topology_impl(

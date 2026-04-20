@@ -141,6 +141,71 @@ def _convsubproc_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
     return convsubproc_df[base_cols + param_cols]
 
 
+def _format_year_profile(pairs: list[tuple[int, float]]) -> str | None:
+    if not pairs:
+        return None
+    segments: list[str] = []
+    for year, value in pairs:
+        year_i = int(year)
+        value_f = float(value)
+        segments.append(f"{year_i} {value_f:.10g}")
+    return "[" + " ; ".join(segments) + "]"
+
+
+def _profile_to_map_and_scalar(
+    value: Any,
+    *,
+    ignore_invalid: bool = False,
+) -> tuple[dict[int, float], float | None]:
+    mapping: dict[int, float] = {}
+    scalar: float | None = None
+    if value is None:
+        return mapping, scalar
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            body = raw[1:-1]
+            for chunk in body.split(";"):
+                parts = chunk.strip().split()
+                if len(parts) < 2:
+                    continue
+                try:
+                    mapping[int(float(parts[0]))] = float(parts[1])
+                except (TypeError, ValueError):
+                    if ignore_invalid:
+                        continue
+                    raise
+            return mapping, None
+        try:
+            scalar = float(raw)
+        except (TypeError, ValueError):
+            if ignore_invalid:
+                scalar = None
+            else:
+                raise
+        return mapping, scalar
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        if ignore_invalid:
+            scalar = None
+        else:
+            raise
+    return mapping, scalar
+
+
+def _value_for_year(
+    mapping: dict[int, float],
+    scalar: float | None,
+    year: int,
+) -> float | None:
+    if mapping:
+        if year in mapping:
+            return float(mapping[year])
+        return None
+    return scalar
+
+
 def _write_techmap_workbook(
     xlsx: Path,
     *,

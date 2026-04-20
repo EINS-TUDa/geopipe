@@ -27,7 +27,6 @@ class _OutputPaths:
 class DijkstraTopologyBuilderConfig:
     input_dir: Path
     output_dir: Path
-    buildings_file: str
     streets_file: str
     max_demand_mwh: float
     max_street_length_km: float
@@ -39,13 +38,12 @@ class DijkstraTopologyBuilderConfig:
     connect_tolerance_m: float = 10.0
     small_islands: bool = True
     small_islands_max_segments: int = 60
-    segment_streets_by_building_projections: bool = True
+    segment_streets_by_building_projections: bool = False
     segment_projection_buffer_m: float = 12.0
     region_id_column: str = "id"
     street_id_column: str = "street_id"
     building_id_column: str = "building_objectid"
     demand_building_column: str = "building_objectid"
-    demand_source_column: str = "heating:demand[Wh]"
     demand_value_column: str = "annual_demand_mwh"
     demand_street_indicator_column: str = "total_heat_demand"
     demand_street_indicator_min: float = 0.0
@@ -69,34 +67,113 @@ def _resolve_input_file(input_dir: Path, file_name_or_relpath: str) -> Path:
     return input_dir / rel
 
 
+def _normalize_streets_for_topology(
+    streets: gpd.GeoDataFrame,
+    *,
+    street_id_column: str,
+    demand_street_indicator_column: str,
+) -> gpd.GeoDataFrame:
+    s = streets.copy()
+
+    if s.empty:
+        raise ValueError("Streets file is empty")
+
+    geom_types = set(s.geometry.geom_type.dropna().astype(str).tolist())
+    lineal_types = {"LineString", "MultiLineString"}
+
+    if not geom_types.issubset(lineal_types):
+        non_line_mask = ~s.geometry.geom_type.isin(list(lineal_types))
+        if bool(non_line_mask.any()):
+            s.loc[non_line_mask, "geometry"] = s.loc[non_line_mask, "geometry"].boundary
+
+    s = s.explode(index_parts=False).reset_index(drop=True)
+    s = s[s.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+    if s.empty:
+        raise ValueError("No line-like street geometries after normalization")
+
+    if demand_street_indicator_column not in s.columns:
+        for candidate in (
+            "total_heat_demand",
+            "qnutzwaerme_2020_kwh",
+            "raumwaerme",
+            "heating:demand[Wh]",
+            "heat_demand",
+        ):
+            if candidate in s.columns:
+                s[demand_street_indicator_column] = pd.to_numeric(s[candidate], errors="coerce").fillna(0.0)
+                break
+
+    if (
+        street_id_column not in s.columns
+        or s[street_id_column].isna().any()
+        or not s[street_id_column].is_unique
+    ):
+        s[street_id_column] = range(len(s))
+
+    return s
+
+
+def _buildings_and_demand_from_streets(
+    streets: gpd.GeoDataFrame,
+    *,
+    city_column: str,
+    building_id_column: str,
+    demand_building_column: str,
+    demand_street_indicator_column: str,
+    demand_value_column: str,
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+    if demand_street_indicator_column not in streets.columns:
+        raise ValueError(
+            f"Missing demand street indicator column '{demand_street_indicator_column}' in streets file"
+        )
+
+    demand_mwh = pd.to_numeric(
+        streets[demand_street_indicator_column], errors="coerce"
+    ).fillna(0.0) / 1_000_000.0
+
+    pseudo_ids = pd.Series(range(len(streets)), dtype="int64")
+    geometry = streets.geometry.representative_point().reset_index(drop=True)
+
+    data: dict[str, pd.Series] = {
+        building_id_column: pseudo_ids,
+    }
+    if city_column and city_column in streets.columns:
+        data[city_column] = streets[city_column].reset_index(drop=True)
+
+    pseudo_buildings = gpd.GeoDataFrame(data=data, geometry=geometry, crs=streets.crs)
+    demand_by_building = pd.DataFrame(
+        {
+            demand_building_column: pseudo_buildings[building_id_column],
+            demand_value_column: demand_mwh.reset_index(drop=True),
+        }
+    )
+
+    return pseudo_buildings, demand_by_building
+
+
 def _run_dijkstra_pipeline(
     *,
     dataset_name: str,
     request: DijkstraTopologyBuilderConfig,
 ) -> TopologyBuildResult:
-    buildings_path = _resolve_input_file(request.input_dir, request.buildings_file)
     streets_path = _resolve_input_file(request.input_dir, request.streets_file)
 
-    if not buildings_path.exists():
-        raise FileNotFoundError(f"Buildings file not found: {buildings_path}")
     if not streets_path.exists():
         raise FileNotFoundError(f"Streets file not found: {streets_path}")
 
-    buildings = gpd.read_file(buildings_path)
-    streets = gpd.read_file(streets_path)
+    streets = _normalize_streets_for_topology(
+        gpd.read_file(streets_path),
+        street_id_column=request.street_id_column,
+        demand_street_indicator_column=request.demand_street_indicator_column,
+    )
 
-    if request.building_id_column not in buildings.columns:
-        raise ValueError(f"Missing building id column '{request.building_id_column}' in {buildings_path}")
-    if request.demand_source_column not in buildings.columns:
-        raise ValueError(f"Missing demand source column '{request.demand_source_column}' in {buildings_path}")
-
-    demand_by_building = pd.DataFrame(
-        {
-            request.demand_building_column: buildings[request.building_id_column],
-            request.demand_value_column: pd.to_numeric(
-                buildings[request.demand_source_column], errors="coerce"
-            ).fillna(0.0) / 1_000_000.0,
-        }
+    buildings, demand_by_building = _buildings_and_demand_from_streets(
+        streets,
+        city_column=request.city_column,
+        building_id_column=request.building_id_column,
+        demand_building_column=request.demand_building_column,
+        demand_street_indicator_column=request.demand_street_indicator_column,
+        demand_value_column=request.demand_value_column,
     )
 
     city_value = None

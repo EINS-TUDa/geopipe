@@ -1,13 +1,13 @@
 from pathlib import Path
 import math
 import geopandas as gpd
+import networkx as nx
 import pytest
 from pypeline.data.default_registry import get_default_data_registry
 from pypeline.data.dataset import CensusTechnology
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HEAT_FILE = REPO_ROOT / "data/WaermeatlasHessen.gpkg"
 SHARES_FILE = REPO_ROOT / "data/Census2022HeatingType100mGrid/Census2022HeatingType100mGrid_Polygons_southhessen.geojson"
 
 
@@ -16,7 +16,6 @@ def district_shares_t():
     region = gpd.read_file(REPO_ROOT / "examples/bensheim/wah_bensheim_4_districts.geojson")
     registry = get_default_data_registry(
         mode="local",
-        local_heat_demand_file=HEAT_FILE,
         local_heating_shares_file=SHARES_FILE,
     )
     shares = {
@@ -46,20 +45,18 @@ def district_shares_t():
 
 
 def heat_demand_pos_t():
-    """Checks residential heat demand query is positive, finite, and scales with larger region extent."""
-    small_region = gpd.read_file(REPO_ROOT / "examples/bensheim/baublock_bensheim_epsg25832.geojson")
-    large_region = gpd.read_file(REPO_ROOT / "examples/bensheim/wah_bensheim_4_districts.geojson")
+    """Checks graph-based residential heat demand query is positive and additive."""
     registry = get_default_data_registry(
         mode="local",
-        local_heat_demand_file=HEAT_FILE,
         local_heating_shares_file=SHARES_FILE,
     )
 
-    small_demand = float(registry.query({"region": small_region, "key": "residential_heat_demand"}))
-    large_demand = float(registry.query({"region": large_region, "key": "residential_heat_demand"}))
+    graph = nx.Graph()
+    graph.add_edge((0.0, 0.0), (1.0, 0.0), street_id=1, total_heat_demand=1_200_000.0)
+    graph.add_edge((1.0, 0.0), (2.0, 0.0), street_id=2, total_heat_demand=300_000.0)
 
-    assert small_demand > 0.0
-    assert large_demand > 0.0
-    assert math.isfinite(small_demand)
-    assert math.isfinite(large_demand)
-    assert large_demand >= small_demand
+    demand = float(registry.query({"region": graph, "key": "residential_heat_demand"}))
+
+    assert demand > 0.0
+    assert math.isfinite(demand)
+    assert demand == pytest.approx(1.5, rel=1e-9)
