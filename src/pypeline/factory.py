@@ -7,7 +7,7 @@ from pypeline.data.default_registry import get_default_data_registry
 from pypeline.energy_system.builder import EnergySystemBuilder
 from pypeline.energy_system.core import Scenario
 from pypeline.injection import apply_injected_techs
-from pypeline.energy_system.rule_book import EnergySystemRuleBook
+from pypeline.energy_system.rule_book import (CommodityActivationYearRule,EnergySystemRuleBook,TechnologyActivationYearRule)
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm import CESMOptimizationBackend
 
@@ -64,6 +64,8 @@ def build_energy_system(
     region_builder_config_overrides: dict | None,
     rulebook: EnergySystemRuleBook | None = None,
     injected_techs: list[dict[str, Any]] | None = None,
+    commodity_activation_year_by_name: dict[str, int] | None = None,
+    technology_activation_year_by_name: dict[str, int] | None = None,
 ):
     tech_registry = TechnologyRegistry()
     tech_registry.load_from_default()
@@ -85,6 +87,17 @@ def build_energy_system(
 
     energy_system = builder.build()
     apply_injected_techs(energy_system, injected_techs or [])
+    if commodity_activation_year_by_name:
+        energy_system = CommodityActivationYearRule(
+            activation_year_by_commodity=commodity_activation_year_by_name,
+            overwrite=True,
+        ).apply(energy_system)
+    if technology_activation_year_by_name:
+        energy_system = TechnologyActivationYearRule(
+            activation_year_by_technology=technology_activation_year_by_name,
+            overwrite=True,
+        ).apply(energy_system)
+
     return energy_system
 
 def build_scenario(

@@ -21,10 +21,12 @@ CASE_CONFIG = ScenarioCaseConfig(
     dt_hours=4,
     demand_name="residential_heat",
     start_year=2020,
-    end_year=2030,
+    end_year=2040,
     year_gap=5,
     retain_existing_output_drop_per_year=0.05,
     lockout_years=2,
+    commodity_activation_year_by_name={"hydrogen": 2035},
+    technology_activation_year_by_name={"ind_heat_pump": 2035},
     apply_injections=True,
     region_builder_config_overrides={
         "min_heat_grid_share": 0.1,

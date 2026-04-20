@@ -37,6 +37,9 @@ from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
 from pypeline.optimization.cesm.io_utils import (
     _canon_co,
     _convsubproc_dataframe,
+    _format_year_profile,
+    _profile_to_map_and_scalar,
+    _value_for_year,
     commodity_config_from_energy_system as _commodity_config_from_energy_system,
     resolve_retain_schedule as _resolve_retain_schedule,
     _write_demand_profile,
@@ -45,7 +48,7 @@ from pypeline.optimization.cesm.io_utils import (
     _scenario_df,
     _tss_df,
 )
-from pypeline.energy_technology.technology import Technology
+from pypeline.energy_technology.technology import (Technology,split_base_and_district as _split_base_and_district)
 from pypeline.energy_technology.technology_registry import TechnologyRegistry, get_default_technology_registry
 from pypeline.optimization.cesm.conversion_rows import (
     UNBOUNDED_CAP,
@@ -377,6 +380,34 @@ def _write_cesm_inputs_from_optimization_context(
         if bucket:
             min_central_cap_totals_by_co[commodity] = bucket
 
+    commodity_activation_year_raw = constraints_raw.get("commodity_activation_year", {}) if constraints_raw else {}
+    if commodity_activation_year_raw and not isinstance(commodity_activation_year_raw, dict):
+        raise ValueError("commodity_activation_year constraint must be a mapping of commodity names to years")
+    commodity_activation_year: dict[str, int] = {}
+    for commodity_raw, year_raw in (commodity_activation_year_raw or {}).items():
+        commodity = str(commodity_raw).strip().lower()
+        if not commodity:
+            continue
+        try:
+            activation_year = int(year_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"commodity_activation_year['{commodity_raw}'] must be an integer year") from exc
+        commodity_activation_year[commodity] = max(start_year_int, activation_year)
+
+    technology_activation_year_raw = constraints_raw.get("technology_activation_year", {}) if constraints_raw else {}
+    if technology_activation_year_raw and not isinstance(technology_activation_year_raw, dict):
+        raise ValueError("technology_activation_year constraint must be a mapping of technology names to years")
+    technology_activation_year: dict[str, int] = {}
+    for technology_raw, year_raw in (technology_activation_year_raw or {}).items():
+        technology = str(technology_raw).strip().lower()
+        if not technology:
+            continue
+        try:
+            activation_year = int(year_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"technology_activation_year['{technology_raw}'] must be an integer year") from exc
+        technology_activation_year[technology] = max(start_year_int, activation_year)
+
     om_region_ids = list(optimization_context.regions)
     district_to_region: dict[int, int] = {}
     for idx, district_id in enumerate(districts):
@@ -535,16 +566,6 @@ def _write_cesm_inputs_from_optimization_context(
         if retain_factor is not None:
             return max(0.0, float(retain_factor))
         return 1.0
-
-    def _format_year_profile(pairs: List[Tuple[int, float]]) -> str | None:
-        if not pairs:
-            return None
-        segments: list[str] = []
-        for year, value in pairs:
-            year_i = int(year)
-            value_f = float(value)
-            segments.append(f"{year_i} {value_f:.10g}")
-        return "[" + " ; ".join(segments) + "]"
 
     logger.debug(
         "retain_existing_output_factor=%s -> retain_factor=%s",
@@ -804,6 +825,102 @@ def _write_cesm_inputs_from_optimization_context(
     )
 
     cs_rows.extend(builder.build_rows(sel_list))
+
+    def _technology_activation_year_for_row(row: dict[str, Any]) -> int | None:
+        if not technology_activation_year:
+            return None
+        cp_raw = str(row.get("conversion_process_name", "") or "").strip()
+        if not cp_raw:
+            return None
+        cp = cp_raw.lower()
+
+        years: list[int] = []
+        direct = technology_activation_year.get(cp)
+        if direct is not None:
+            years.append(int(direct))
+
+        # Allow base-name matching for district clones, e.g. ind_oil_boiler -> ind_oil_boiler_D0.
+        base, district = _split_base_and_district(cp_raw)
+        if district is not None:
+            base_year = technology_activation_year.get(base.lower())
+            if base_year is not None:
+                years.append(int(base_year))
+
+        if not years:
+            return None
+        return max(years)
+
+    def _row_activation_year(row: dict[str, Any]) -> int | None:
+        cin = str(row.get("commodity_in", "") or "").strip().lower()
+        cout = str(row.get("commodity_out", "") or "").strip().lower()
+        years: list[int] = []
+        if cin in commodity_activation_year:
+            years.append(int(commodity_activation_year[cin]))
+        if cout in commodity_activation_year:
+            years.append(int(commodity_activation_year[cout]))
+        tech_year = _technology_activation_year_for_row(row)
+        if tech_year is not None:
+            years.append(int(tech_year))
+        if not years:
+            return None
+        # For rows with multiple applicable constraints, apply the stricter
+        # (later) activation year.
+        return max(years)
+
+    for row in cs_rows:
+        activation_year = _row_activation_year(row)
+        if activation_year is None:
+            continue
+
+        cap_res_min_map, cap_res_min_scalar = _profile_to_map_and_scalar(
+            row.get("cap_res_min"),
+            ignore_invalid=True,
+        )
+        cap_res_max_map, cap_res_max_scalar = _profile_to_map_and_scalar(
+            row.get("cap_res_max"),
+            ignore_invalid=True,
+        )
+
+        def _residual_ceiling_for_year(year_i: int) -> float:
+            res_max = _value_for_year(cap_res_max_map, cap_res_max_scalar, year_i)
+            res_min = _value_for_year(cap_res_min_map, cap_res_min_scalar, year_i)
+            if res_max is None and res_min is None:
+                return 0.0
+            vals = [float(v) for v in (res_max, res_min) if v is not None]
+            return max(vals) if vals else 0.0
+
+        for column in ("cap_max", "cap_min"):
+            existing = row.get(column)
+            if existing is None and column != "cap_max":
+                continue
+
+            profile_map, scalar = _profile_to_map_and_scalar(
+                existing,
+                ignore_invalid=True,
+            )
+            pairs: list[tuple[int, float]] = []
+            for year in scenario_years:
+                year_i = int(year)
+                if year_i < activation_year:
+                    if column == "cap_max":
+                        # Block new build while still allowing already-existing residual capacity.
+                        pairs.append((year_i, _residual_ceiling_for_year(year_i)))
+                    else:
+                        pairs.append((year_i, 0.0))
+                    continue
+
+                base_value = _value_for_year(profile_map, scalar, year_i)
+                if base_value is None:
+                    if column == "cap_max":
+                        pairs.append((year_i, float(UNBOUNDED_CAP)))
+                    continue
+                pairs.append((year_i, float(base_value)))
+
+            if pairs:
+                prof = _format_year_profile(pairs)
+                if prof is not None:
+                    row[column] = prof
+
     convsubproc_df = _convsubproc_dataframe(cs_rows)
     _write_techmap_workbook(
         xlsx,

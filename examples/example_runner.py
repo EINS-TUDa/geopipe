@@ -1,22 +1,16 @@
-from __future__ import annotations
+"""Orchestrates end-to-end any example case by building topology and energy systems, 
+executing CESM optimization, and producing plots and reports."""
 
+from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
 from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.factory import (
-    build_energy_system,
-    build_scenario,
-    create_cesm_backend,
-)
+from pypeline.factory import (build_energy_system,build_scenario,create_cesm_backend)
 from pypeline.topology_builder.cli.simple import build_topology_from_case
 from pypeline.topology_builder.cli.dijkstra import build_topology_from_dataset
-from pypeline.topology_builder.core import (
-    edge_metrics_from_topology_result,
-    streets_for_topology_plot,
-)
+from pypeline.topology_builder.core import (edge_metrics_from_topology_result,streets_for_topology_plot)
 
 
 @dataclass(frozen=True)
@@ -35,6 +29,9 @@ class ScenarioCaseConfig:
     year_gap: int
     retain_existing_output_drop_per_year: float
     lockout_years: int
+    commodity_activation_year_by_name: dict[str, int] | None = None
+    technology_activation_year_by_name: dict[str, int] | None = None
+    constraints_overrides: dict[str, Any] | None = None
     region_builder_config_overrides: dict[str, Any] | None = None
     expected_region_ids: tuple[int, ...] | None = None
     apply_injections: bool = False
@@ -62,6 +59,8 @@ class DijkstraScenarioConfig:
     demand_share_pct: float
     polynesia: bool
     city_column: str
+    commodity_activation_year_by_name: dict[str, int] | None = None
+    technology_activation_year_by_name: dict[str, int] | None = None
     region_builder_config_overrides: dict[str, Any] | None = None
 
 
@@ -94,6 +93,8 @@ def build_case_energy_system_from_scenario(
     model_name: str,
     heating_shares_file: Path,
     region_builder_config_overrides: dict[str, Any] | None,
+    commodity_activation_year_by_name: dict[str, int] | None,
+    technology_activation_year_by_name: dict[str, int] | None,
     apply_injections: bool,
     project_root: Path,
 ):
@@ -111,6 +112,8 @@ def build_case_energy_system_from_scenario(
         heating_shares_file=heating_shares_file,
         region_builder_config_overrides=region_builder_config_overrides,
         injected_techs=topology_result.injected_techs,
+        commodity_activation_year_by_name=commodity_activation_year_by_name,
+        technology_activation_year_by_name=technology_activation_year_by_name,
     )
     energy_system.data_dir = project_root / "data"
     return energy_system, topology_result
@@ -202,15 +205,60 @@ def run_scenario_case(
 ) -> ScenarioExecutionResult:
     effective_apply_injections = config.apply_injections if apply_injections is None else bool(apply_injections)
 
+    commodity_activation_year_by_name: dict[str, int] = {
+        str(name).strip().lower(): int(year)
+        for name, year in (config.commodity_activation_year_by_name or {}).items()
+        if str(name).strip()
+    }
+    technology_activation_year_by_name: dict[str, int] = {
+        str(name).strip().lower(): int(year)
+        for name, year in (config.technology_activation_year_by_name or {}).items()
+        if str(name).strip()
+    }
+    if config.constraints_overrides:
+        legacy_map = config.constraints_overrides.get("commodity_activation_year")
+        if legacy_map is not None and not isinstance(legacy_map, dict):
+            raise ValueError("constraints_overrides['commodity_activation_year'] must be a mapping")
+        for name, year in (legacy_map or {}).items():
+            key = str(name).strip().lower()
+            if not key:
+                continue
+            commodity_activation_year_by_name[key] = int(year)
+
+        if "hydrogen_start_year" in config.constraints_overrides:
+            commodity_activation_year_by_name["hydrogen"] = int(config.constraints_overrides["hydrogen_start_year"])
+
+        tech_map = config.constraints_overrides.get("technology_activation_year")
+        if tech_map is not None and not isinstance(tech_map, dict):
+            raise ValueError("constraints_overrides['technology_activation_year'] must be a mapping")
+        for name, year in (tech_map or {}).items():
+            key = str(name).strip().lower()
+            if not key:
+                continue
+            technology_activation_year_by_name[key] = int(year)
+
     energy_system, topology_result = build_case_energy_system_from_scenario(
         scenario_file=config.scenario_file,
         streets_file=config.streets_file,
         model_name=config.model_name,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
+        commodity_activation_year_by_name=commodity_activation_year_by_name or None,
+        technology_activation_year_by_name=technology_activation_year_by_name or None,
         apply_injections=effective_apply_injections,
         project_root=config.project_root,
     )
+
+    if config.constraints_overrides:
+        merged_constraints = dict(energy_system.constraints or {})
+        for key, value in config.constraints_overrides.items():
+            if key in {"commodity_activation_year", "technology_activation_year", "hydrogen_start_year"}:
+                continue
+            if isinstance(value, dict) and isinstance(merged_constraints.get(key), dict):
+                merged_constraints[key] = {**merged_constraints[key], **value}
+            else:
+                merged_constraints[key] = value
+        energy_system.constraints = merged_constraints
 
     _validate_case_regions(config, topology_result.region_topologies)
     _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
@@ -294,6 +342,8 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
         injected_techs=None,
+        commodity_activation_year_by_name=config.commodity_activation_year_by_name,
+        technology_activation_year_by_name=config.technology_activation_year_by_name,
     )
     energy_system.data_dir = config.project_root / "data"
 
