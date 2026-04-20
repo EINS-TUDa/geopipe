@@ -1,6 +1,4 @@
 from __future__ import annotations
-import os
-import sys
 from pathlib import Path
 from typing import Any
 from pypeline.data.default_registry import get_default_data_registry
@@ -24,7 +22,6 @@ def create_local_data_registry(
     )
 
 def create_cesm_backend(
-    project_root: Path,
     *,
     model_name: str,
     scenario_name: str,
@@ -32,18 +29,12 @@ def create_cesm_backend(
     dt_hours: int,
     scenario: Scenario,
     demand_name: str,
+    timeseries_dir: Path,
+    output_dir: Path,
 ) -> CESMOptimizationBackend:
-    workdir = (project_root / "CESM").resolve()
-    existing_py_path = os.environ.get("PYTHONPATH")
-    if existing_py_path:
-        os.environ["PYTHONPATH"] = f"{project_root}{os.pathsep}{existing_py_path}"
-    else:
-        os.environ["PYTHONPATH"] = str(project_root)
-
     return CESMOptimizationBackend(
-        workdir=str(workdir),
-        cli=[sys.executable, "-m", "pypeline.optimization.cesm.cli"],
-        run_args=["--workdir", str(workdir), "-m", model_name, "-s", scenario_name],
+        timeseries_dir=timeseries_dir,
+        output_dir=output_dir,
         run_subdir=f"{model_name}-{scenario_name}",
         results_db_name="db.sqlite",
         write_inputs=True,

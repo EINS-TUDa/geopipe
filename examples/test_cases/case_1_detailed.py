@@ -1,5 +1,3 @@
-import os
-import sys
 import sqlite3
 from pathlib import Path
 
@@ -10,25 +8,24 @@ from pypeline.factory import create_local_data_registry
 from pypeline.injection import apply_injected_techs
 from pypeline.optimization import CESMOptimizationBackend
 from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.cli.simple import _resolve_case_folder, _resolve_case_file
 from pypeline.topology_builder.core import edge_metrics_from_topology_result, streets_for_topology_plot
 from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
 from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 from cesm.core.data_access import DAO
 
-project_root = Path(__file__).resolve().parents[2]
 CASE_DIR = Path(__file__).resolve().parent
+project_root = CASE_DIR.parents[1]
 
 def main():
     config = ScenarioCaseConfig(
         project_root=project_root,
         scenario_file=CASE_DIR / "case_1.yaml",
         streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
-        heat_demand_file=CASE_DIR / "input_data" / "buildings_heat_demand.geojson",
         heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson",
         model_name="Case1",
         scenario_name="BaseCase1",
         tss_name="4ThinWeeks",
+        dt_hours=4,
         demand_name="residential_heat",
         start_year=2020,
         end_year=2030,
@@ -43,20 +40,14 @@ def main():
         expected_region_ids=(0, 1),
     )
 
-    case_folder = _resolve_case_folder(str("examples/test_cases"))
-    resolved_streets = _resolve_case_file(case_folder, str(config.streets_file))
-    resolved_scenario = _resolve_case_file(case_folder, str(config.scenario_file))
-
-    if not resolved_streets.exists():
-        raise FileNotFoundError(f"Streets file not found: {resolved_streets}")
-    if not resolved_scenario.exists():
-        raise FileNotFoundError(f"Scenario file not found: {resolved_scenario}")
-
-    effective_apply_injections = config.apply_injections
+    if not config.streets_file.exists():
+        raise FileNotFoundError(f"Streets file not found: {config.streets_file}")
+    if not config.scenario_file.exists():
+        raise FileNotFoundError(f"Scenario file not found: {config.scenario_file}")
 
     cfg = SimpleTopologyBuilderConfig(
-        streets_file=resolved_streets,
-        scenario_file=resolved_scenario,
+        streets_file=config.streets_file,
+        scenario_file=config.scenario_file,
         region_id_column="id",
         street_id_column="street_id",
         demand_column="total_heat_demand",
@@ -73,7 +64,7 @@ def main():
     builder.set_street_network(topology_result.network)
     builder.set_demands(default=True)
     builder.set_technology_registry(tech_registry)
-    builder.set_data_registry(create_local_data_registry(config.heat_demand_file, config.heating_shares_file))
+    builder.set_data_registry(create_local_data_registry(config.heating_shares_file))
     builder.set_default_region_builder_config()
     if config.region_builder_config_overrides:
         builder.set_region_builder_config(config.region_builder_config_overrides, merge=True)
@@ -100,17 +91,9 @@ def main():
     plots_dir = _case_plots_dir(config)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    workdir = (project_root / "CESM").resolve()
-    existing_py_path = os.environ.get("PYTHONPATH")
-    if existing_py_path:
-        os.environ["PYTHONPATH"] = f"{project_root}{os.pathsep}{existing_py_path}"
-    else:
-        os.environ["PYTHONPATH"] = str(project_root)
-
     backend = CESMOptimizationBackend(
-        workdir=str(workdir),
-        cli=[sys.executable, "-m", "pypeline.optimization.cesm.cli"],
-        run_args=["--workdir", str(workdir), "-m", config.model_name, "-s", config.scenario_name],
+        timeseries_dir=CASE_DIR / "input_data",
+        output_dir=CASE_DIR / "output_data",
         run_subdir=f"{config.model_name}-{config.scenario_name}",
         results_db_name="db.sqlite",
         write_inputs=True,
@@ -136,7 +119,7 @@ def main():
             "start_year": config.start_year,
             "end_year": config.end_year,
             "year_gap": config.year_gap,
-            "apply_injections": effective_apply_injections,
+            "apply_injections": config.apply_injections,
         },
     )
 
@@ -168,9 +151,6 @@ def main():
 
     # --- 3) Sankey diagrams via CESM plot module ---
     db_path = Path(results_obj.raw["db"])
-    if not db_path.is_absolute():
-        db_path = project_root / db_path
-
     conn = sqlite3.connect(str(db_path))
     try:
         dao = DAO(conn)

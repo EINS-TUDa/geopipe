@@ -79,9 +79,7 @@ class _CesmIOPaths:
     tss_file: Path
 
 
-def _prepare_io_paths(workdir: Path, model_name: str, tss_name: str) -> _CesmIOPaths:
-    techmap_dir = workdir / "Data" / "Techmap"
-    timeseries_dir = workdir / "Data" / "TimeSeries"
+def _prepare_io_paths(techmap_dir: Path, timeseries_dir: Path, model_name: str, tss_name: str) -> _CesmIOPaths:
     techmap_dir.mkdir(parents=True, exist_ok=True)
     timeseries_dir.mkdir(parents=True, exist_ok=True)
     xlsx_path = techmap_dir / f"{model_name}.xlsx"
@@ -101,7 +99,8 @@ def _log_techmap_stats(*, commodity_count: int, convproc_count: int, convsubproc
 def _write_cesm_inputs_from_optimization_context(
         optimization_context: OptimizationContext,
         *,
-        workdir: PathLike,
+        techmap_dir: PathLike,
+        timeseries_dir: PathLike,
         model_name: str,
         scenario_name: str,
         tss_name: str,
@@ -133,8 +132,7 @@ def _write_cesm_inputs_from_optimization_context(
         technology_registry: TechnologyRegistry | None = None,
         pipe_technology_name: str = "heat_pipe",
 ) -> None:
-    workdir = Path(workdir)
-    paths = _prepare_io_paths(workdir, model_name, tss_name)
+    paths = _prepare_io_paths(Path(techmap_dir), Path(timeseries_dir), model_name, tss_name)
     ts_dir = paths.timeseries_dir
     if start_year is None or end_year is None or year_gap is None:
         raise ValueError("start_year, end_year, and year_gap must be provided via arguments")
@@ -942,7 +940,8 @@ def write_cesm_inputs_from_energy_system(
         energy_system: EnergySystem,
         scenario: Scenario,
         *,
-        workdir: PathLike,
+        techmap_dir: PathLike,
+        timeseries_dir: PathLike,
         model_name: str,
         scenario_name: str,
         tss_name: str,
@@ -973,7 +972,8 @@ def write_cesm_inputs_from_energy_system(
     )
     _write_cesm_inputs_from_optimization_context(
         om_ctx,
-        workdir=workdir,
+        techmap_dir=techmap_dir,
+        timeseries_dir=timeseries_dir,
         model_name=model_name,
         scenario_name=scenario_name,
         tss_name=tss_name,
