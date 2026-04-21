@@ -40,6 +40,8 @@ from pypeline.optimization.cesm.result_parser import (
     parse_cesm_outputs,
 )
 from pypeline.optimization.solver import OptimizationBackend, Solution
+from pypeline.optimization.resolved_system import resolve_system
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +67,11 @@ class CESMOptimizationBackend(OptimizationBackend):
 
     def __init__(
         self,
-        model_name: Optional[str],
-        tss_name: Optional[str],
+        tss_name: str,
         timeseries_dir: str | Path,
         output_dir: str | Path,
         dt_hours: int,
         results_db_name: str = "db.sqlite",
-        write_inputs: bool = True,
         demand_name: str = "residential_heat",
         retain_existing_output_factor: float | None = None,
         retain_existing_output_years_factor: float | None = None,
@@ -82,13 +82,11 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.timeseries_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.model_name = model_name
         self.tss_name = tss_name
         self.dt_hours = int(dt_hours)
         self.run_subdir = None
         self.results_db_name = results_db_name
 
-        self.write_inputs = write_inputs
         self.demand_name = demand_name
         self.retain_existing_output_factor = retain_existing_output_factor
         self.retain_existing_output_years_factor = retain_existing_output_years_factor
@@ -96,9 +94,9 @@ class CESMOptimizationBackend(OptimizationBackend):
 
     # OptimizationBackend API ------------------------------------------------
     def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
-        self.run_subdir = f"{self.model_name}-{scenario.name}"
+        self.run_subdir = f"{energy_system.name}-{scenario.name}"
         self._materialize_inputs_from_energy_system(energy_system, scenario)
-        self._run_cesm(scenario_name=scenario.name)
+        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name)
         db_path = self._expected_run_db()
         backfill_missing_commodity_timeseries(db_path)
         results = parse_cesm_outputs(db_path)
@@ -111,12 +109,6 @@ class CESMOptimizationBackend(OptimizationBackend):
         return self.output_dir / self.run_subdir / self.results_db_name
 
     def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario) -> None:
-        if not self.write_inputs:
-            return
-
-        from pypeline.optimization.resolved_system import resolve_system
-        from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
-
         resolved = resolve_system(
             energy_system,
             scenario,
@@ -126,7 +118,7 @@ class CESMOptimizationBackend(OptimizationBackend):
             resolved,
             techmap_dir=self.output_dir,
             timeseries_dir=self.timeseries_dir,
-            model_name=self.model_name,
+            model_name=energy_system.name,
             scenario_name=scenario.name,
             tss_name=self.tss_name,
             dt_hours=self.dt_hours,
@@ -134,7 +126,7 @@ class CESMOptimizationBackend(OptimizationBackend):
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,
         )
 
-    def _run_cesm(self, scenario_name) -> None:
+    def _run_cesm(self, energy_system_name: str, scenario_name: str) -> None:
         if not self.run_subdir:
             raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
 
@@ -143,7 +135,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         db_dir.mkdir(parents=True, exist_ok=True)
 
         conn = sqlite3.connect(":memory:")
-        parser = Parser(self.model_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
+        parser = Parser(energy_system_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
         parser.parse()
         model = Model(conn=conn)
         model.solve()

@@ -40,11 +40,6 @@ def main():
         expected_region_ids=(0, 1),
     )
 
-    if not config.streets_file.exists():
-        raise FileNotFoundError(f"Streets file not found: {config.streets_file}")
-    if not config.scenario_file.exists():
-        raise FileNotFoundError(f"Scenario file not found: {config.scenario_file}")
-
     cfg = SimpleTopologyBuilderConfig(
         streets_file=config.streets_file,
         scenario_file=config.scenario_file,
@@ -95,8 +90,6 @@ def main():
         timeseries_dir=CASE_DIR / "input_data",
         output_dir=CASE_DIR / "output_data",
         results_db_name="db.sqlite",
-        write_inputs=True,
-        model_name=config.model_name,
         tss_name=config.tss_name,
         dt_hours = 3,
         demand_name=config.demand_name,
