@@ -1,7 +1,7 @@
 """Backend-agnostic optimization context.
 
 Defines :class:`OptimizationContext`, a flat numerical representation of an
-:class:`~pypeline.energy_system.core.EnergySystem` + :class:`~pypeline.energy_system.core.Scenario`
+:class:`~pypeline.energy_system.energy_system.EnergySystem` + :class:`~pypeline.energy_system.scenario.Scenario`
 pair.  All domain logic (region topology, demand profiles, technology shares)
 is resolved here so that solver backends only need to consume plain dicts /
 lists / DataFrames.
@@ -30,7 +30,10 @@ from pypeline.validation import (
     renormalize_to_one,
     to_int_id,
 )
-from pypeline.energy_technology.technology import Technology
+from pypeline.energy_technology.technology import (
+    Technology,
+    split_base_and_district as _split_base_and_district,
+)
 
 
 @dataclass
@@ -70,6 +73,7 @@ class OptimizationContext:
     constraints: Dict[str, Dict[int, float]] | None = None
     technologies: Dict[str, Technology] | None = None
     region_technology_metrics: Dict[int, Dict[str, Dict[str, float]]] | None = None
+    historical_exchanger_targets_mwh: Dict[int, float] | None = None
 
 
 def _shares_from_energy_outputs(tech_to_energy_mwh: Mapping[str, float]) -> Dict[str, float]:
@@ -122,6 +126,89 @@ def _shape_schedule_for_share(
         return [0.0] * hours
     normalized = renormalize_to_one(sanitized)
     return [target_share * v for v in normalized]
+
+
+def enforce_historical_fernwaerme_dependency(
+    optimization_context: OptimizationContext,
+    *,
+    end_year: int | None = None,
+    year_gap: int | None = None,
+) -> Dict[int, float]:
+    """Returns exchanger throughput targets by region.
+
+    Districts without historical Fernwaerme keep DHN/heat-exchanger assets at zero initial but buildable.
+    """
+    region_metrics = optimization_context.region_technology_metrics or {}
+    if not isinstance(region_metrics, dict):
+        raise TypeError("OptimizationContext.region_technology_metrics must be a dict")
+
+    _ = end_year
+    _ = year_gap
+
+    historical_exchanger_targets_mwh: Dict[int, float] = {}
+
+    for rid_raw, tech_map in region_metrics.items():
+        rid = to_int_id(rid_raw)
+        if not isinstance(tech_map, dict):
+            raise TypeError(f"region_technology_metrics[{rid}] must be a dict")
+
+        hx_keys: list[str] = []
+        hg_keys: list[str] = []
+        for tech_name in list(tech_map.keys()):
+            base, _ = _split_base_and_district(str(tech_name))
+            base_l = str(base).strip().lower()
+            if base_l == "heat_exchanger":
+                hx_keys.append(str(tech_name))
+            elif base_l == "heat_grid":
+                hg_keys.append(str(tech_name))
+
+        def _metrics_for(key: str) -> Dict[str, float]:
+            metrics = tech_map.get(key)
+            if metrics is None:
+                metrics = {}
+                tech_map[key] = metrics
+            if not isinstance(metrics, dict):
+                raise TypeError(f"region_technology_metrics[{rid}][{key}] must be a dict")
+            return metrics
+
+        hx_output = 0.0
+        hx_capacity = 0.0
+        for hx_key in hx_keys:
+            hx_metrics = _metrics_for(hx_key)
+            hx_output += max(0.0, float(hx_metrics.get("initial_energy_output", 0.0) or 0.0))
+            hx_capacity += max(0.0, float(hx_metrics.get("initial_capacity", 0.0) or 0.0))
+
+        has_historical_fernwaerme = bool(hx_output > 0.0)
+
+        if not has_historical_fernwaerme:
+            for tech_key in list(dict.fromkeys(hx_keys + hg_keys)):
+                metrics = _metrics_for(tech_key)
+                metrics["initial_energy_output"] = 0.0
+                metrics["initial_capacity"] = 0.0
+        else:
+            historical_exchanger_targets_mwh[rid] = hx_output
+            if hx_capacity <= 0.0:
+                hx_capacity = max(hx_output / 8760.0, 0.0)
+
+            if not hg_keys and hx_keys:
+                _, district = _split_base_and_district(hx_keys[0])
+                inferred_hg_key = "heat_grid" if district is None else f"heat_grid_D{district}"
+                tech_map[inferred_hg_key] = {
+                    "initial_energy_output": 0.0,
+                    "initial_capacity": 0.0,
+                }
+                hg_keys = [inferred_hg_key]
+
+            for hg_key in hg_keys:
+                hg_metrics = _metrics_for(hg_key)
+                if float(hg_metrics.get("initial_energy_output", 0.0) or 0.0) <= 0.0:
+                    hg_metrics["initial_energy_output"] = float(hx_output)
+                if float(hg_metrics.get("initial_capacity", 0.0) or 0.0) <= 0.0 and hx_capacity > 0.0:
+                    hg_metrics["initial_capacity"] = float(hx_capacity)
+
+    optimization_context.region_technology_metrics = region_metrics
+    optimization_context.historical_exchanger_targets_mwh = historical_exchanger_targets_mwh
+    return historical_exchanger_targets_mwh
 
 
 def build_optimization_context(
@@ -219,7 +306,7 @@ def build_optimization_context(
     tss_idx, tss_w = four_times_indices()
     constraints = energy_system.constraints
 
-    return OptimizationContext(
+    ctx = OptimizationContext(
         years=scenario_years,
         regions=region_ids,
         commodity=commodity_out,
@@ -233,4 +320,6 @@ def build_optimization_context(
         region_technology_metrics=region_metrics,
     )
 
+    enforce_historical_fernwaerme_dependency(ctx)
+    return ctx
 

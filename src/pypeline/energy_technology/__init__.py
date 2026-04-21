@@ -2,7 +2,6 @@
 
 from .technology import (
     CENTRAL_TECH_PREFIX,
-    DHN_TECH_BASE_NAMES,
     INDIRECT_TECH_PREFIX,
     RegionTechnology,
     Technology,
@@ -53,7 +52,6 @@ __all__ = [
     "instantiate",
     "instantiate_all",
     "load_specs_from_package",
-    "DHN_TECH_BASE_NAMES",
     "INDIRECT_TECH_PREFIX",
     "CENTRAL_TECH_PREFIX",
     "extract_district_id_from_name",

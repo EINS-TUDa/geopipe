@@ -6,13 +6,29 @@ Use this file as the primary command-line entry point for running any case/examp
 from __future__ import annotations
 import argparse
 import curses
-import importlib
 import os
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 import matplotlib.pyplot as plt
+
+
+def _bootstrap_local_cesm_src() -> Path | None:
+    project_root = Path(__file__).resolve().parents[1]
+    for src_dir in (project_root / "CESM" / "src", project_root / "src"):
+        if not (src_dir / "cesm" / "core").exists():
+            continue
+        src_entry = str(src_dir)
+        if src_entry in sys.path:
+            sys.path.remove(src_entry)
+        sys.path.insert(0, src_entry)
+        return src_dir
+    return None
+
+
+_LOCAL_CESM_SRC = _bootstrap_local_cesm_src()
+
 from examples.example_registry import (ScenarioEntry, discover_scenarios, get_scenario_by_name, run_scenario)
 from examples.example_runner import ScenarioExecutionResult
 
@@ -40,10 +56,16 @@ def _plot_mix_results(
 
 
 def _show_cesm_sankey(project_root: Path, results: dict, years: list[int]) -> None:
-    plotter_module = importlib.import_module("cesm.core.plotter")
-    data_access_module = importlib.import_module("cesm.core.data_access")
-    plotter_cls = getattr(plotter_module, "Plotter")
-    dao_cls = getattr(data_access_module, "DAO")
+    if _LOCAL_CESM_SRC is None:
+        searched = [project_root / "CESM" / "src" / "cesm" / "core", project_root / "src" / "cesm" / "core"]
+        searched_paths = ", ".join(str(path) for path in searched)
+        raise ModuleNotFoundError(
+            "Unable to import CESM Sankey modules. "
+            f"Expected CESM sources under one of: {searched_paths}"
+        )
+
+    from cesm.core.plotter import Plotter
+    from cesm.core.data_access import DAO
 
     db_path = Path(results["db"])
     if not db_path.is_absolute():
@@ -52,8 +74,8 @@ def _show_cesm_sankey(project_root: Path, results: dict, years: list[int]) -> No
     print(f"Using DB: {db_path}")
     conn = sqlite3.connect(str(db_path))
     try:
-        dao = dao_cls(conn)
-        sankey_plotter = plotter_cls(dao)
+        dao = DAO(conn)
+        sankey_plotter = Plotter(dao)
         for year in years:
             sankey_fig = sankey_plotter.plot_sankey(year=year)
             sankey_fig.show()

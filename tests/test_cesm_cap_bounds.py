@@ -239,7 +239,7 @@ def obsolete_pipe_share_constraint_t(tmp_path):
 
 
 def exchanger_target_not_pipe_floor_t(tmp_path):
-    """Checks exchanger and pipe rows are emitted without min_eout floors."""
+    """Checks no pipe min floors and non-historical districts remain DHN-buildable."""
     workdir = tmp_path / "cesm_exchanger_target"
     _ensure_tss(workdir)
 
@@ -284,9 +284,79 @@ def exchanger_target_not_pipe_floor_t(tmp_path):
     assert _profile_peak(hx_row_d0.get("min_eout")) is None
     assert _profile_peak(hx_row_d1.get("min_eout")) is None
 
+    # D0 has historical Fernwaerme in mock data and remains available.
+    assert (_profile_peak(hx_row_d0.get("cap_max")) or 0.0) > 0.0
+
+    # D1 has central tech data but no historical Fernwaerme output.
+    # DHN assets must start at zero retained state, but remain buildable by CESM.
+    assert (_profile_peak(hx_row_d1.get("cap_max")) or 0.0) > 0.0
+    hg_row_d1 = df[df["conversion_process_name"] == "heat_grid_D1"].iloc[0]
+    assert (_profile_peak(hg_row_d1.get("cap_max")) or 0.0) > 0.0
+    hx_residual = _profile_peak(hx_row_d1.get("cap_res_min"))
+    hg_residual = _profile_peak(hg_row_d1.get("cap_res_min"))
+    assert hx_residual is None or hx_residual == pytest.approx(0.0)
+    assert hg_residual is None or hg_residual == pytest.approx(0.0)
+
+    # Central injections in no-Fernwaerme districts must not force retained
+    # heat output, otherwise they can backdoor DHN build in lockout years.
+    cen_d0 = df[df["conversion_process_name"] == "cen_heat_pump_D0"].iloc[0]
+    cen_d1 = df[df["conversion_process_name"] == "cen_heat_pump_D1"].iloc[0]
+    assert _profile_peak(cen_d0.get("min_eout")) is not None
+    assert _profile_peak(cen_d1.get("min_eout")) is None
+
+
+def fernwaerme_dependency_default_on_t(tmp_path):
+    """Checks non-historical districts keep zero DHN residuals but stay buildable."""
+    workdir = tmp_path / "cesm_fernwaerme_default_on"
+    _ensure_tss(workdir)
+
+    _write_cesm_inputs_from_optimization_context(
+        _mock_two_district_om(),
+        workdir=workdir,
+        model_name="FernwaermeDefaultOn",
+        scenario_name="Base",
+        tss_name="4ThinWeeks",
+        polygons_gdf=_two_polygons(),
+        inter_district_pipe_specs={
+            (0, 1): {"pipe_capex_base_eur": 10.0},
+            (1, 0): {"pipe_capex_base_eur": 10.0},
+        },
+        data_dir=REPO_ROOT / "data",
+        start_year=2020,
+        end_year=2025,
+        year_gap=5,
+        discount_rate=0.05,
+        lockout_years=0,
+        dt_hours=1,
+        elec_price_eur_per_mwh=120.0,
+        export_price_eur_per_mwh=0.0,
+        grid_prices={"electricity": 120.0, "export": 0.0},
+        supply_prices={"gas": 60.0},
+        selected_techs=_selected_techs_two_district(),
+        retain_existing_output_schedule=[1.0, 1.0],
+    )
+
+    xlsx_path = workdir / "Data" / "Techmap" / "FernwaermeDefaultOn.xlsx"
+    assert xlsx_path.exists()
+
+    df = pd.read_excel(xlsx_path, sheet_name="ConversionSubProcess")
+    assert not df.empty
+
+    # D1 has no historical Fernwaerme and therefore no retained DHN capacity,
+    # while investment options remain available.
+    hx_row_d1 = df[df["conversion_process_name"] == "HeatExchanger_D1"].iloc[0]
+    assert (_profile_peak(hx_row_d1.get("cap_max")) or 0.0) > 0.0
+    hx_residual = _profile_peak(hx_row_d1.get("cap_res_min"))
+    assert hx_residual is None or hx_residual == pytest.approx(0.0)
+
+    hg_row_d1 = df[df["conversion_process_name"] == "heat_grid_D1"].iloc[0]
+    assert (_profile_peak(hg_row_d1.get("cap_max")) or 0.0) > 0.0
+    hg_residual = _profile_peak(hg_row_d1.get("cap_res_min"))
+    assert hg_residual is None or hg_residual == pytest.approx(0.0)
+
 
 def free_pipe_rows_removed_t(tmp_path):
-    """Checks free pipes are represented without Pipe rows and with pooled district heat commodities."""
+    """Checks free links use explicit zero-cost Pipe rows with local DHN path semantics."""
     workdir = tmp_path / "cesm_free_pipe_rows_removed"
     _ensure_tss(workdir)
 
@@ -323,16 +393,43 @@ def free_pipe_rows_removed_t(tmp_path):
     assert not df.empty
 
     pipe_rows = df[df["conversion_process_name"].astype(str).str.startswith("Pipe_D")]
-    assert pipe_rows.empty
+    assert not pipe_rows.empty
+
+    pipe_d1_d0 = df[df["conversion_process_name"] == "Pipe_D1_D0"].iloc[0]
+    pipe_d0_d1 = df[df["conversion_process_name"] == "Pipe_D0_D1"].iloc[0]
+    assert str(pipe_d1_d0.get("commodity_in")) == "district_heat_out_D0"
+    assert str(pipe_d1_d0.get("commodity_out")) == "district_heat_in_D1"
+    assert float(pipe_d1_d0.get("capex_cost_power") or 0.0) == pytest.approx(0.0)
+    assert float(pipe_d1_d0.get("opex_cost_energy") or 0.0) == pytest.approx(0.0)
+    pipe_cap_peak = _profile_peak(pipe_d1_d0.get("cap_max")) or 0.0
+    assert pipe_cap_peak > 0.0
+    assert (_profile_peak(pipe_d1_d0.get("cap_res_min")) or 0.0) == pytest.approx(pipe_cap_peak)
+    assert (_profile_peak(pipe_d1_d0.get("cap_res_max")) or 0.0) == pytest.approx(pipe_cap_peak)
+    assert _profile_peak(pipe_d1_d0.get("capex_cost_base")) is None
+
+    assert str(pipe_d0_d1.get("commodity_in")) == "district_heat_out_D1"
+    assert str(pipe_d0_d1.get("commodity_out")) == "district_heat_in_D0"
+    assert float(pipe_d0_d1.get("capex_cost_power") or 0.0) == pytest.approx(0.0)
+    assert float(pipe_d0_d1.get("opex_cost_energy") or 0.0) == pytest.approx(0.0)
+    pipe_cap_peak_rev = _profile_peak(pipe_d0_d1.get("cap_max")) or 0.0
+    assert pipe_cap_peak_rev > 0.0
+    assert (_profile_peak(pipe_d0_d1.get("cap_res_min")) or 0.0) == pytest.approx(pipe_cap_peak_rev)
+    assert (_profile_peak(pipe_d0_d1.get("cap_res_max")) or 0.0) == pytest.approx(pipe_cap_peak_rev)
+    assert _profile_peak(pipe_d0_d1.get("capex_cost_base")) is None
 
     cen_d0 = df[df["conversion_process_name"] == "cen_heat_pump_D0"].iloc[0]
     cen_d1 = df[df["conversion_process_name"] == "cen_heat_pump_D1"].iloc[0]
-    assert str(cen_d0.get("commodity_out")) == str(cen_d1.get("commodity_out"))
-    assert str(cen_d0.get("commodity_out")).startswith("district_heat_in_free_D")
+    assert str(cen_d0.get("commodity_out")) == "district_heat_in_D0"
+    assert str(cen_d1.get("commodity_out")) == "district_heat_in_D1"
 
     hg_d0 = df[df["conversion_process_name"] == "heat_grid_D0"].iloc[0]
     hg_d1 = df[df["conversion_process_name"] == "heat_grid_D1"].iloc[0]
     assert str(hg_d0.get("commodity_in")) == str(cen_d0.get("commodity_out"))
-    assert str(hg_d1.get("commodity_in")) == str(cen_d0.get("commodity_out"))
-    assert str(hg_d0.get("commodity_out")) == str(hg_d1.get("commodity_out"))
-    assert str(hg_d0.get("commodity_out")).startswith("district_heat_out_free_D")
+    assert str(hg_d1.get("commodity_in")) == str(cen_d1.get("commodity_out"))
+    assert str(hg_d0.get("commodity_out")) == "district_heat_out_D0"
+    assert str(hg_d1.get("commodity_out")) == "district_heat_out_D1"
+
+    hx_d0 = df[df["conversion_process_name"] == "HeatExchanger_D0"].iloc[0]
+    hx_d1 = df[df["conversion_process_name"] == "HeatExchanger_D1"].iloc[0]
+    assert str(hx_d0.get("commodity_in")) == str(hg_d0.get("commodity_out"))
+    assert str(hx_d1.get("commodity_in")) == str(hg_d1.get("commodity_out"))

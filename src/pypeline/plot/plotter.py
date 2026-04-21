@@ -17,7 +17,7 @@ import pandas as pd
 from shapely import voronoi_polygons
 from shapely.geometry import MultiPoint, Point
 from pypeline.energy_system.core import EnergySystem
-from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME, HEAT_EXCHANGER_NAMES
+from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME
 
 
 class PlotDefaults:
@@ -888,7 +888,7 @@ class EnergySystemPlotter:
 
     def _is_heat_exchanger_tech(self, tech_name: str) -> bool:
         base = self._base_tech_name(tech_name).lower()
-        return base in set(HEAT_EXCHANGER_NAMES) or base.startswith("heatexchanger")
+        return base == "heat_exchanger" or base.startswith("heatexchanger")
 
     def _is_visual_supply_tech(self, tech: Any, demand_commodity_in: str | None) -> bool:
         tech_name = str(getattr(tech, "name", "") or "")

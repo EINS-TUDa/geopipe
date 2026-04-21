@@ -32,7 +32,6 @@ import numpy as np
 import pandas as pd
 
 from pypeline.energy_system.core import EnergySystem, Scenario
-from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
 from pypeline.optimization.cesm.io_utils import (
     _canon_co,
     _convsubproc_dataframe,
@@ -47,16 +46,16 @@ from pypeline.optimization.cesm.io_utils import (
     _scenario_df,
     _tss_df,
 )
-from pypeline.energy_technology.technology import (Technology,split_base_and_district as _split_base_and_district)
-from pypeline.energy_technology.technology_registry import TechnologyRegistry, get_default_technology_registry
-from pypeline.optimization.cesm.conversion_rows import (
-    UNBOUNDED_CAP,
-    UNBOUNDED_ENERGY,
-    _ConversionRowsBuilder,
+from pypeline.energy_technology.technology import (
+    Technology,
+    split_base_and_district as _split_base_and_district,
 )
+from pypeline.energy_technology.technology_registry import TechnologyRegistry, get_default_technology_registry
+from pypeline.optimization.cesm.conversion_rows import (_ConversionRowsBuilder)
 from pypeline.optimization.optimization_context import (
     OptimizationContext,
     build_optimization_context,
+    enforce_historical_fernwaerme_dependency,
 )
 from pypeline.validation import (
     ensure_tss_indices,
@@ -66,7 +65,6 @@ from pypeline.validation import (
 )
 
 logger = logging.getLogger(__name__)
-
 PathLike = Union[str, Path]
 
 
@@ -95,7 +93,6 @@ def _log_techmap_stats(*, commodity_count: int, convproc_count: int, convsubproc
         convproc_count,
         convsubproc_rows,
     )
-
 
 def _write_cesm_inputs_from_optimization_context(
         optimization_context: OptimizationContext,
@@ -211,7 +208,6 @@ def _write_cesm_inputs_from_optimization_context(
             pipe_pairs = sorted(
                 (int(i), int(j))
                 for (i, j) in inter_district_pipe_specs.keys()
-                if (int(i), int(j)) not in free_pipe_pairs
             )
 
     district_index = {d: idx for idx, d in enumerate(districts)}
@@ -225,42 +221,6 @@ def _write_cesm_inputs_from_optimization_context(
     district_heat_in_names = {d: f"district_heat_in_D{d}" for d in districts}
     district_heat_out_names = {d: f"district_heat_out_D{d}" for d in districts}
 
-    if free_pipe_pairs:
-        adjacency: dict[int, set[int]] = {int(d): set() for d in districts}
-        for i, j in free_pipe_pairs:
-            i_int = int(i)
-            j_int = int(j)
-            if i_int not in adjacency or j_int not in adjacency:
-                continue
-            adjacency[i_int].add(j_int)
-            adjacency[j_int].add(i_int)
-
-        visited: set[int] = set()
-        for district in districts:
-            district_i = int(district)
-            if district_i in visited:
-                continue
-            stack = [district_i]
-            component: list[int] = []
-            while stack:
-                node = stack.pop()
-                if node in visited:
-                    continue
-                visited.add(node)
-                component.append(node)
-                for nbr in adjacency.get(node, set()):
-                    if nbr not in visited:
-                        stack.append(nbr)
-
-            if len(component) <= 1:
-                continue
-
-            rep = min(component)
-            pooled_heat_in = f"district_heat_in_free_D{rep}"
-            pooled_heat_out = f"district_heat_out_free_D{rep}"
-            for member in component:
-                district_heat_in_names[member] = pooled_heat_in
-                district_heat_out_names[member] = pooled_heat_out
 
     def _annual_demands_from_om() -> List[float]:
         if not om_regions:
@@ -358,6 +318,14 @@ def _write_cesm_inputs_from_optimization_context(
         pipe_opex_value = _require_value(pipe_opex_eur_per_mwh, spec_opex, "pipe_opex_eur_per_mwh")
         pipe_lifetime_value = int(_require_value(pipe_lifetime_years, spec_lifetime, "pipe_lifetime_years"))
         pipe_cap_max_value = float(_require_value(pipe_cap_max_mw, spec_cap_max, "pipe_cap_max_mw"))
+
+    historical_exchanger_targets_mwh = optimization_context.historical_exchanger_targets_mwh
+    if historical_exchanger_targets_mwh is None:
+        historical_exchanger_targets_mwh = enforce_historical_fernwaerme_dependency(
+            optimization_context,
+            end_year=end_year_int,
+            year_gap=year_step_int,
+        )
 
     constraints_raw = optimization_context.constraints or {}
     if constraints_raw and not isinstance(constraints_raw, dict):
@@ -474,27 +442,7 @@ def _write_cesm_inputs_from_optimization_context(
             agg["initial_energy_output"] += float(metrics["initial_energy_output"] or 0.0)
             agg["initial_capacity"] += float(metrics["initial_capacity"] or 0.0)
 
-    primary_heat_exchanger = HEAT_EXCHANGER_NAMES[0]
-    historical_exchanger_targets_mwh: dict[int, float] = {}
-    for district, rid in district_to_region.items():
-        district_metrics = region_metrics.get(rid)
-        if district_metrics is None:
-            continue
-        if not isinstance(district_metrics, dict):
-            raise TypeError(f"region_technology_metrics[{rid}] must be a dict")
-        hx_key = f"{primary_heat_exchanger}_D{district}"
-        hx_metrics = district_metrics.get(hx_key)
-        if hx_metrics is None:
-            continue
-        if not isinstance(hx_metrics, dict):
-            raise TypeError(f"region_technology_metrics[{rid}][{hx_key}] must be a dict")
-        hx_output = float(hx_metrics.get("initial_energy_output", 0.0) or 0.0)
-        if hx_output <= 0.0:
-            continue
-        historical_exchanger_targets_mwh[rid] = max(
-            historical_exchanger_targets_mwh.get(rid, 0.0),
-            hx_output,
-        )
+    primary_heat_exchanger = "heat_exchanger"
 
     if retain_existing_output_factor is None:
         retain_factor: float | None = None
@@ -620,8 +568,6 @@ def _write_cesm_inputs_from_optimization_context(
                 "scenario": scenario_name,
                 "efficiency": 1.0,
                 "technical_availability": 1.0,
-                "max_eout": UNBOUNDED_ENERGY,
-                "cap_max": UNBOUNDED_CAP,
                 "opex_cost_energy": price,
             }
         )
@@ -643,8 +589,7 @@ def _write_cesm_inputs_from_optimization_context(
             "scenario": scenario_name,
             "efficiency": 1.0,
             "technical_availability": 1.0,
-            "max_eout": UNBOUNDED_ENERGY,
-            "cap_max": UNBOUNDED_CAP,
+            "cap_max": None,
             "opex_cost_energy": float(export_price_eur_per_mwh),
         }
     )
@@ -682,7 +627,9 @@ def _write_cesm_inputs_from_optimization_context(
         src_comm = district_heat_out_names.get(districts[src_idx], f"district_heat_out_D{districts[src_idx]}")
         dst_comm = district_heat_in_names.get(districts[dst_idx], f"district_heat_in_D{districts[dst_idx]}")
         pair_specs = pipe_specs_by_pair.get((int(i), int(j)), {})
-        pipe_capex_base = float(pair_specs.get("pipe_capex_base_eur", 0.0) or 0.0)
+        is_free_pair = bool((pair_specs or {}).get("is_free", False))
+        pipe_capex_base = None if is_free_pair else float(pair_specs.get("pipe_capex_base_eur", 0.0) or 0.0)
+        fixed_free_pipe_capacity = float(pipe_cap_max_value) if is_free_pair else None
         row = {
             "conversion_process_name": f"Pipe_D{i}_D{j}",
             "commodity_in": src_comm,
@@ -692,9 +639,10 @@ def _write_cesm_inputs_from_optimization_context(
             "technical_availability": 1.0,
             "technical_lifetime": int(pipe_lifetime_value),
             "cap_max": float(pipe_cap_max_value),
-            "max_eout": UNBOUNDED_ENERGY,
-            "opex_cost_energy": float(pipe_opex_value),
-            "capex_cost_power": float(pipe_capex_value),
+            "cap_res_min": fixed_free_pipe_capacity,
+            "cap_res_max": fixed_free_pipe_capacity,
+            "opex_cost_energy": 0.0 if is_free_pair else float(pipe_opex_value),
+            "capex_cost_power": 0.0 if is_free_pair else float(pipe_capex_value),
             "capex_cost_base": pipe_capex_base,
         }
         cs_rows.append(row)
@@ -813,7 +761,9 @@ def _write_cesm_inputs_from_optimization_context(
                 base_value = _value_for_year(profile_map, scalar, year_i)
                 if base_value is None:
                     if column == "cap_max":
-                        pairs.append((year_i, float(UNBOUNDED_CAP)))
+                        # Keep post-activation rows effectively unbounded when cap_max is unspecified.
+                        # No NaN here: CESM profile interpolation drops NaN and  backfills zero values into later years.
+                        pairs.append((year_i, 100000000.0))
                     continue
                 pairs.append((year_i, float(base_value)))
 

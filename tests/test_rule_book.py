@@ -1,7 +1,10 @@
 import pandas as pd
 import pytest
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand
-from pypeline.energy_system.rule_book import ( MinimumHeatGridOutputRule, MinimumHeatGridConstraintRule,)
+from pypeline.energy_system.rule_book import (
+    MinimumHeatGridConstraintRule,
+    MinimumHeatGridOutputRule,
+)
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 
 
@@ -117,6 +120,22 @@ def min_grid_supply_t():
     heat_grid_after = next(rt for rt in updated.region_technologies if rt.technology.name == "heat_grid")
     assert heat_grid_after.initial_energy_output == pytest.approx(5.0)
     assert heat_grid_after.initial_capacity == pytest.approx(5.0)
+
+
+def min_grid_no_historical_uplift_t():
+    """Checks minimum heat-grid rule does not create output when historical heat-grid output is zero."""
+    region = _build_region(heat_output=0.0, other_output=100.0)
+
+    rule = MinimumHeatGridOutputRule(min_share=0.1, heat_grid_names=("heat_grid",))
+    updated = rule.apply(region)
+
+    heat_grid = next(rt for rt in updated.region_technologies if rt.technology.name == "heat_grid")
+    gas = next(rt for rt in updated.region_technologies if rt.technology.name == "ind_gas_boiler")
+
+    assert heat_grid.initial_energy_output == pytest.approx(0.0)
+    assert heat_grid.initial_capacity == pytest.approx(0.0)
+    assert gas.initial_energy_output == pytest.approx(100.0)
+    assert gas.initial_capacity == pytest.approx(100.0)
 
 
 def grid_targets_t():

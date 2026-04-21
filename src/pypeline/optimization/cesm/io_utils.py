@@ -148,7 +148,11 @@ def _format_year_profile(pairs: list[tuple[int, float]]) -> str | None:
     for year, value in pairs:
         year_i = int(year)
         value_f = float(value)
-        segments.append(f"{year_i} {value_f:.10g}")
+        if math.isnan(value_f):
+            val_s = "NaN"
+        else:
+            val_s = f"{value_f:.10g}"
+        segments.append(f"{year_i} {val_s}")
     return "[" + " ; ".join(segments) + "]"
 
 

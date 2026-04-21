@@ -8,14 +8,9 @@ import math
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from pypeline.data.dataset import CensusTechnology
 from pypeline.data.data_registry import DataRegistry
-from pypeline.energy_technology.technology import (
-    DHN_TECH_BASE_NAMES,
-    Technology,
-    is_central_heat_supply as _is_central_heat_supply,
-)
+from pypeline.energy_technology.technology import (Technology, is_central_heat_supply)
 
-HEAT_EXCHANGER_NAMES: tuple[str, ...] = DHN_TECH_BASE_NAMES[:2]
-PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
+DHN_TECH_NAMES: tuple[str, ...] = ("heat_exchanger", "heat_grid")
 DEFAULT_HEAT_GRID_DEMAND_NAME: str = "residential_heat"
 DEFAULT_HEAT_GRID_COST_DATASET: str = "residential_heat_technology_shares"
 HOURS_PER_YEAR: float = 8760.0
@@ -118,7 +113,7 @@ class MinimumDHNThroughputRule(EnergySystemRule):
         self.dhn_tech_names = (
             tuple(dhn_tech_names)
             if dhn_tech_names
-            else HEAT_EXCHANGER_NAMES + ("heat_grid",)
+            else DHN_TECH_NAMES
         )
 
     def apply(self, energy_system):
@@ -226,7 +221,7 @@ class MinimumCentralCapacityRule(EnergySystemRule):
                 if tech is None:
                     continue
                 tech_name = tech.name
-                if not _is_central_heat_supply(tech_name):
+                if not is_central_heat_supply(tech_name):
                     continue
 
                 cap_max_val = getattr(tech, "cap_max", None)
@@ -279,7 +274,7 @@ class MinimumHeatGridOutputRule(RegionRule):
         self.demand_name = demand_name
         self.min_output_mwh = float(min_output_mwh)
         self.min_share = None if min_share is None else float(min_share)
-        self.heat_grid_names = heat_grid_names or HEAT_EXCHANGER_NAMES
+        self.heat_grid_names = heat_grid_names or ("heat_exchanger",)
 
     def apply(self, region):
         technologies = region.region_technologies or []
@@ -314,6 +309,9 @@ class MinimumHeatGridOutputRule(RegionRule):
             return region
 
         current_heat_grid_output = sum(float(rt.initial_energy_output or 0.0) for rt in heat_grid_techs)
+
+        if current_heat_grid_output <= 0.0:
+            return region
 
         min_share = max(0.0, self.min_share) if self.min_share is not None else None
         min_output = max(self.min_output_mwh, (min_share or 0.0) * total_output)
@@ -398,7 +396,7 @@ class MinimumHeatGridConstraintRule(EnergySystemRule):
         self.min_output_mwh = float(min_output_mwh)
         self.min_share = None if min_share is None else float(min_share)
         self.min_mwh_by_region = min_mwh_by_region or {}
-        self.heat_grid_names = heat_grid_names or HEAT_EXCHANGER_NAMES
+        self.heat_grid_names = heat_grid_names or ("heat_exchanger",)
 
     def apply(self, energy_system):
         regions = energy_system.regions or []
@@ -532,7 +530,7 @@ class HeatExchangerCostAdjustmentRule(RegionRule):
         self,
     data_registry: DataRegistry | None,
     dataset_type: str = DEFAULT_HEAT_GRID_COST_DATASET,
-    heat_exchanger_names: tuple[str, ...] = HEAT_EXCHANGER_NAMES,
+    heat_exchanger_names: tuple[str, ...] = ("heat_exchanger",),
         decentralized_keys: tuple[str, ...] | None = None,
         cost_attribute: str = "capex_cost_power",
         scale_factor: float = 1.0,

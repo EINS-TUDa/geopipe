@@ -37,8 +37,6 @@ heat_exchanger:
   opex_cost_energy: 0
   opex_cost_power: 1000
   capex_cost_power: 193000
-  cap_min: 0.01
-  cap_max: 100000000.0
 
 ################################
 # central heating technologies
@@ -87,20 +85,19 @@ cen_biomass_woodpellets:
 heat_grid:
   efficiency: 0.86
   technical_lifetime: 40.0
-  cap_min: 1000000.0
-  cap_max: 1000000.0
+  cap_max: .nan
   max_units: 1
 
 grid_electricity:
   commodity_out: electricity
   commodity_in: dummy
-  cap_max: 1000000000
+  cap_max: .nan
   max_units: 1
 
 grid_hydrogen:
   commodity_out: hydrogen
   commodity_in: dummy
-  cap_max: 1000000000
+  cap_max: .nan
   max_units: 1
 
 
@@ -114,5 +111,4 @@ heat_pipe:
   opex_cost_power: 0.0
   opex_cost_energy: 1.44
   pipe_capex_eur_per_km: 1000000.0 # €/km
-  cap_min: 100000.0
   cap_max: 100000.0
