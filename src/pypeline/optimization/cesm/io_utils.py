@@ -239,11 +239,11 @@ def resolve_retain_schedule(
     if scenario is None:
         return None
 
-    scen_schedule = getattr(scenario, "retain_existing_output_schedule", None)
+    scen_schedule = scenario.retain_existing_output_schedule
     if scen_schedule:
         return scen_schedule
 
-    drop_val_raw = getattr(scenario, "retain_existing_output_drop_per_year", None)
+    drop_val_raw = scenario.retain_existing_output_drop_per_year
     if drop_val_raw is None:
         return None
     try:

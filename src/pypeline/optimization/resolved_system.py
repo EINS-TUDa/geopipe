@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
+
 if TYPE_CHECKING:
     from pypeline.energy_system.core import EnergySystem, Scenario
     from pypeline.energy_technology.technology import Technology
@@ -66,7 +68,6 @@ def resolve_system(
     retain_existing_output_schedule: list[float] | None = None,
 ) -> ResolvedSystem:
     """Build a ``ResolvedSystem`` from an ``EnergySystem`` and a ``Scenario``."""
-    from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
 
     scenario_years = scenario.years
     discount_rate = float(scenario.discount_rate)

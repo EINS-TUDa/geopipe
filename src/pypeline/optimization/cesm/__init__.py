@@ -25,11 +25,9 @@ cli.py
     :class:`CESMOptimizationBackend`.
 """
 from pypeline.optimization.cesm.backend import CESMOptimizationBackend
-from pypeline.optimization.cesm.input_writer import write_cesm_inputs_from_energy_system
 from pypeline.optimization.cesm.result_parser import CESMResults
 
 __all__ = [
     "CESMOptimizationBackend",
-    "write_cesm_inputs_from_energy_system",
     "CESMResults",
 ]

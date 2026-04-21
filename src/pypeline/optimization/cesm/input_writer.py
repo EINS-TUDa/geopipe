@@ -705,38 +705,3 @@ def _write_cesm_inputs(
         convproc_count=len(conv_procs),
         convsubproc_rows=len(convsubproc_df),
     )
-
-
-def write_cesm_inputs_from_energy_system(
-        energy_system: EnergySystem,
-        scenario: Scenario,
-        *,
-        techmap_dir: PathLike,
-        timeseries_dir: PathLike,
-        model_name: str,
-        scenario_name: str,
-        tss_name: str,
-        technology_registry: TechnologyRegistry | None = None,
-        retain_existing_output_factor: float | None = None,
-        retain_existing_output_years_factor: float | None = None,
-        retain_existing_output_schedule: Optional[List[float]] = None,
-        **kwargs: Any,
-) -> None:
-    """Generate CESM inputs from an EnergySystem."""
-    resolved = resolve_system(
-        energy_system,
-        scenario,
-        retain_existing_output_schedule=retain_existing_output_schedule,
-    )
-    _write_cesm_inputs(
-        resolved,
-        techmap_dir=techmap_dir,
-        timeseries_dir=timeseries_dir,
-        model_name=model_name,
-        scenario_name=scenario_name,
-        tss_name=tss_name,
-        technology_registry=technology_registry,
-        retain_existing_output_factor=retain_existing_output_factor,
-        retain_existing_output_years_factor=retain_existing_output_years_factor,
-        **kwargs,
-    )
