@@ -25,7 +25,7 @@ class EnergySystem:
     commodity_config: dict[str, Any] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
-    inter_district_pipe_specs: dict[tuple[int, int], dict[str, float]] | None = None
+    inter_district_pipe_specs: dict[tuple[int, int], dict[str, Any]] | None = None
 
 
 @dataclass

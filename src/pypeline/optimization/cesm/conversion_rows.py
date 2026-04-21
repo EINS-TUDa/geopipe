@@ -36,7 +36,7 @@ _require_positive_int = require_positive_int
 
 UNBOUNDED_CAP = 1e9
 UNBOUNDED_ENERGY = 1e12
-HEAT_EXCHANGER_BASE_NAMES: tuple[str, ...] = HEAT_EXCHANGER_NAMES
+PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
 
 
 class _ConversionRowsBuilder:
@@ -56,6 +56,7 @@ class _ConversionRowsBuilder:
         min_central_cap_targets: dict[str, float],
         min_central_cap_totals: dict[int, float],
         min_central_cap_totals_by_co: dict[str, dict[int, float]],
+        exchanger_throughput_targets: dict[int, float],
         district_to_region: dict[int, int],
         region_metrics: dict[str, Any],
         total_metrics: dict[str, dict[str, float]],
@@ -79,6 +80,7 @@ class _ConversionRowsBuilder:
         self.min_central_cap_targets = min_central_cap_targets
         self.min_central_cap_totals = min_central_cap_totals
         self.min_central_cap_totals_by_co = min_central_cap_totals_by_co
+        self.exchanger_throughput_targets = exchanger_throughput_targets
         self.district_to_region = district_to_region
         self.region_metrics = region_metrics
         self.total_metrics = total_metrics
@@ -95,8 +97,7 @@ class _ConversionRowsBuilder:
             "ind_heat_pump": self._rows_residential,
             "ind_gas_boiler": self._rows_residential,
             "ind_oil_boiler": self._rows_residential,
-            "heat_exchanger": self._rows_heat_exchanger,
-            "ind_district_heating_connection": self._rows_heat_exchanger,
+            PRIMARY_HEAT_EXCHANGER: self._rows_heat_exchanger,
             "heat_grid": self._rows_default,
             "cen_heat_pump": self._rows_central_heat_supply,
             "cen_gas_boiler": self._rows_central_heat_supply,
@@ -249,9 +250,7 @@ class _ConversionRowsBuilder:
                 raise ValueError(f"District {district} is not present in district_index for heat exchanger {tech.name}")
             overrides = self._min_eout_override(tech, district)
             heat_comm = self._heat_comm_for_district(district)
-            cin = tech.commodity_in
-            if target_district is not None:
-                cin = self.district_heat_out_names.get(district, tech.commodity_in)
+            cin = self.district_heat_out_names.get(district, tech.commodity_in)
             cp_name = "HeatExchanger" if len(self.districts) == 1 else f"HeatExchanger_D{district}"
             rows.append(
                 self._build_cs_row(
@@ -279,9 +278,7 @@ class _ConversionRowsBuilder:
             target_districts = list(self.districts)
 
         for district in target_districts:
-            cout = tech.commodity_out
-            if cout is None or "_D" not in str(cout):
-                cout = self.district_heat_in_names.get(district, cout or "")
+            cout = self.district_heat_in_names.get(district, tech.commodity_out or "")
             cp_name = tech.name if tech_district is not None or len(self.districts) == 1 else f"{tech.name}_D{district}"
             rows.append(
                 self._build_cs_row(
@@ -304,6 +301,12 @@ class _ConversionRowsBuilder:
             elif len(self.districts) == 1:
                 target_district = self.districts[0]
 
+        cin = tech.commodity_in
+        cout = tech.commodity_out
+        if base_name == "heat_grid" and target_district is not None:
+            cin = self.district_heat_in_names.get(target_district, cin)
+            cout = self.district_heat_out_names.get(target_district, cout)
+
         overrides = self._min_eout_override(tech, target_district)
         if base_name == "heat_grid" and target_district is not None:
             local_capex_base = self.local_dhn_capex_base_by_district.get(target_district)
@@ -313,8 +316,8 @@ class _ConversionRowsBuilder:
         return [
             self._build_cs_row(
                 cp_name=f"{tech.name}",
-                cin=tech.commodity_in,
-                cout=tech.commodity_out,
+                cin=cin,
+                cout=cout,
                 tech=tech,
                 overrides=overrides,
                 district=target_district,
@@ -527,7 +530,7 @@ class _ConversionRowsBuilder:
             base_name, _ = _split_base_and_district(tech.name)
             is_indirect = base_name.startswith("ind_")
             is_central = _is_central_heat_supply(tech.name)
-            is_dhn_pass_through = base_name == "heat_grid" or base_name in HEAT_EXCHANGER_BASE_NAMES
+            is_dhn_pass_through = base_name == "heat_grid" or base_name == PRIMARY_HEAT_EXCHANGER
 
             if is_central and output > 0.0 and cap <= 0.0:
                 raise ValueError(f"Invalid central retention metrics for {tech.name}: initial_energy_output requires positive initial_capacity")
@@ -603,25 +606,8 @@ class _ConversionRowsBuilder:
         return merged
 
     def _min_eout_override(self, tech: Technology, district: Optional[int] = None) -> Optional[dict[str, Any]]:
-        base_name, tech_district = _split_base_and_district(tech.name)
-        if district is None and tech_district is not None:
-            district = tech_district
-        if (base_name in HEAT_EXCHANGER_BASE_NAMES or base_name == "heat_grid") and district is not None:
-            rid = self.district_to_region.get(district, district)
-            target = max(
-                self.min_dhn_targets.get(rid, 0.0),
-                self.min_heat_grid_targets.get(rid, 0.0),
-            )
-            if target and target > 0:
-                if self.scenario_years and self.lockout_until_year is not None and base_name != "heat_grid":
-                    pairs = [
-                        (year, 0.0 if year < self.lockout_until_year else float(target))
-                        for year in self.scenario_years
-                    ]
-                    prof = self._format_profile(pairs)
-                    if prof:
-                        return {"min_eout": prof}
-                return {"min_eout": float(target)}
+        _ = tech
+        _ = district
         return None
 
     # Profile utilities ------------------------------------------------------

@@ -26,12 +26,14 @@ def _builder_with_targets(
     district: int,
     min_dhn_target: float = 0.0,
     min_heat_grid_target: float = 0.0,
+    exchanger_target: float = 0.0,
     min_central_total: float = 0.0,
     lockout_years: int = 0,
 ) -> _ConversionRowsBuilder:
     min_central_totals = {district: min_central_total} if min_central_total > 0 else {}
     min_dhn_targets = {district: min_dhn_target} if min_dhn_target > 0 else {}
     min_heat_grid_targets = {district: min_heat_grid_target} if min_heat_grid_target > 0 else {}
+    exchanger_targets = {district: exchanger_target} if exchanger_target > 0 else {}
 
     return _ConversionRowsBuilder(
         scenario_name="Base",
@@ -47,6 +49,7 @@ def _builder_with_targets(
         min_central_cap_targets={},
         min_central_cap_totals=min_central_totals,
         min_central_cap_totals_by_co={},
+        exchanger_throughput_targets=exchanger_targets,
         district_to_region={district: district},
         region_metrics={},
         total_metrics={},
@@ -60,7 +63,7 @@ def _builder_with_targets(
 
 @pytest.mark.parametrize("district", [0, 6])
 def min_dhn_target_t(district: int) -> None:
-    """Checks minimum DHN target is applied to both grid and exchanger throughput rows."""
+    """Checks min_dhn target does not force any conversion-row min_eout."""
     builder = _builder_with_targets(district=district, min_dhn_target=120.0)
 
     heat_grid = Technology(
@@ -81,13 +84,13 @@ def min_dhn_target_t(district: int) -> None:
     heat_grid_row = builder.rows_for_technology(heat_grid)[0]
     heat_exchanger_row = builder.rows_for_technology(heat_exchanger)[0]
 
-    assert "120" in str(heat_grid_row.get("min_eout", ""))
-    assert "120" in str(heat_exchanger_row.get("min_eout", ""))
+    assert heat_grid_row.get("min_eout") is None
+    assert heat_exchanger_row.get("min_eout") is None
 
 
 @pytest.mark.parametrize("district", [0, 6])
 def min_grid_target_t(district: int) -> None:
-    """Checks minimum heat-grid target is applied to both DHN pass-through rows."""
+    """Checks min_heat_grid target does not force any conversion-row min_eout."""
     builder = _builder_with_targets(district=district, min_heat_grid_target=80.0)
 
     heat_grid = Technology(
@@ -108,8 +111,40 @@ def min_grid_target_t(district: int) -> None:
     heat_grid_row = builder.rows_for_technology(heat_grid)[0]
     heat_exchanger_row = builder.rows_for_technology(heat_exchanger)[0]
 
-    assert "80" in str(heat_grid_row.get("min_eout", ""))
-    assert "80" in str(heat_exchanger_row.get("min_eout", ""))
+    assert heat_grid_row.get("min_eout") is None
+    assert heat_exchanger_row.get("min_eout") is None
+
+
+@pytest.mark.parametrize("district", [0, 6])
+def exchanger_target_floor_t(district: int) -> None:
+    """Checks historical exchanger targets do not force conversion-row min_eout."""
+    builder = _builder_with_targets(
+        district=district,
+        min_dhn_target=120.0,
+        min_heat_grid_target=150.0,
+        exchanger_target=220.0,
+    )
+
+    heat_grid = Technology(
+        f"heat_grid_D{district}",
+        f"district_heat_in_D{district}",
+        f"district_heat_out_D{district}",
+        cap_max=1000.0,
+        max_units=10,
+    )
+    heat_exchanger = Technology(
+        f"heat_exchanger_D{district}",
+        f"district_heat_out_D{district}",
+        f"residential_heat_D{district}",
+        cap_max=1000.0,
+        max_units=10,
+    )
+
+    heat_grid_row = builder.rows_for_technology(heat_grid)[0]
+    heat_exchanger_row = builder.rows_for_technology(heat_exchanger)[0]
+
+    assert heat_grid_row.get("min_eout") is None
+    assert heat_exchanger_row.get("min_eout") is None
 
 
 @pytest.mark.parametrize("district", [0, 6])
