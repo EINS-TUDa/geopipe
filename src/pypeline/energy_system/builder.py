@@ -45,7 +45,9 @@ class EnergySystemBuilder:
         self.unit: Unit = UnitEnum.GW.unit
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
-        self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
+        default_grid, default_supply = self._load_default_prices()
+        self.grid_prices: dict[str, float] = default_grid
+        self.supply_prices: dict[str, float] = default_supply
         self.pipe_technology_name: str = "heat_pipe"
         self._dhn_central_seed_cache: dict[int, str] = {}
 
@@ -134,7 +136,7 @@ class EnergySystemBuilder:
             ),
         ]
 
-    def _load_default_commodity_config(self) -> dict[str, Any]:
+    def _load_default_prices(self) -> tuple[dict[str, float], dict[str, float]]:
         root = Path(__file__).resolve().parents[1]
         candidates = [
             root / "energy_technology" / "configs" / "commodities.yaml",
@@ -144,17 +146,10 @@ class EnergySystemBuilder:
             if candidate.exists():
                 cfg = yaml.safe_load(candidate.read_text(encoding="utf-8"))
                 if isinstance(cfg, dict):
-                    return cfg
-        return {}
-
-    def set_commodity_config(self, config: dict[str, Any] | None):
-        if config is None:
-            self.commodity_config = {}
-            return self
-        if not isinstance(config, dict):
-            raise TypeError("commodity_config must be a mapping")
-        self.commodity_config = dict(config)
-        return self
+                    grid = {str(k): float(v) for k, v in (cfg.get("grid_prices") or {}).items()}
+                    supply = {str(k): float(v) for k, v in (cfg.get("supply_prices_eur_per_mwh") or {}).items()}
+                    return grid, supply
+        return {}, {}
 
     def set_commodity_prices(
         self,
@@ -166,11 +161,8 @@ class EnergySystemBuilder:
             raise TypeError("grid_prices must be a mapping")
         if not isinstance(supply_prices_eur_per_mwh, dict):
             raise TypeError("supply_prices_eur_per_mwh must be a mapping")
-        config: dict[str, Any] = {
-            "grid_prices": dict(grid_prices),
-            "supply_prices_eur_per_mwh": dict(supply_prices_eur_per_mwh),
-        }
-        self.commodity_config = config
+        self.grid_prices = {str(k): float(v) for k, v in grid_prices.items()}
+        self.supply_prices = {str(k): float(v) for k, v in supply_prices_eur_per_mwh.items()}
         return self
 
     def set_default_region_builder_config(self):
@@ -379,7 +371,8 @@ class EnergySystemBuilder:
             street_network=street_network,
             units=self.unit,
             technology_registry=self.technology_registry,
-            commodity_config=self.commodity_config or {},
+            grid_prices=self.grid_prices,
+            supply_prices=self.supply_prices,
             inter_district_pipe_specs=inter_district_pipe_specs,
         )
 

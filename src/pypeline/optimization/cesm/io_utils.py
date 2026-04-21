@@ -228,22 +228,6 @@ def _write_techmap_workbook(
     )
 
 
-def commodity_config_from_energy_system(es: "EnergySystem") -> tuple[dict[str, float], dict[str, float]]:
-    """Extract and validate commodity grid/supply prices from an EnergySystem."""
-    config_raw = getattr(es, "commodity_config", None)
-    if config_raw is None:
-        raise ValueError("EnergySystem.commodity_config is required to provide commodity prices")
-    if not isinstance(config_raw, dict):
-        raise ValueError("EnergySystem.commodity_config must be a mapping")
-
-    grid_raw = config_raw.get("grid_prices")
-    supply_raw = config_raw.get("supply_prices_eur_per_mwh")
-    if not isinstance(grid_raw, dict) or not isinstance(supply_raw, dict):
-        raise ValueError("EnergySystem.commodity_config must include grid_prices and supply_prices_eur_per_mwh mappings")
-
-    return sanitize_price_map(grid_raw), sanitize_price_map(supply_raw)
-
-
 def resolve_retain_schedule(
     *,
     explicit_schedule: Optional[list[float]],

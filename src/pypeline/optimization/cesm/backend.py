@@ -66,15 +66,12 @@ class CESMOptimizationBackend(OptimizationBackend):
     def __init__(
         self,
         model_name: Optional[str],
-        scenario_name: Optional[str],
         tss_name: Optional[str],
         timeseries_dir: str | Path,
         output_dir: str | Path,
-        dt_hours: int = 4,
-        run_subdir: Optional[str] = None,
+        dt_hours: int,
         results_db_name: str = "db.sqlite",
         write_inputs: bool = True,
-        scenario: Scenario | None = None,
         demand_name: str = "residential_heat",
         retain_existing_output_factor: float | None = None,
         retain_existing_output_years_factor: float | None = None,
@@ -86,14 +83,12 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.model_name = model_name
-        self.scenario_name = scenario_name
         self.tss_name = tss_name
         self.dt_hours = int(dt_hours)
-        self.run_subdir = run_subdir or (f"{self.model_name}-{self.scenario_name}" if self.model_name and self.scenario_name else None)
+        self.run_subdir = None
         self.results_db_name = results_db_name
 
         self.write_inputs = write_inputs
-        self.scenario = scenario
         self.demand_name = demand_name
         self.retain_existing_output_factor = retain_existing_output_factor
         self.retain_existing_output_years_factor = retain_existing_output_years_factor
@@ -101,21 +96,13 @@ class CESMOptimizationBackend(OptimizationBackend):
 
     # OptimizationBackend API ------------------------------------------------
     def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
-        if not isinstance(energy_system, EnergySystem):
-            raise TypeError("CESMOptimizationBackend.solve expects an EnergySystem")
-
-        logger.debug("solve: energy_system commodity_config=%s", energy_system.commodity_config)
-
-        scenario_obj = scenario or self.scenario
-        if scenario_obj is None:
-            raise ValueError("scenario is required to write CESM inputs")
-
-        self._materialize_inputs_from_energy_system(energy_system, scenario_obj)
-        self._run_cesm()
+        self.run_subdir = f"{self.model_name}-{scenario.name}"
+        self._materialize_inputs_from_energy_system(energy_system, scenario)
+        self._run_cesm(scenario_name=scenario.name)
         db_path = self._expected_run_db()
         backfill_missing_commodity_timeseries(db_path)
         results = parse_cesm_outputs(db_path)
-        return Solution(energy_system=energy_system, scenario=scenario_obj, results=results)
+        return Solution(energy_system=energy_system, scenario=scenario, results=results)
 
     # Internal helpers -------------------------------------------------------
     def _expected_run_db(self) -> Path:
@@ -127,21 +114,27 @@ class CESMOptimizationBackend(OptimizationBackend):
         if not self.write_inputs:
             return
 
-        write_cesm_inputs_from_energy_system(
+        from pypeline.optimization.resolved_system import resolve_system
+        from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
+
+        resolved = resolve_system(
             energy_system,
             scenario,
+            retain_existing_output_schedule=self.retain_existing_output_schedule,
+        )
+        _write_cesm_inputs(
+            resolved,
             techmap_dir=self.output_dir,
             timeseries_dir=self.timeseries_dir,
             model_name=self.model_name,
-            scenario_name=self.scenario_name,
+            scenario_name=scenario.name,
             tss_name=self.tss_name,
             dt_hours=self.dt_hours,
             retain_existing_output_factor=self.retain_existing_output_factor,
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,
-            retain_existing_output_schedule=self.retain_existing_output_schedule,
         )
 
-    def _run_cesm(self) -> None:
+    def _run_cesm(self, scenario_name) -> None:
         if not self.run_subdir:
             raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
 
@@ -150,7 +143,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         db_dir.mkdir(parents=True, exist_ok=True)
 
         conn = sqlite3.connect(":memory:")
-        parser = Parser(self.model_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=self.scenario_name)
+        parser = Parser(self.model_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
         parser.parse()
         model = Model(conn=conn)
         model.solve()

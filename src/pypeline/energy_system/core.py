@@ -22,7 +22,8 @@ class EnergySystem:
     units: Unit
     street_network: nx.Graph | None = None
     technology_registry: TechnologyRegistry | None = None
-    commodity_config: dict[str, Any] = field(default_factory=dict)
+    grid_prices: dict[str, float] = field(default_factory=dict)
+    supply_prices: dict[str, float] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
     inter_district_pipe_specs: dict[tuple[int, int], dict[str, Any]] | None = None

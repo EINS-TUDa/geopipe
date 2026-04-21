@@ -75,7 +75,7 @@ def main():
     energy_system.data_dir = project_root / "data"
 
     scenario = Scenario(
-        name=f"{config.model_name}-{config.scenario_name}",
+        name=f"{config.scenario_name}",
         start_year=config.start_year,
         end_year=config.end_year,
         year_gap=config.year_gap,
@@ -94,13 +94,11 @@ def main():
     backend = CESMOptimizationBackend(
         timeseries_dir=CASE_DIR / "input_data",
         output_dir=CASE_DIR / "output_data",
-        run_subdir=f"{config.model_name}-{config.scenario_name}",
         results_db_name="db.sqlite",
         write_inputs=True,
         model_name=config.model_name,
-        scenario_name=config.scenario_name,
         tss_name=config.tss_name,
-        scenario=scenario,
+        dt_hours = 3,
         demand_name=config.demand_name,
     )
 

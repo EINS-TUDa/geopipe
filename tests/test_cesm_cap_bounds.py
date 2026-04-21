@@ -9,6 +9,7 @@ import pandas as pd
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
+from pypeline.optimization.resolved_system import resolve_system
 from pypeline.units import UnitKW
 
 
@@ -79,7 +80,15 @@ def _mock_energy_system(data_dir=None, constraints=None) -> EnergySystem:
         RegionTechnology(Technology("cen_heat_pump_D0", "electricity", "district_heat_in_D0"), initial_capacity=60.0, initial_energy_output=1500.0),
     ]
     region = Region(id_=0, region_demands=[region_demand], region_technologies=region_technologies)
-    return EnergySystem(name="test", regions=[region], units=UnitKW(), constraints=constraints or {}, data_dir=data_dir)
+    return EnergySystem(
+        name="test",
+        regions=[region],
+        units=UnitKW(),
+        constraints=constraints or {},
+        data_dir=data_dir,
+        grid_prices={"electricity": 120.0, "export": 0.0},
+        supply_prices={"gas": 60.0},
+    )
 
 
 def _selected_techs() -> list[Technology]:
@@ -122,7 +131,15 @@ def _mock_two_district_energy_system(data_dir=None) -> EnergySystem:
         RegionTechnology(Technology("heat_exchanger_D1", "district_heat_out_D1", "residential_heat"), initial_capacity=70.0, initial_energy_output=0.0),
         RegionTechnology(Technology("cen_heat_pump_D1", "electricity", "district_heat_in_D1"), initial_capacity=60.0, initial_energy_output=1500.0),
     ])
-    return EnergySystem(name="test", regions=[region0, region1], units=UnitKW(), constraints={}, data_dir=data_dir)
+    return EnergySystem(
+        name="test",
+        regions=[region0, region1],
+        units=UnitKW(),
+        constraints={},
+        data_dir=data_dir,
+        grid_prices={"electricity": 120.0, "export": 0.0},
+        supply_prices={"gas": 60.0},
+    )
 
 
 def _selected_techs_two_district() -> list[Technology]:
@@ -141,22 +158,17 @@ def cap_bounds_synth_t(tmp_path):
     workdir = tmp_path / "cesm_cap_bounds"
     _ensure_tss(workdir)
 
+    es = _mock_energy_system(data_dir=REPO_ROOT / "data")
+    resolved = resolve_system(es, _mock_scenario_single(), retain_existing_output_schedule=[1.0, 1.0, 1.0])
     _write_cesm_inputs(
-        _mock_energy_system(data_dir=REPO_ROOT / "data"),
-        _mock_scenario_single(),
+        resolved,
         techmap_dir=workdir / "Data" / "Techmap",
         timeseries_dir=workdir / "Data" / "TimeSeries",
         model_name="SyntheticCapBounds",
         scenario_name="Base",
         tss_name="4ThinWeeks",
-        polygons_gdf=_single_polygon(),
         dt_hours=1,
-        elec_price_eur_per_mwh=120.0,
-        export_price_eur_per_mwh=0.0,
-        grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices={"gas": 60.0},
         selected_techs=_selected_techs(),
-        retain_existing_output_schedule=[1.0, 1.0, 1.0],
     )
 
     xlsx_path = workdir / "Data" / "Techmap" / "SyntheticCapBounds.xlsx"
@@ -201,23 +213,17 @@ def obsolete_pipe_share_constraint_t(tmp_path):
 
     es = _mock_energy_system(data_dir=REPO_ROOT / "data", constraints={"min_pipe_import_share_by_region": {0: 0.2}})
 
+    resolved = resolve_system(es, _mock_scenario_single(), retain_existing_output_schedule=[1.0, 1.0, 1.0])
     with pytest.raises(ValueError, match="min_pipe_import_share_by_region"):
         _write_cesm_inputs(
-            es,
-            _mock_scenario_single(),
+            resolved,
             techmap_dir=workdir / "Data" / "Techmap",
             timeseries_dir=workdir / "Data" / "TimeSeries",
             model_name="ObsoletePipeShare",
             scenario_name="Base",
             tss_name="4ThinWeeks",
-            polygons_gdf=_single_polygon(),
             dt_hours=1,
-            elec_price_eur_per_mwh=120.0,
-            export_price_eur_per_mwh=0.0,
-            grid_prices={"electricity": 120.0, "export": 0.0},
-            supply_prices={"gas": 60.0},
             selected_techs=_selected_techs(),
-            retain_existing_output_schedule=[1.0, 1.0, 1.0],
         )
 
 
@@ -228,22 +234,16 @@ def exchanger_target_not_pipe_floor_t(tmp_path):
 
     es = _mock_two_district_energy_system(data_dir=REPO_ROOT / "data")
     es.inter_district_pipe_specs = {(0, 1): {"pipe_capex_base_eur": 10.0}, (1, 0): {"pipe_capex_base_eur": 10.0}}
+    resolved = resolve_system(es, _mock_scenario_two_district(), retain_existing_output_schedule=[1.0, 1.0])
     _write_cesm_inputs(
-        es,
-        _mock_scenario_two_district(),
+        resolved,
         techmap_dir=workdir / "Data" / "Techmap",
         timeseries_dir=workdir / "Data" / "TimeSeries",
         model_name="ExchangerTarget",
         scenario_name="Base",
         tss_name="4ThinWeeks",
-        polygons_gdf=_two_polygons(),
         dt_hours=1,
-        elec_price_eur_per_mwh=120.0,
-        export_price_eur_per_mwh=0.0,
-        grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices={"gas": 60.0},
         selected_techs=_selected_techs_two_district(),
-        retain_existing_output_schedule=[1.0, 1.0],
     )
 
     xlsx_path = workdir / "Data" / "Techmap" / "ExchangerTarget.xlsx"
@@ -269,22 +269,16 @@ def free_pipe_rows_removed_t(tmp_path):
 
     es = _mock_two_district_energy_system(data_dir=REPO_ROOT / "data")
     es.inter_district_pipe_specs = {(0, 1): {"pipe_capex_base_eur": 10.0, "is_free": True}, (1, 0): {"pipe_capex_base_eur": 10.0, "is_free": True}}
+    resolved = resolve_system(es, _mock_scenario_two_district(), retain_existing_output_schedule=[1.0, 1.0])
     _write_cesm_inputs(
-        es,
-        _mock_scenario_two_district(),
+        resolved,
         techmap_dir=workdir / "Data" / "Techmap",
         timeseries_dir=workdir / "Data" / "TimeSeries",
         model_name="FreePipeRowsRemoved",
         scenario_name="Base",
         tss_name="4ThinWeeks",
-        polygons_gdf=_two_polygons(),
         dt_hours=1,
-        elec_price_eur_per_mwh=120.0,
-        export_price_eur_per_mwh=0.0,
-        grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices={"gas": 60.0},
         selected_techs=_selected_techs_two_district(),
-        retain_existing_output_schedule=[1.0, 1.0],
     )
 
     xlsx_path = workdir / "Data" / "Techmap" / "FreePipeRowsRemoved.xlsx"

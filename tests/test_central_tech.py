@@ -10,6 +10,7 @@ import pandas as pd
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
+from pypeline.optimization.resolved_system import resolve_system
 from pypeline.units import UnitKW
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -75,11 +76,21 @@ def _build_energy_system(
     data_dir=None,
     constraints: dict | None = None,
     region_technologies: list | None = None,
+    grid_prices: dict | None = None,
+    supply_prices: dict | None = None,
 ) -> EnergySystem:
     demand = Demand(demand_type="residential_heat", commodity_in="residential_heat")
     region_demand = RegionDemand(demand=demand, value=1200.0, profile=pd.Series([1.0 / 8760.0] * 8760))
     region = Region(id_=DISTRICT_ID, region_demands=[region_demand], region_technologies=region_technologies or [])
-    return EnergySystem(name="test", regions=[region], units=UnitKW(), constraints=constraints or {}, data_dir=data_dir)
+    return EnergySystem(
+        name="test",
+        regions=[region],
+        units=UnitKW(),
+        constraints=constraints or {},
+        data_dir=data_dir,
+        grid_prices=grid_prices or {"electricity": 140.0, "export": 0.0},
+        supply_prices=supply_prices or {"gas": 30.0},
+    )
 
 
 def _single_district_polygon() -> gpd.GeoDataFrame:
@@ -205,23 +216,18 @@ def _run_case(*, tmp_path: Path, model_name: str, force_central_cap_mw: float | 
     if force_central_cap_mw and force_central_cap_mw > 0.0:
         constraints["min_central_cap_mw_total"] = {DISTRICT_ID: float(force_central_cap_mw)}
 
+    es = _build_energy_system(data_dir=REPO_ROOT / "data", constraints=constraints)
+    resolved = resolve_system(es, _build_scenario(), retain_existing_output_schedule=[1.0, 1.0, 1.0])
     _write_cesm_inputs(
-        _build_energy_system(data_dir=REPO_ROOT / "data", constraints=constraints),
-        _build_scenario(),
+        resolved,
         techmap_dir=techmap_dir,
         timeseries_dir=ts_dir,
         model_name=model_name,
         scenario_name="Base",
         tss_name="4ThinWeeks",
         heat_commodity_base="residential_heat",
-        polygons_gdf=_single_district_polygon(),
         dt_hours=1,
-        elec_price_eur_per_mwh=140.0,
-        export_price_eur_per_mwh=0.0,
-        grid_prices={"electricity": 140.0, "export": 0.0},
-        supply_prices={"gas": 30.0},
         selected_techs=_selected_techs(),
-        retain_existing_output_schedule=[1.0, 1.0, 1.0],
     )
 
     xlsx = techmap_dir / f"{model_name}.xlsx"
@@ -302,28 +308,23 @@ def legacy_dispatch_t(tmp_path: Path) -> None:
 
     _ensure_tss(ts_dir)
 
+    es = _build_energy_system(
+        data_dir=REPO_ROOT / "data",
+        region_technologies=[
+            RegionTechnology(Technology(_dn("ind_gas_boiler"), "gas", "residential_heat"), initial_capacity=1.0, initial_energy_output=1200.0),
+        ],
+    )
+    resolved = resolve_system(es, _build_scenario(), retain_existing_output_schedule=[1.0, 1.0, 1.0])
     _write_cesm_inputs(
-        _build_energy_system(
-            data_dir=REPO_ROOT / "data",
-            region_technologies=[
-                RegionTechnology(Technology(_dn("ind_gas_boiler"), "gas", "residential_heat"), initial_capacity=1.0, initial_energy_output=1200.0),
-            ],
-        ),
-        _build_scenario(),
+        resolved,
         techmap_dir=techmap_dir,
         timeseries_dir=ts_dir,
         model_name="LegacyDispatch",
         scenario_name="Base",
         tss_name="4ThinWeeks",
         heat_commodity_base="residential_heat",
-        polygons_gdf=_single_district_polygon(),
         dt_hours=1,
-        elec_price_eur_per_mwh=140.0,
-        export_price_eur_per_mwh=0.0,
-        grid_prices={"electricity": 140.0, "export": 0.0},
-        supply_prices={"gas": 30.0},
         selected_techs=_selected_techs(),
-        retain_existing_output_schedule=[1.0, 1.0, 1.0],
     )
 
     conn = sqlite3.connect(":memory:")
@@ -389,28 +390,23 @@ def lockout_keeps_min_t(tmp_path: Path) -> None:
 
     _ensure_tss(ts_dir)
 
+    es = _build_energy_system(
+        data_dir=REPO_ROOT / "data",
+        region_technologies=[
+            RegionTechnology(Technology(_dn("cen_heat_pump"), "Electricity", _dn("district_heat_in")), initial_capacity=2.0, initial_energy_output=300.0),
+        ],
+    )
+    resolved = resolve_system(es, _build_scenario(lockout_years=2), retain_existing_output_schedule=[1.0, 0.95, 0.90])
     _write_cesm_inputs(
-        _build_energy_system(
-            data_dir=REPO_ROOT / "data",
-            region_technologies=[
-                RegionTechnology(Technology(_dn("cen_heat_pump"), "Electricity", _dn("district_heat_in")), initial_capacity=2.0, initial_energy_output=300.0),
-            ],
-        ),
-        _build_scenario(lockout_years=2),
+        resolved,
         techmap_dir=techmap_dir,
         timeseries_dir=ts_dir,
         model_name="CentralRetainLockout",
         scenario_name="Base",
         tss_name="4ThinWeeks",
         heat_commodity_base="residential_heat",
-        polygons_gdf=_single_district_polygon(),
         dt_hours=1,
-        elec_price_eur_per_mwh=140.0,
-        export_price_eur_per_mwh=0.0,
-        grid_prices={"electricity": 140.0, "export": 0.0},
-        supply_prices={"gas": 30.0},
         selected_techs=_selected_techs(),
-        retain_existing_output_schedule=[1.0, 0.95, 0.90],
     )
 
     xlsx = techmap_dir / "CentralRetainLockout.xlsx"
@@ -434,27 +430,22 @@ def bad_retention_t(tmp_path: Path) -> None:
 
     _ensure_tss(ts_dir)
 
+    es = _build_energy_system(
+        data_dir=REPO_ROOT / "data",
+        region_technologies=[
+            RegionTechnology(Technology(_dn("cen_heat_pump"), "Electricity", _dn("district_heat_in")), initial_capacity=0.0, initial_energy_output=300.0),
+        ],
+    )
+    resolved = resolve_system(es, _build_scenario(lockout_years=2), retain_existing_output_schedule=[1.0, 0.95, 0.90])
     with pytest.raises(ValueError, match="Invalid central retention metrics"):
         _write_cesm_inputs(
-            _build_energy_system(
-                data_dir=REPO_ROOT / "data",
-                region_technologies=[
-                    RegionTechnology(Technology(_dn("cen_heat_pump"), "Electricity", _dn("district_heat_in")), initial_capacity=0.0, initial_energy_output=300.0),
-                ],
-            ),
-            _build_scenario(lockout_years=2),
+            resolved,
             techmap_dir=workdir / "Data" / "Techmap",
             timeseries_dir=ts_dir,
             model_name="CentralBadMetrics",
             scenario_name="Base",
             tss_name="4ThinWeeks",
             heat_commodity_base="residential_heat",
-            polygons_gdf=_single_district_polygon(),
             dt_hours=1,
-            elec_price_eur_per_mwh=140.0,
-            export_price_eur_per_mwh=0.0,
-            grid_prices={"electricity": 140.0, "export": 0.0},
-            supply_prices={"gas": 30.0},
             selected_techs=_selected_techs(),
-            retain_existing_output_schedule=[1.0, 0.95, 0.90],
         )
