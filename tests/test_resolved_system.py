@@ -109,7 +109,6 @@ def no_pipe_specs_gives_empty_pairs_t():
     resolved = resolve_system(_es([_region(0)]), _scenario())
     assert resolved.pipe_pairs == []
     assert resolved.pipe_specs == {}
-    assert resolved.free_pipe_groups == []
 
 
 def non_free_pipe_pairs_t():
@@ -118,19 +117,19 @@ def non_free_pipe_pairs_t():
     resolved = resolve_system(es, _scenario())
     assert (0, 1) in resolved.pipe_pairs
     assert (1, 0) in resolved.pipe_pairs
-    assert resolved.free_pipe_groups == []
 
 
-def free_pipes_form_group_t():
+def free_pipes_have_zero_capex_t():
     specs = {
-        (0, 1): {"pipe_capex_base_eur": 10.0, "is_free": True},
-        (1, 0): {"pipe_capex_base_eur": 10.0, "is_free": True},
+        (0, 1): {"pipe_capex_base_eur": 0.0, "capex_cost_power": 0.0},
+        (1, 0): {"pipe_capex_base_eur": 0.0, "capex_cost_power": 0.0},
     }
     es = _es([_region(0), _region(1)], inter_district_pipe_specs=specs)
     resolved = resolve_system(es, _scenario())
-    assert resolved.pipe_pairs == []
-    assert len(resolved.free_pipe_groups) == 1
-    assert frozenset({0, 1}) in resolved.free_pipe_groups
+    assert (0, 1) in resolved.pipe_pairs
+    assert (1, 0) in resolved.pipe_pairs
+    assert resolved.pipe_specs[(0, 1)]["capex_cost_power"] == 0.0
+    assert resolved.pipe_specs[(1, 0)]["capex_cost_power"] == 0.0
 
 
 def lockout_years_and_discount_rate_t():

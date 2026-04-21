@@ -148,12 +148,6 @@ def _write_cesm_inputs(
 
     district_heat_in_names = {d: f"district_heat_in_D{d}" for d in districts}
     district_heat_out_names = {d: f"district_heat_out_D{d}" for d in districts}
-    for group in resolved.free_pipe_groups:
-        rep = min(group)
-        for member in group:
-            d = districts[district_index[member]] if member in district_index else member
-            district_heat_in_names[d] = f"district_heat_in_free_D{rep}"
-            district_heat_out_names[d] = f"district_heat_out_free_D{rep}"
 
     annual_heat_by_d = (
         [float(resolved.annual_demand[rid][start_year_int]) for rid in om_regions]
@@ -562,7 +556,6 @@ def _write_cesm_inputs(
             "cap_max": float(pipe_cap_max_value),
             "max_eout": UNBOUNDED_ENERGY,
             "opex_cost_energy": float(pipe_opex_value),
-            "capex_cost_power": float(pipe_capex_value),
             "capex_cost_base": pipe_capex_base,
         }
         cs_rows.append(row)

@@ -7,7 +7,7 @@ backend-specific code free of domain-derivation logic.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
@@ -56,9 +56,6 @@ class ResolvedSystem:
     # Inter-district pipe connections (non-free pairs)
     pipe_pairs: list[tuple[int, int]]
     pipe_specs: dict[tuple[int, int], dict[str, Any]]
-
-    # Groups of districts connected by free pipes (each group shares a pooled commodity)
-    free_pipe_groups: list[frozenset[int]] = field(default_factory=list)
 
 
 def resolve_system(
@@ -128,35 +125,12 @@ def resolve_system(
     # Pipe connections
     pipe_pairs: list[tuple[int, int]] = []
     pipe_specs: dict[tuple[int, int], dict[str, Any]] = {}
-    free_pipe_groups: list[frozenset[int]] = []
 
     raw_specs = energy_system.inter_district_pipe_specs or {}
     if raw_specs:
         all_specs = {(int(i), int(j)): dict(specs or {}) for (i, j), specs in raw_specs.items()}
-        free_set = {pair for pair, specs in all_specs.items() if bool(specs.get("is_free", False))}
-        pipe_specs = {pair: specs for pair, specs in all_specs.items() if pair not in free_set}
+        pipe_specs = {pair: specs for pair, specs in all_specs.items()}
         pipe_pairs = sorted(pipe_specs)
-
-        if free_set:
-            adjacency: dict[int, set[int]] = {}
-            for (i, j) in free_set:
-                adjacency.setdefault(i, set()).add(j)
-                adjacency.setdefault(j, set()).add(i)
-            visited: set[int] = set()
-            for start in list(adjacency):
-                if start in visited:
-                    continue
-                stack = [start]
-                component: list[int] = []
-                while stack:
-                    node = stack.pop()
-                    if node in visited:
-                        continue
-                    visited.add(node)
-                    component.append(node)
-                    stack.extend(adjacency.get(node, set()) - visited)
-                if len(component) > 1:
-                    free_pipe_groups.append(frozenset(component))
 
     return ResolvedSystem(
         scenario_years=scenario_years,
@@ -175,5 +149,4 @@ def resolve_system(
         local_dhn_costs=local_dhn_costs,
         pipe_pairs=pipe_pairs,
         pipe_specs=pipe_specs,
-        free_pipe_groups=free_pipe_groups,
     )
