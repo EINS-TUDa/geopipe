@@ -104,7 +104,7 @@ def main():
         demand_name=config.demand_name,
     )
 
-    solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
+    solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
     report_path = _write_results_report(
         output_dir=plots_dir,
@@ -123,54 +123,57 @@ def main():
         },
     )
 
+    from compare_techmaps import compare_techmaps
+    compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison")
+
     # --- 1) Street topology plot ---
-    topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
-        energy_system=energy_system,
-        demand_name=config.demand_name,
-    )
-    topology_plot_path = plots_dir / "case1_street_topology.png"
-    EnergySystemPlotter.plot_streets_colored_by_region(
-        streets_with_region=streets_for_plot,
-        polygons=topology_polygons,
-        output_path=topology_plot_path,
-        region_id_column="id",
-        title=f"District topology: {config.model_name}",
-    )
-    print(f"Saved topology plot: {topology_plot_path}")
+    # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
+    #     energy_system=energy_system,
+    #     demand_name=config.demand_name,
+    # )
+    # topology_plot_path = plots_dir / "case1_street_topology.png"
+    # EnergySystemPlotter.plot_streets_colored_by_region(
+    #     streets_with_region=streets_for_plot,
+    #     polygons=topology_polygons,
+    #     output_path=topology_plot_path,
+    #     region_id_column="id",
+    #     title=f"District topology: {config.model_name}",
+    # )
+    # print(f"Saved topology plot: {topology_plot_path}")
 
     # --- 2) Technology mix plot ---
-    plotter = EnergySystemPlotter(energy_system)
-    years = scenario.years()
-    mix_plot_paths = plotter.save_default_mix_plots(
-        results_obj.raw,
-        years=years,
-        plots_dir=plots_dir,
-        demand_name=config.demand_name,
-    )
-    print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
+    # plotter = EnergySystemPlotter(energy_system)
+    # years = scenario.years()
+    # mix_plot_paths = plotter.save_default_mix_plots(
+    #     results_obj.raw,
+    #     years=years,
+    #     plots_dir=plots_dir,
+    #     demand_name=config.demand_name,
+    # )
+    # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    db_path = Path(results_obj.raw["db"])
-    conn = sqlite3.connect(str(db_path))
-    try:
-        dao = DAO(conn)
-        sankey_plotter = CesmPlotter(dao)
-        for year in years:
-            sankey_fig = sankey_plotter.plot_sankey(year=year)
-            sankey_output = plots_dir / f"sankey_{year}.html"
-            sankey_fig.write_html(str(sankey_output))
-            print(f"Saved Sankey diagram: {sankey_output}")
-
-        # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
-        heat_commodities = [
-            co for co in dao.get_set("commodity")
-            if "residential_heat_D" in str(co)
-        ]
-        for commodity in heat_commodities:
-            sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
-            sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
-    finally:
-        conn.close()
+    # db_path = Path(results_obj.raw["db"])
+    # conn = sqlite3.connect(str(db_path))
+    # try:
+    #     dao = DAO(conn)
+    #     sankey_plotter = CesmPlotter(dao)
+    #     for year in years:
+    #         sankey_fig = sankey_plotter.plot_sankey(year=year)
+    #         sankey_output = plots_dir / f"sankey_{year}.html"
+    #         sankey_fig.write_html(str(sankey_output))
+    #         print(f"Saved Sankey diagram: {sankey_output}")
+    #
+    #     # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
+    #     heat_commodities = [
+    #         co for co in dao.get_set("commodity")
+    #         if "residential_heat_D" in str(co)
+    #     ]
+    #     for commodity in heat_commodities:
+    #         sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+    #         sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+    # finally:
+    #     conn.close()
 
 
 main()

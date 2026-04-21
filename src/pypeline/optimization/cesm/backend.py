@@ -100,7 +100,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.retain_existing_output_schedule = retain_existing_output_schedule
 
     # OptimizationBackend API ------------------------------------------------
-    def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None, demand_name: str | None = None) -> Solution:
+    def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
         if not isinstance(energy_system, EnergySystem):
             raise TypeError("CESMOptimizationBackend.solve expects an EnergySystem")
 
@@ -109,9 +109,8 @@ class CESMOptimizationBackend(OptimizationBackend):
         scenario_obj = scenario or self.scenario
         if scenario_obj is None:
             raise ValueError("scenario is required to write CESM inputs")
-        demand = demand_name or self.demand_name or "residential_heat"
 
-        self._materialize_inputs_from_energy_system(energy_system, scenario_obj, demand)
+        self._materialize_inputs_from_energy_system(energy_system, scenario_obj)
         self._run_cesm()
         db_path = self._expected_run_db()
         backfill_missing_commodity_timeseries(db_path)
@@ -124,7 +123,7 @@ class CESMOptimizationBackend(OptimizationBackend):
             raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
         return self.output_dir / self.run_subdir / self.results_db_name
 
-    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario, demand_name: str) -> None:
+    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario) -> None:
         if not self.write_inputs:
             return
 
@@ -137,7 +136,6 @@ class CESMOptimizationBackend(OptimizationBackend):
             scenario_name=self.scenario_name,
             tss_name=self.tss_name,
             dt_hours=self.dt_hours,
-            demand_name=demand_name,
             retain_existing_output_factor=self.retain_existing_output_factor,
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,
             retain_existing_output_schedule=self.retain_existing_output_schedule,

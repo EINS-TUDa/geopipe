@@ -66,12 +66,6 @@ def _canon_co(name: Optional[str]) -> str:
     return name
 
 
-def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.ndarray) -> Path:
-    path = timeseries_dir / f"{profile_name}.txt"
-    path.write_text(" ".join(f"{x:.8f}" for x in profile.tolist()), encoding="utf-8")
-    return path
-
-
 def _units_df() -> pd.DataFrame:
     return pd.DataFrame(
         [
