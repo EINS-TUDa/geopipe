@@ -24,17 +24,12 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import List, Optional
+from gurobipy import GRB
 
 from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 
-try:
-    from gurobipy import GRB  # type: ignore
-except Exception:  # pragma: no cover
-    GRB = None  # type: ignore
-
 from pypeline.energy_system.core import EnergySystem, Scenario
-from pypeline.optimization.cesm.input_writer import write_cesm_inputs_from_energy_system
 from pypeline.optimization.cesm.result_parser import (
     backfill_missing_commodity_timeseries,
     parse_cesm_outputs,
@@ -97,16 +92,10 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.run_subdir = f"{energy_system.name}-{scenario.name}"
         self._materialize_inputs_from_energy_system(energy_system, scenario)
         self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name)
-        db_path = self._expected_run_db()
+        db_path = self.output_dir / self.run_subdir / self.results_db_name
         backfill_missing_commodity_timeseries(db_path)
         results = parse_cesm_outputs(db_path)
         return Solution(energy_system=energy_system, scenario=scenario, results=results)
-
-    # Internal helpers -------------------------------------------------------
-    def _expected_run_db(self) -> Path:
-        if not self.run_subdir:
-            raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
-        return self.output_dir / self.run_subdir / self.results_db_name
 
     def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario) -> None:
         resolved = resolve_system(
@@ -127,9 +116,6 @@ class CESMOptimizationBackend(OptimizationBackend):
         )
 
     def _run_cesm(self, energy_system_name: str, scenario_name: str) -> None:
-        if not self.run_subdir:
-            raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
-
         db_dir = self.output_dir / self.run_subdir
         db_path = db_dir / self.results_db_name
         db_dir.mkdir(parents=True, exist_ok=True)

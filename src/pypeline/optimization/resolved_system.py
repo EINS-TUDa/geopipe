@@ -68,7 +68,7 @@ def resolve_system(
     """Build a ``ResolvedSystem`` from an ``EnergySystem`` and a ``Scenario``."""
     from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
 
-    scenario_years = scenario.years()
+    scenario_years = scenario.years
     discount_rate = float(scenario.discount_rate)
     lockout_years = max(0, int(scenario.lockout_years))
 

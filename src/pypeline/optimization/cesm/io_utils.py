@@ -231,7 +231,7 @@ def _write_techmap_workbook(
 def resolve_retain_schedule(
     *,
     explicit_schedule: Optional[list[float]],
-    scenario: "Scenario" | None,
+    scenario: "Scenario",
 ) -> Optional[list[float]]:
     """Resolve retention schedule from explicit values or scenario fields."""
     if explicit_schedule:
@@ -254,7 +254,7 @@ def resolve_retain_schedule(
         return None
 
     drop_val = max(0.0, drop_val)
-    years = scenario.years() if hasattr(scenario, "years") else []
+    years = scenario.years
     if not years:
         return None
     start_year = years[0]

@@ -101,6 +101,7 @@ class Scenario:
     retain_existing_output_drop_per_year: Number | None = None
     lockout_years: int = 2
 
+    @property
     def years(self) -> list[int]:
         return list(range(self.start_year, self.end_year + 1, self.year_gap))
 

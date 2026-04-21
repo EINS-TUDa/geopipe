@@ -183,7 +183,7 @@ def _build_execution_result(
         results_obj=results_obj,
         results_raw=results_obj.raw,
         results_report_html=report_path,
-        years=scenario.years(),
+        years=scenario.years,
         plotter=EnergySystemPlotter(energy_system),
         plots_dir=plots_dir,
         project_root=project_root,
@@ -288,7 +288,7 @@ def run_scenario_case(
         timeseries_dir=case_dir / "input_data",
         output_dir=case_dir / "output_data",
     )
-    solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
+    solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
     report_path = _write_results_report(
         output_dir=plots_dir,
