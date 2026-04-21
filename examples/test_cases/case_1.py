@@ -33,6 +33,7 @@ CASE_CONFIG = ScenarioCaseConfig(
     region_builder_config_overrides={
         "min_heat_grid_share": 0.1,
         "heat_grid_names": ("heat_exchanger",),
+        "interdistrict_free_pipe_max_length_m": 10.0,
     },
     expected_region_ids=(0, 1),
 )

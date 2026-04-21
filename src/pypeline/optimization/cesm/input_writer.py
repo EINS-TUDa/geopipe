@@ -24,7 +24,6 @@ internally, then delegates to :func:`_write_cesm_inputs_from_om`.
 from __future__ import annotations
 import logging
 import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -189,7 +188,8 @@ def _write_cesm_inputs_from_optimization_context(
     _write_demand_profile(ts_dir, demand_profile_name, profile_full)
     heat_names: List[str]
     pipe_pairs: List[Tuple[int, int]] = []
-    pipe_specs_by_pair: dict[tuple[int, int], dict[str, float]] = {}
+    pipe_specs_by_pair: dict[tuple[int, int], dict[str, Any]] = {}
+    free_pipe_pairs: set[tuple[int, int]] = set()
     base_heat_name = heat_commodity_base or optimization_context.commodity
     districts = list(range(len(om_regions)))
     if len(districts) == 1:
@@ -201,7 +201,16 @@ def _write_cesm_inputs_from_optimization_context(
                 (int(i), int(j)): dict(specs or {})
                 for (i, j), specs in inter_district_pipe_specs.items()
             }
-            pipe_pairs = sorted((int(i), int(j)) for (i, j) in inter_district_pipe_specs.keys())
+            free_pipe_pairs = {
+                (int(i), int(j))
+                for (i, j), specs in pipe_specs_by_pair.items()
+                if bool((specs or {}).get("is_free", False))
+            }
+            pipe_pairs = sorted(
+                (int(i), int(j))
+                for (i, j) in inter_district_pipe_specs.keys()
+                if (int(i), int(j)) not in free_pipe_pairs
+            )
 
     district_index = {d: idx for idx, d in enumerate(districts)}
     if len(districts) <= 1:
@@ -213,7 +222,43 @@ def _write_cesm_inputs_from_optimization_context(
 
     district_heat_in_names = {d: f"district_heat_in_D{d}" for d in districts}
     district_heat_out_names = {d: f"district_heat_out_D{d}" for d in districts}
-    district_heat_import_names = {d: f"district_heat_import_D{d}" for d in districts}
+
+    if free_pipe_pairs:
+        adjacency: dict[int, set[int]] = {int(d): set() for d in districts}
+        for i, j in free_pipe_pairs:
+            i_int = int(i)
+            j_int = int(j)
+            if i_int not in adjacency or j_int not in adjacency:
+                continue
+            adjacency[i_int].add(j_int)
+            adjacency[j_int].add(i_int)
+
+        visited: set[int] = set()
+        for district in districts:
+            district_i = int(district)
+            if district_i in visited:
+                continue
+            stack = [district_i]
+            component: list[int] = []
+            while stack:
+                node = stack.pop()
+                if node in visited:
+                    continue
+                visited.add(node)
+                component.append(node)
+                for nbr in adjacency.get(node, set()):
+                    if nbr not in visited:
+                        stack.append(nbr)
+
+            if len(component) <= 1:
+                continue
+
+            rep = min(component)
+            pooled_heat_in = f"district_heat_in_free_D{rep}"
+            pooled_heat_out = f"district_heat_out_free_D{rep}"
+            for member in component:
+                district_heat_in_names[member] = pooled_heat_in
+                district_heat_out_names[member] = pooled_heat_out
 
     def _annual_demands_from_om() -> List[float]:
         if not om_regions:
@@ -339,16 +384,11 @@ def _write_cesm_inputs_from_optimization_context(
         if val > 0:
             min_heat_grid_targets[rid] = float(val)
 
-    min_pipe_import_share_raw = constraints_raw.get("min_pipe_import_share_by_region", {}) if constraints_raw else {}
-    if min_pipe_import_share_raw and not isinstance(min_pipe_import_share_raw, dict):
-        raise ValueError("min_pipe_import_share_by_region constraint must be a mapping of region ids to shares")
-    min_pipe_import_share_targets: dict[int, float] = {}
-    for key, value in (min_pipe_import_share_raw or {}).items():
-        rid = to_int_id(key)
-        share = float(value)
-        if share <= 0:
-            continue
-        min_pipe_import_share_targets[rid] = max(0.0, min(1.0, share))
+    if "min_pipe_import_share_by_region" in constraints_raw:
+        raise ValueError(
+            "Constraint 'min_pipe_import_share_by_region' is no longer supported. "
+            "Use exchanger-level constraints ('min_dhn_throughput_mwh' and/or historical exchanger metrics) instead."
+        )
 
     min_central_cap_raw = constraints_raw.get("min_central_cap_mw", {}) if constraints_raw else {}
     min_central_cap_targets: dict[str, float] = {}
@@ -418,49 +458,6 @@ def _write_cesm_inputs_from_optimization_context(
     if not isinstance(region_metrics, dict):
         region_metrics = {}
 
-    def _resolve_pipe_metric_dst_district(metric_name: str, rid_key: Any) -> Optional[int]:
-        match = re.match(r"^heat_pipe_D(\d+)_D(\d+)$", str(metric_name))
-        if not match:
-            return None
-        first = int(match.group(1))
-        second = int(match.group(2))
-
-        rid_int = to_int_id(rid_key)
-
-        first_region = district_to_region.get(first)
-        second_region = district_to_region.get(second)
-        if rid_int is not None:
-            if first_region == rid_int and second_region != rid_int:
-                return first
-            if second_region == rid_int and first_region != rid_int:
-                return second
-
-        # Fallback to legacy interpretation when not disambiguated by region key.
-        return second
-
-    for _rid_key, tech_map in list(region_metrics.items()):
-        if not isinstance(tech_map, dict):
-            continue
-        for tech_name, metrics in list(tech_map.items()):
-            if not isinstance(metrics, dict):
-                continue
-            dst_district = _resolve_pipe_metric_dst_district(str(tech_name), _rid_key)
-            if dst_district is None:
-                continue
-            existing_cap = float(metrics["initial_capacity"] or 0.0)
-            if existing_cap <= 0.0:
-                continue
-            dst_region = district_to_region.get(dst_district)
-            if dst_region is None:
-                continue
-            dst_metrics = region_metrics.setdefault(dst_region, {})
-            for tech_key in (f"heat_grid_D{dst_district}", f"heat_exchanger_D{dst_district}"):
-                seeded = dst_metrics.setdefault(tech_key, {})
-                seeded_cap = float(seeded.get("initial_capacity", 0.0) or 0.0)
-                if seeded_cap <= 0.0:
-                    seeded["initial_capacity"] = 1.0
-                seeded.setdefault("initial_energy_output", 0.0)
-
     total_metrics: dict[str, dict[str, float]] = {}
     for rid, tech_map in region_metrics.items():
         if not isinstance(tech_map, dict):
@@ -475,62 +472,27 @@ def _write_cesm_inputs_from_optimization_context(
             agg["initial_energy_output"] += float(metrics["initial_energy_output"] or 0.0)
             agg["initial_capacity"] += float(metrics["initial_capacity"] or 0.0)
 
-    historical_pipe_import_targets_mwh: dict[int, float] = {}
-    historical_pipe_import_by_region: dict[int, float] = {}
-    for _rid_key, tech_map in list(region_metrics.items()):
-        if not isinstance(tech_map, dict):
-            continue
-        for tech_name, metrics in tech_map.items():
-            if not isinstance(metrics, dict):
-                continue
-            dst_district = _resolve_pipe_metric_dst_district(str(tech_name), _rid_key)
-            if dst_district is None:
-                continue
-            dst_region = district_to_region.get(dst_district)
-            if dst_region is None:
-                continue
-            imported = float(metrics["initial_energy_output"] or 0.0)
-            if imported <= 0.0:
-                continue
-            historical_pipe_import_by_region[dst_region] = historical_pipe_import_by_region.get(dst_region,
-                                                                                                0.0) + imported
-
+    primary_heat_exchanger = HEAT_EXCHANGER_NAMES[0]
+    historical_exchanger_targets_mwh: dict[int, float] = {}
     for district, rid in district_to_region.items():
-        if district >= len(annual_heat_by_d):
-            raise IndexError(
-                f"annual_heat_by_d missing entry for district index {district}; "
-                f"len(annual_heat_by_d)={len(annual_heat_by_d)}"
-            )
-        annual_heat = float(annual_heat_by_d[district])
-        if annual_heat <= 0.0:
+        district_metrics = region_metrics.get(rid)
+        if district_metrics is None:
             continue
-
-        share_override = min_pipe_import_share_targets.get(rid)
-        if share_override is not None:
-            target = annual_heat * share_override
-            if target > 0.0:
-                historical_pipe_import_targets_mwh[rid] = target
-            continue
-
-        hist_import = float(historical_pipe_import_by_region.get(rid, 0.0) or 0.0)
-        if hist_import > 0.0:
-            historical_pipe_import_targets_mwh[rid] = hist_import
-            continue
-
-        # Fallback: if Fernwärme exists historically (via heat exchanger output),
-        # enforce a small mandatory inter-district import floor.
-        district_metrics = region_metrics.get(rid, {})
         if not isinstance(district_metrics, dict):
             raise TypeError(f"region_technology_metrics[{rid}] must be a dict")
-        hx_key = f"heat_exchanger_D{district}"
-        hx_metrics = district_metrics.get(hx_key, {})
+        hx_key = f"{primary_heat_exchanger}_D{district}"
+        hx_metrics = district_metrics.get(hx_key)
+        if hx_metrics is None:
+            continue
         if not isinstance(hx_metrics, dict):
             raise TypeError(f"region_technology_metrics[{rid}][{hx_key}] must be a dict")
         hx_output = float(hx_metrics.get("initial_energy_output", 0.0) or 0.0)
-        if hx_output > 0.0:
-            target = hx_output * 0.001
-            if target > 0.0:
-                historical_pipe_import_targets_mwh[rid] = target
+        if hx_output <= 0.0:
+            continue
+        historical_exchanger_targets_mwh[rid] = max(
+            historical_exchanger_targets_mwh.get(rid, 0.0),
+            hx_output,
+        )
 
     if retain_existing_output_factor is None:
         retain_factor: float | None = None
@@ -552,29 +514,13 @@ def _write_cesm_inputs_from_optimization_context(
         lockout_years = 2
     lockout_years = max(0, int(lockout_years))
 
-    lockout_until_year = scenario_years[0] + lockout_years if scenario_years else None
-
-    def _import_retain_factor(year: int, year_index: int) -> float:
-        if lockout_until_year is not None and year < lockout_until_year:
-            return 1.0
-        if retain_schedule:
-            if year_index < len(retain_schedule):
-                return max(0.0, float(retain_schedule[year_index]))
-            return 0.5
-        if retain_factor is not None:
-            return max(0.0, float(retain_factor))
-        return 1.0
-
     logger.debug(
         "retain_existing_output_factor=%s -> retain_factor=%s",
         retain_existing_output_factor,
         retain_factor,
     )
 
-    total_min_dhn = float(sum(min_dhn_targets.values())) if min_dhn_targets else 0.0
-    total_min_heat_grid = float(sum(min_heat_grid_targets.values())) if min_heat_grid_targets else 0.0
-
-    _hx_base_names: tuple[str, ...] = HEAT_EXCHANGER_NAMES
+    _hx_base_name = primary_heat_exchanger
 
     for tech in sel_list:
         cin = _canon_co(tech.commodity_in)
@@ -611,7 +557,7 @@ def _write_cesm_inputs_from_optimization_context(
         from pypeline.energy_technology.technology import split_base_and_district as _sbd, \
             is_central_heat_supply as _ichs
         base_name, tech_district = _sbd(tech.name)
-        if base_name in _hx_base_names:
+        if base_name == _hx_base_name:
             if len(districts) == 1:
                 name = "HeatExchanger"
                 if name not in conv_procs:
@@ -723,49 +669,6 @@ def _write_cesm_inputs_from_optimization_context(
             }
         )
 
-    incoming_pipe_pairs_by_district: dict[int, list[tuple[int, int]]] = {}
-    for (i, j) in pipe_pairs:
-        incoming_pipe_pairs_by_district.setdefault(int(i), []).append((int(i), int(j)))
-
-    pipe_min_eout_by_pair: dict[tuple[int, int], Any] = {}
-
-    def _historical_hx_output_for_district(district_id: int) -> float:
-        rid = district_to_region.get(district_id, district_id)
-        district_metrics = region_metrics.get(rid, {})
-        if not isinstance(district_metrics, dict):
-            raise TypeError(f"region_technology_metrics[{rid}] must be a dict")
-        hx_key = f"heat_exchanger_D{district_id}"
-        hx_metrics = district_metrics.get(hx_key, {})
-        if not isinstance(hx_metrics, dict):
-            raise TypeError(f"region_technology_metrics[{rid}][{hx_key}] must be a dict")
-        return float(hx_metrics.get("initial_energy_output", 0.0) or 0.0)
-
-    for district in districts:
-        rid = district_to_region.get(district, district)
-        min_import_target = float(historical_pipe_import_targets_mwh.get(rid, 0.0) or 0.0)
-        if min_import_target <= 0.0:
-            continue
-        incoming_pairs = incoming_pipe_pairs_by_district.get(int(district), [])
-        if not incoming_pairs:
-            raise ValueError(
-                f"Historical DHN import target > 0 for district D{district} but no incoming Pipe_D{district}_D* connection is available"
-            )
-
-        # Apply target on one strongest incoming connection to avoid over-constraining all links.
-        anchor_pair = max(
-            incoming_pairs,
-            key=lambda pair: _historical_hx_output_for_district(int(pair[1])),
-        )
-        per_pipe_target = float(min_import_target)
-        if scenario_years:
-            min_pairs: list[tuple[int, float]] = []
-            for idx, year in enumerate(scenario_years):
-                min_pairs.append((int(year), per_pipe_target * _import_retain_factor(int(year), idx)))
-            min_profile = _format_year_profile(min_pairs)
-            pipe_min_eout_by_pair[anchor_pair] = min_profile if min_profile else per_pipe_target
-        else:
-            pipe_min_eout_by_pair[anchor_pair] = per_pipe_target
-
     for (i, j) in pipe_pairs:
         # Pipe_Di_Dj: import into district Di from district Dj.
         src_idx = district_index.get(j)
@@ -792,9 +695,6 @@ def _write_cesm_inputs_from_optimization_context(
             "capex_cost_power": float(pipe_capex_value),
             "capex_cost_base": pipe_capex_base,
         }
-        min_eout_value = pipe_min_eout_by_pair.get((int(i), int(j)))
-        if min_eout_value is not None:
-            row["min_eout"] = min_eout_value
         cs_rows.append(row)
 
     builder = _ConversionRowsBuilder(
@@ -811,6 +711,7 @@ def _write_cesm_inputs_from_optimization_context(
         min_central_cap_targets=min_central_cap_targets,
         min_central_cap_totals=min_central_cap_totals,
         min_central_cap_totals_by_co=min_central_cap_totals_by_co,
+        exchanger_throughput_targets=historical_exchanger_targets_mwh,
         district_to_region=district_to_region,
         region_metrics=region_metrics,
         total_metrics=total_metrics,

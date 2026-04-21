@@ -180,6 +180,7 @@ class EnergySystemBuilder:
             "min_heat_grid_share": None,
             "heat_grid_demand_name": DEFAULT_HEAT_GRID_DEMAND_NAME,
             "heat_grid_names": HEAT_EXCHANGER_NAMES,
+            "interdistrict_free_pipe_max_length_m": None,
             "heat_grid_cost_dataset": DEFAULT_HEAT_GRID_COST_DATASET,
             "heat_grid_cost_scaling": 1.0,
             "heat_grid_cost_min_factor": 1.0,
@@ -364,10 +365,12 @@ class EnergySystemBuilder:
 
         inter_district_pipe_specs = None
         if len(regions) > 1:
+            free_pipe_max_length_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
             inter_district_pipe_specs = build_inter_dhn_pipes_from_topologies(
                 regions=regions,
                 full_network=street_network,
                 pipe_capex_eur_per_km=1.0,
+                free_pipe_max_length_m=(None if free_pipe_max_length_m is None else float(free_pipe_max_length_m)),
             )
 
         es = EnergySystem(
