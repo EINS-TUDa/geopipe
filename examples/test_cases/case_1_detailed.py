@@ -55,7 +55,6 @@ def main():
     tech_registry.load_from_default()
 
     builder = EnergySystemBuilder(energy_system_name=config.model_name)
-    builder.set_region_topologies(topology_result.region_topologies)
     builder.set_street_network(topology_result.network)
     builder.set_demands(default=True)
     builder.set_technology_registry(tech_registry)

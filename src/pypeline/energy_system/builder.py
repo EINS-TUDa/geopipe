@@ -36,7 +36,6 @@ class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
         self.energy_system_name = energy_system_name
         self.base_crs = base_crs
-        self.region_topologies: list[nx.Graph] | None = None
         self.street_network: nx.Graph | None = None
         self.rule_book: EnergySystemRuleBook | None = None
         self.region_rule_book: RegionRuleBook | None = None
@@ -57,10 +56,6 @@ class EnergySystemBuilder:
 
     def set_street_network(self, network: nx.Graph):
         self.street_network = network
-        return self
-
-    def set_region_topologies(self, topologies: list[nx.Graph]):
-        self.region_topologies = list(topologies)
         return self
 
     def set_region_rule_book(self, rule_book: RegionRuleBook):
@@ -323,10 +318,7 @@ class EnergySystemBuilder:
             rb.set_rule_book(self.region_rule_book)
 
         regions: list[Region] = []
-        for idx, topology in enumerate(self.region_topologies):
-            region_id = topology.graph.get("id", idx)
-            if not isinstance(region_id, int):
-                region_id = idx
+        for region_id, topology in self._region_subgraphs():
             regions.append(rb.build(topology=topology, region_id=region_id))
 
         pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
@@ -369,11 +361,48 @@ class EnergySystemBuilder:
 
         return es
 
+    def _region_subgraphs(self) -> list[tuple[int, nx.Graph]]:
+        """Extract one subgraph per region from street_network using the 'id' edge attribute."""
+        buckets: dict[int, list[tuple]] = {}
+        for u, v, data in self.street_network.edges(data=True):
+            raw = data.get("id")
+            if raw is None:
+                continue
+            try:
+                region_id = int(float(raw))
+            except (TypeError, ValueError):
+                continue
+            buckets.setdefault(region_id, []).append((u, v, data))
+
+        result = []
+        for region_id in sorted(buckets):
+            sub = nx.Graph()
+            sub.graph.update(self.street_network.graph)
+            sub.graph["id"] = region_id
+            for u, v, data in buckets[region_id]:
+                sub.add_edge(u, v, **data)
+            result.append((region_id, sub))
+        return result
+
     def verify(self):
         if not isinstance(self.base_crs, str):
             raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
-        if not isinstance(self.region_topologies, list) or not self.region_topologies:
-            raise ValueError("Region topologies must be set as a non-empty list of NetworkX graphs")
+        if not isinstance(self.street_network, nx.Graph):
+            raise ValueError("street_network must be set as a NetworkX graph before building")
+        region_ids = set()
+        for _, _, d in self.street_network.edges(data=True):
+            raw = d.get("id")
+            try:
+                region_ids.add(int(float(raw)))
+            except (TypeError, ValueError):
+                pass
+        if not region_ids:
+            raise ValueError(
+                "street_network has no edges with a valid 'id' attribute. "
+                "Every edge must carry an integer 'id' indicating its region. "
+                "Use set_street_network() with a graph produced by gdf_to_nx() after "
+                "assigning region ids to the street GeoDataFrame."
+            )
         if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
             raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
         if not isinstance(self.data_registry, DataRegistry):

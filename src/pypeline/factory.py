@@ -49,7 +49,6 @@ def create_cesm_backend(
 def build_energy_system(
     *,
     model_name: str,
-    region_topologies: list,
     street_network,
     heating_shares_file: Path,
     region_builder_config_overrides: dict | None,
@@ -62,7 +61,6 @@ def build_energy_system(
     tech_registry.load_from_default()
 
     builder = EnergySystemBuilder(energy_system_name=model_name)
-    builder.set_region_topologies(region_topologies)
     builder.set_street_network(street_network)
     builder.set_demands(default=True)
     builder.set_technology_registry(tech_registry)

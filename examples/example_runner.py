@@ -107,7 +107,6 @@ def build_case_energy_system_from_scenario(
 
     energy_system = build_energy_system(
         model_name=model_name,
-        region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
         heating_shares_file=heating_shares_file,
         region_builder_config_overrides=region_builder_config_overrides,
@@ -339,7 +338,6 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
 
     energy_system = build_energy_system(
         model_name=config.model_name,
-        region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
