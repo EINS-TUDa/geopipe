@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.resolved_system import resolve_system
 from pypeline.units import UnitKW
@@ -18,7 +19,7 @@ def _es(
     regions: list,
     grid_prices=None,
     supply_prices=None,
-    inter_district_pipe_specs=None,
+    region_connections=None,
 ) -> EnergySystem:
     return EnergySystem(
         name="test",
@@ -26,7 +27,7 @@ def _es(
         units=UnitKW(),
         grid_prices=grid_prices or {"electricity": 100.0, "export": 0.0},
         supply_prices=supply_prices or {"gas": 50.0},
-        inter_district_pipe_specs=inter_district_pipe_specs,
+        pipes=region_connections or [],
     )
 
 
@@ -40,6 +41,10 @@ def _demand(commodity="residential_heat", value=500.0) -> RegionDemand:
 
 def _region(rid: int, demands=None, techs=None) -> Region:
     return Region(id_=rid, region_demands=demands or [_demand()], region_technologies=techs or [])
+
+
+def _conn(id_in: int, id_out: int, **kwargs) -> RegionConnection:
+    return RegionConnection(region_id_in=id_in, region_id_out=id_out, pipe_length_km=1.0, **kwargs)
 
 
 def scenario_years_t():
@@ -105,31 +110,26 @@ def retain_schedule_from_scenario_field_t():
     assert resolved.retain_schedule == [0.8, 0.7]
 
 
-def no_pipe_specs_gives_empty_pairs_t():
+def no_connections_gives_empty_pipe_connections_t():
     resolved = resolve_system(_es([_region(0)]), _scenario())
-    assert resolved.pipe_pairs == []
-    assert resolved.pipe_specs == {}
+    assert resolved.pipe_connections == []
 
 
-def non_free_pipe_pairs_t():
-    specs = {(0, 1): {"pipe_capex_base_eur": 10.0}, (1, 0): {"pipe_capex_base_eur": 10.0}}
-    es = _es([_region(0), _region(1)], inter_district_pipe_specs=specs)
+def pipe_connections_passed_through_t():
+    conns = [_conn(0, 1), _conn(1, 0)]
+    es = _es([_region(0), _region(1)], region_connections=conns)
     resolved = resolve_system(es, _scenario())
-    assert (0, 1) in resolved.pipe_pairs
-    assert (1, 0) in resolved.pipe_pairs
+    assert len(resolved.pipe_connections) == 2
+    assert resolved.pipe_connections[0].region_id_in == 0
+    assert resolved.pipe_connections[1].region_id_in == 1
 
 
-def free_pipes_have_zero_capex_t():
-    specs = {
-        (0, 1): {"pipe_capex_base_eur": 0.0, "capex_cost_power": 0.0},
-        (1, 0): {"pipe_capex_base_eur": 0.0, "capex_cost_power": 0.0},
-    }
-    es = _es([_region(0), _region(1)], inter_district_pipe_specs=specs)
-    resolved = resolve_system(es, _scenario())
-    assert (0, 1) in resolved.pipe_pairs
-    assert (1, 0) in resolved.pipe_pairs
-    assert resolved.pipe_specs[(0, 1)]["capex_cost_power"] == 0.0
-    assert resolved.pipe_specs[(1, 0)]["capex_cost_power"] == 0.0
+def below_threshold_zeroes_costs_t():
+    rc = _conn(0, 1, pipe_capex_base_eur=999.0, pipe_capex_eur_per_mw=50.0,
+               pipe_opex_eur_per_mwh=2.0, below_distance_threshold=True)
+    assert rc.pipe_capex_base_eur == pytest.approx(0.0)
+    assert rc.pipe_capex_eur_per_mw == pytest.approx(0.0)
+    assert rc.pipe_opex_eur_per_mwh == pytest.approx(0.0)
 
 
 def lockout_years_and_discount_rate_t():

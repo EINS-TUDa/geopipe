@@ -7,9 +7,10 @@ backend-specific code free of domain-derivation logic.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from pypeline.energy_system.pipe import Pipe
 from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
 
 if TYPE_CHECKING:
@@ -53,9 +54,8 @@ class ResolvedSystem:
     # Local DHN capex per region: rid -> {local_grid_capex_base_eur: float}
     local_dhn_costs: dict[int, dict[str, float]]
 
-    # Inter-district pipe connections (non-free pairs)
-    pipe_pairs: list[tuple[int, int]]
-    pipe_specs: dict[tuple[int, int], dict[str, Any]]
+    # Inter-district pipe connections
+    pipe_connections: list[Pipe] = field(default_factory=list)
 
 
 def resolve_system(
@@ -122,16 +122,6 @@ def resolve_system(
     }
     constraints = dict(energy_system.constraints or {})
 
-    # Pipe connections
-    pipe_pairs: list[tuple[int, int]] = []
-    pipe_specs: dict[tuple[int, int], dict[str, Any]] = {}
-
-    raw_specs = energy_system.inter_district_pipe_specs or {}
-    if raw_specs:
-        all_specs = {(int(i), int(j)): dict(specs or {}) for (i, j), specs in raw_specs.items()}
-        pipe_specs = {pair: specs for pair, specs in all_specs.items()}
-        pipe_pairs = sorted(pipe_specs)
-
     return ResolvedSystem(
         scenario_years=scenario_years,
         discount_rate=discount_rate,
@@ -147,6 +137,5 @@ def resolve_system(
         retain_schedule=retain_schedule,
         constraints=constraints,
         local_dhn_costs=local_dhn_costs,
-        pipe_pairs=pipe_pairs,
-        pipe_specs=pipe_specs,
+        pipe_connections=list(energy_system.pipes or []),
     )

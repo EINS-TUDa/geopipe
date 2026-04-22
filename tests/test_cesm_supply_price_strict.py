@@ -75,10 +75,5 @@ def missing_supply_t(tmp_path: Path) -> None:
             scenario_name="Base",
             tss_name="4ThinWeeks",
             dt_hours=1,
-            pipe_loss_fraction=0.02,
-            pipe_cap_max_mw=500.0,
-            pipe_opex_eur_per_mwh=2.0,
-            pipe_capex_eur_per_mw=30.0,
-            pipe_lifetime_years=40,
             selected_techs=selected_techs,
         )

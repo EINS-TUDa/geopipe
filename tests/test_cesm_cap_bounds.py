@@ -7,6 +7,7 @@ from shapely.geometry import Polygon
 
 import pandas as pd
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 from pypeline.optimization.resolved_system import resolve_system
@@ -233,7 +234,10 @@ def exchanger_target_not_pipe_floor_t(tmp_path):
     _ensure_tss(workdir)
 
     es = _mock_two_district_energy_system(data_dir=REPO_ROOT / "data")
-    es.inter_district_pipe_specs = {(0, 1): {"pipe_capex_base_eur": 10.0}, (1, 0): {"pipe_capex_base_eur": 10.0}}
+    es.pipes = [
+        RegionConnection(region_id_in=0, region_id_out=1, pipe_length_km=1.0, pipe_capex_base_eur=10.0),
+        RegionConnection(region_id_in=1, region_id_out=0, pipe_length_km=1.0, pipe_capex_base_eur=10.0),
+    ]
     resolved = resolve_system(es, _mock_scenario_two_district(), retain_existing_output_schedule=[1.0, 1.0])
     _write_cesm_inputs(
         resolved,
@@ -262,42 +266,37 @@ def exchanger_target_not_pipe_floor_t(tmp_path):
     assert _profile_peak(hx_row_d1.get("min_eout")) is None
 
 
-def free_pipe_rows_removed_t(tmp_path):
-    """Checks free pipes are represented without Pipe rows and with pooled district heat commodities."""
-    workdir = tmp_path / "cesm_free_pipe_rows_removed"
+def zero_cost_pipes_have_rows_t(tmp_path):
+    """Checks that below-threshold (zero-cost) pipes produce Pipe rows with zero costs."""
+    workdir = tmp_path / "cesm_zero_cost_pipes"
     _ensure_tss(workdir)
 
     es = _mock_two_district_energy_system(data_dir=REPO_ROOT / "data")
-    es.inter_district_pipe_specs = {(0, 1): {"pipe_capex_base_eur": 10.0, "is_free": True}, (1, 0): {"pipe_capex_base_eur": 10.0, "is_free": True}}
+    es.pipes = [
+        RegionConnection(region_id_in=0, region_id_out=1, pipe_length_km=0.01, below_distance_threshold=True),
+        RegionConnection(region_id_in=1, region_id_out=0, pipe_length_km=0.01, below_distance_threshold=True),
+    ]
     resolved = resolve_system(es, _mock_scenario_two_district(), retain_existing_output_schedule=[1.0, 1.0])
     _write_cesm_inputs(
         resolved,
         techmap_dir=workdir / "Data" / "Techmap",
         timeseries_dir=workdir / "Data" / "TimeSeries",
-        model_name="FreePipeRowsRemoved",
+        model_name="ZeroCostPipes",
         scenario_name="Base",
         tss_name="4ThinWeeks",
         dt_hours=1,
         selected_techs=_selected_techs_two_district(),
     )
 
-    xlsx_path = workdir / "Data" / "Techmap" / "FreePipeRowsRemoved.xlsx"
+    xlsx_path = workdir / "Data" / "Techmap" / "ZeroCostPipes.xlsx"
     assert xlsx_path.exists()
 
     df = pd.read_excel(xlsx_path, sheet_name="ConversionSubProcess")
     assert not df.empty
 
     pipe_rows = df[df["conversion_process_name"].astype(str).str.startswith("Pipe_D")]
-    assert pipe_rows.empty
+    assert not pipe_rows.empty
 
-    cen_d0 = df[df["conversion_process_name"] == "cen_heat_pump_D0"].iloc[0]
-    cen_d1 = df[df["conversion_process_name"] == "cen_heat_pump_D1"].iloc[0]
-    assert str(cen_d0.get("commodity_out")) == str(cen_d1.get("commodity_out"))
-    assert str(cen_d0.get("commodity_out")).startswith("district_heat_in_free_D")
-
-    hg_d0 = df[df["conversion_process_name"] == "heat_grid_D0"].iloc[0]
-    hg_d1 = df[df["conversion_process_name"] == "heat_grid_D1"].iloc[0]
-    assert str(hg_d0.get("commodity_in")) == str(cen_d0.get("commodity_out"))
-    assert str(hg_d1.get("commodity_in")) == str(cen_d0.get("commodity_out"))
-    assert str(hg_d0.get("commodity_out")) == str(hg_d1.get("commodity_out"))
-    assert str(hg_d0.get("commodity_out")).startswith("district_heat_out_free_D")
+    for _, row in pipe_rows.iterrows():
+        assert _profile_peak(row.get("capex_cost_base")) in (None, 0.0)
+        assert _profile_peak(row.get("opex_cost_energy")) in (None, 0.0)

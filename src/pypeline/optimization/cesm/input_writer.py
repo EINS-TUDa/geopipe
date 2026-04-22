@@ -23,11 +23,10 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Union
 
 import pandas as pd
 
-from pypeline.energy_system.core import EnergySystem, Scenario
 from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
 from pypeline.optimization.cesm.io_utils import (
     _canon_co,
@@ -41,13 +40,13 @@ from pypeline.optimization.cesm.io_utils import (
     _tss_df,
 )
 from pypeline.energy_technology.technology import (Technology, split_base_and_district as _split_base_and_district)
-from pypeline.energy_technology.technology_registry import TechnologyRegistry, get_default_technology_registry
+from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm.conversion_rows import (
     UNBOUNDED_CAP,
     UNBOUNDED_ENERGY,
     _ConversionRowsBuilder,
 )
-from pypeline.optimization.resolved_system import ResolvedSystem, resolve_system
+from pypeline.optimization.resolved_system import ResolvedSystem
 from pypeline.validation import (
     sanitize_price_map,
     to_int_id,
@@ -93,16 +92,9 @@ def _write_cesm_inputs(
         tss_name: str,
         dt_hours: int = 1,
         heat_commodity_base: str | None = None,
-        pipe_loss_fraction: float | None = None,
-        pipe_cap_max_mw: float | None = None,
-        pipe_opex_eur_per_mwh: float | None = None,
-        pipe_capex_eur_per_mw: float | None = None,
-        pipe_lifetime_years: int | None = None,
         selected_techs: list[Technology] | TechnologyRegistry | None = None,
         retain_existing_output_factor: float | None = None,
-        retain_existing_output_years_factor: float | None = None,
-        technology_registry: TechnologyRegistry | None = None,
-        pipe_technology_name: str = "heat_pipe",
+        retain_existing_output_years_factor: float | None = None
 ) -> None:
     paths = _prepare_io_paths(Path(techmap_dir), Path(timeseries_dir), model_name, tss_name)
 
@@ -135,8 +127,7 @@ def _write_cesm_inputs(
     else:
         heat_names = [f"{base_heat_name}_D{i}" for i in districts]
 
-    pipe_pairs: List[Tuple[int, int]] = resolved.pipe_pairs
-    pipe_specs_by_pair: dict[tuple[int, int], dict[str, Any]] = resolved.pipe_specs
+    pipe_connections = resolved.pipe_connections
 
     district_index = {d: idx for idx, d in enumerate(districts)}
     if len(districts) <= 1:
@@ -196,43 +187,10 @@ def _write_cesm_inputs(
             filtered.append(tech)
     sel_list = filtered
 
-    default_registry = get_default_technology_registry()
-    default_registry.load_from_default()
-    pipe_tech = default_registry.get_by_name(pipe_technology_name)
-
     local_dhn_capex_base_by_district: dict[int, float] = {
         int(district_id): float(payload["local_grid_capex_base_eur"])
         for district_id, payload in resolved.local_dhn_costs.items()
     }
-
-    def _require_value(value_override: Any, spec_value: Any, field_name: str) -> Any:
-        if value_override is not None:
-            return value_override
-        if spec_value is not None:
-            return spec_value
-        raise ValueError(f"{field_name} is required for pipe technology '{pipe_technology_name}'")
-
-    spec_efficiency = max(0.0, min(1.0, float(pipe_tech.efficiency)))
-    spec_loss = max(0.0, 1.0 - spec_efficiency)
-    spec_capex = float(pipe_tech.capex_cost_power)
-    spec_opex = float(pipe_tech.opex_cost_energy)
-    spec_lifetime = int(pipe_tech.technical_lifetime)
-    spec_cap_max = float(pipe_tech.cap_max)
-
-    if pipe_pairs:
-        resolved_loss = _require_value(pipe_loss_fraction, spec_loss, "pipe_loss_fraction or pipe efficiency")
-        pipe_eff = max(0.0, 1.0 - float(resolved_loss))
-        pipe_capex_value = _require_value(pipe_capex_eur_per_mw, spec_capex, "pipe_capex_eur_per_mw")
-        pipe_opex_value = _require_value(pipe_opex_eur_per_mwh, spec_opex, "pipe_opex_eur_per_mwh")
-        pipe_lifetime_value = int(_require_value(pipe_lifetime_years, spec_lifetime, "pipe_lifetime_years"))
-        pipe_cap_max_value = float(_require_value(pipe_cap_max_mw, spec_cap_max, "pipe_cap_max_mw"))
-    else:
-        resolved_loss = _require_value(pipe_loss_fraction, spec_loss, "pipe_loss_fraction or pipe efficiency")
-        pipe_eff = max(0.0, 1.0 - float(resolved_loss))
-        pipe_capex_value = _require_value(pipe_capex_eur_per_mw, spec_capex, "pipe_capex_eur_per_mw")
-        pipe_opex_value = _require_value(pipe_opex_eur_per_mwh, spec_opex, "pipe_opex_eur_per_mwh")
-        pipe_lifetime_value = int(_require_value(pipe_lifetime_years, spec_lifetime, "pipe_lifetime_years"))
-        pipe_cap_max_value = float(_require_value(pipe_cap_max_mw, spec_cap_max, "pipe_cap_max_mw"))
 
     constraints_raw = resolved.constraints or {}
     if constraints_raw and not isinstance(constraints_raw, dict):
@@ -416,7 +374,7 @@ def _write_cesm_inputs(
         conv_procs.append("HeatDemand")
     else:
         conv_procs += [f"HeatDemand_D{i}" for i in districts]
-        conv_procs += [f"Pipe_D{i}_D{j}" for (i, j) in pipe_pairs]
+        conv_procs += [f"Pipe_D{rc.region_id_in}_D{rc.region_id_out}" for rc in pipe_connections]
     for tech in sel_list:
         from pypeline.energy_technology.technology import split_base_and_district as _sbd, \
             is_central_heat_supply as _ichs
@@ -533,8 +491,9 @@ def _write_cesm_inputs(
             }
         )
 
-    for (i, j) in pipe_pairs:
+    for rc in pipe_connections:
         # Pipe_Di_Dj: import into district Di from district Dj.
+        i, j = rc.region_id_in, rc.region_id_out
         src_idx = district_index.get(j)
         if src_idx is None:
             raise KeyError(f"Missing district index for source district {j}")
@@ -543,20 +502,18 @@ def _write_cesm_inputs(
             raise KeyError(f"Missing district index for target district {i}")
         src_comm = district_heat_out_names.get(districts[src_idx], f"district_heat_out_D{districts[src_idx]}")
         dst_comm = district_heat_in_names.get(districts[dst_idx], f"district_heat_in_D{districts[dst_idx]}")
-        pair_specs = pipe_specs_by_pair.get((int(i), int(j)), {})
-        pipe_capex_base = float(pair_specs.get("pipe_capex_base_eur", 0.0) or 0.0)
         row = {
             "conversion_process_name": f"Pipe_D{i}_D{j}",
             "commodity_in": src_comm,
             "commodity_out": dst_comm,
             "scenario": scenario_name,
-            "efficiency": pipe_eff,
+            "efficiency": max(0.0, 1.0 - float(rc.pipe_loss_fraction)),
             "technical_availability": 1.0,
-            "technical_lifetime": int(pipe_lifetime_value),
-            "cap_max": float(pipe_cap_max_value),
+            "technical_lifetime": int(rc.pipe_lifetime_years),
+            "cap_max": float(rc.pipe_cap_max_mw),
             "max_eout": UNBOUNDED_ENERGY,
-            "opex_cost_energy": float(pipe_opex_value),
-            "capex_cost_base": pipe_capex_base,
+            "opex_cost_energy": float(rc.pipe_opex_eur_per_mwh),
+            "capex_cost_base": float(rc.pipe_capex_base_eur),
         }
         cs_rows.append(row)
 

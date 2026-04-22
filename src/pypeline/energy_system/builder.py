@@ -303,22 +303,6 @@ class EnergySystemBuilder:
         self._dhn_central_seed_cache[district_id_i] = selected
         return selected
 
-    def _resolve_street_network(self) -> nx.Graph:
-        if self.street_network is not None:
-            return self.street_network
-        if self.data_registry is not None:
-            try:
-                network = self.data_registry.query({"key": "street_network", "base_crs": self.base_crs})
-                if network is not None:
-                    return network
-            except LookupError:
-                pass
-        raise ValueError(
-            "No street network available for inter-district routing. "
-            "Set one explicitly via set_street_network() or provide a 'street_network' "
-            "entry in the data registry."
-        )
-
     def build(self) -> EnergySystem:
         self.verify()
         self._dhn_central_seed_cache = {}
@@ -353,27 +337,31 @@ class EnergySystemBuilder:
             )
             region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
 
-        street_network = self._resolve_street_network()
-
-        inter_district_pipe_specs = None
+        pipes = []
         if len(regions) > 1:
-            free_pipe_max_length_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
-            inter_district_pipe_specs = build_inter_dhn_pipes_from_topologies(
+            distance_threshold_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
+            pipe_eff = max(0.0, min(1.0, float(pipe_tech.efficiency)))
+            pipes = build_inter_dhn_pipes_from_topologies(
                 regions=regions,
-                full_network=street_network,
-                pipe_capex_eur_per_km=1.0,
-                free_pipe_max_length_m=(None if free_pipe_max_length_m is None else float(free_pipe_max_length_m)),
+                full_network=self.street_network,
+                pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
+                below_distance_threshold_m=(None if distance_threshold_m is None else float(distance_threshold_m)),
+                pipe_loss_fraction=max(0.0, 1.0 - pipe_eff),
+                pipe_capex_eur_per_mw=float(pipe_tech.capex_cost_power),
+                pipe_opex_eur_per_mwh=float(pipe_tech.opex_cost_energy),
+                pipe_cap_max_mw=float(pipe_tech.cap_max),
+                pipe_lifetime_years=int(pipe_tech.technical_lifetime),
             )
 
         es = EnergySystem(
             name=self.energy_system_name,
             regions=regions,
-            street_network=street_network,
+            street_network=self.street_network,
             units=self.unit,
             technology_registry=self.technology_registry,
             grid_prices=self.grid_prices,
             supply_prices=self.supply_prices,
-            inter_district_pipe_specs=inter_district_pipe_specs,
+            pipes=pipes,
         )
 
         if self.rule_book:

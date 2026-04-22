@@ -12,6 +12,7 @@ import pandas as pd
 from shapely.geometry import MultiPoint
 
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
+from pypeline.energy_system.pipe import Pipe
 from pypeline.units import Unit
 
 
@@ -26,7 +27,7 @@ class EnergySystem:
     supply_prices: dict[str, float] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
-    inter_district_pipe_specs: dict[tuple[int, int], dict[str, Any]] | None = None
+    pipes: list[Pipe] = field(default_factory=list)
 
 
 @dataclass

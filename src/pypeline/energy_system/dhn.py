@@ -8,6 +8,7 @@ from collections.abc import Hashable
 from math import isfinite
 import networkx as nx
 from pypeline.energy_system.core import Region
+from pypeline.energy_system.pipe import Pipe
 
 
 def _demand_nodes(
@@ -101,22 +102,27 @@ def build_inter_dhn_pipes_from_topologies(
     demand_column: str = "total_heat_demand",
     region_id_column: str = "id",
     min_interdistrict_pipe_length_m: float = 1.0,
-    free_pipe_max_length_m: float | None = None,
-) -> dict[tuple[int, int], dict[str, float | bool]]:
-    """Compute inter-district pipe specs using legal shortest paths on the street network."""
+    below_distance_threshold_m: float | None = None,
+    pipe_loss_fraction: float = 0.02,
+    pipe_capex_eur_per_mw: float = 0.0,
+    pipe_opex_eur_per_mwh: float = 0.0,
+    pipe_cap_max_mw: float = 500.0,
+    pipe_lifetime_years: int = 40,
+) -> list[Pipe]:
+    """Compute inter-district pipe connections using legal shortest paths on the street network."""
     capex_per_km = float(pipe_capex_eur_per_km)
     if not isfinite(capex_per_km) or capex_per_km < 0.0:
         raise ValueError("pipe_capex_eur_per_km must be finite and >= 0")
-    if free_pipe_max_length_m is not None:
-        free_threshold = float(free_pipe_max_length_m)
-        if not isfinite(free_threshold) or free_threshold < 0.0:
-            raise ValueError("free_pipe_max_length_m must be finite and >= 0 when provided")
+    if below_distance_threshold_m is not None:
+        threshold = float(below_distance_threshold_m)
+        if not isfinite(threshold) or threshold < 0.0:
+            raise ValueError("below_distance_threshold_m must be finite and >= 0 when provided")
     else:
-        free_threshold = None
+        threshold = None
     if len(regions) < 2:
-        return {}
+        return []
 
-    records: dict[tuple[int, int], dict[str, float | bool]] = {}
+    connections: list[Pipe] = []
     edge_owner_map = _edge_owner_by_pair(full_network, region_id_column=region_id_column)
 
     for i, region_a in enumerate(regions):
@@ -152,22 +158,26 @@ def build_inter_dhn_pipes_from_topologies(
             raw_length_m = float(min(reachable.values()))
             used_length_m = max(raw_length_m, float(min_interdistrict_pipe_length_m))
             touching = bool(set(region_a.topology.nodes).intersection(set(region_b.topology.nodes)))
-            is_free = touching or (free_threshold is not None and raw_length_m <= free_threshold + 1e-9)
+            below_threshold = touching or (threshold is not None and raw_length_m <= threshold + 1e-9)
 
-            length_m = used_length_m
-            min_pipe_km = length_m / 1000.0
-            payload = {
-                "min_pipe_km": float(min_pipe_km),
-                "pipe_capex_base_eur": float(capex_per_km * min_pipe_km),
-                "path_length_m_raw": float(raw_length_m),
-                "path_length_m_used": float(used_length_m),
-                "is_touching": bool(touching),
-                "is_free": bool(is_free),
-            }
-            records[(region_a.id, region_b.id)] = payload
-            records[(region_b.id, region_a.id)] = payload
+            pipe_length_km = used_length_m / 1000.0
+            pipe_capex_base = capex_per_km * pipe_length_km
 
-    return records
+            for id_in, id_out in [(region_a.id, region_b.id), (region_b.id, region_a.id)]:
+                connections.append(Pipe(
+                    region_id_in=id_in,
+                    region_id_out=id_out,
+                    pipe_length_km=pipe_length_km,
+                    pipe_capex_base_eur=pipe_capex_base,
+                    below_distance_threshold=below_threshold,
+                    pipe_loss_fraction=pipe_loss_fraction,
+                    pipe_capex_eur_per_mw=pipe_capex_eur_per_mw,
+                    pipe_opex_eur_per_mwh=pipe_opex_eur_per_mwh,
+                    pipe_cap_max_mw=pipe_cap_max_mw,
+                    pipe_lifetime_years=pipe_lifetime_years,
+                ))
+
+    return connections
 
 
 __all__ = [
