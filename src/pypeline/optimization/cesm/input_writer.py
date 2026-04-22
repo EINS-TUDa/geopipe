@@ -511,7 +511,7 @@ def _write_cesm_inputs(
             "technical_availability": 1.0,
             "technical_lifetime": pipe.pipe_lifetime_years,
             "cap_max": pipe.pipe_cap_max_mw,
-            "max_eout": None,
+            "max_eout": pipe.pipe_cap_max_mwh,
             "opex_cost_energy": pipe.pipe_opex_eur_per_mwh,
             "capex_cost_base": pipe.pipe_capex_base_eur,
         }

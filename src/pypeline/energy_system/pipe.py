@@ -12,6 +12,7 @@ class Pipe:
     pipe_capex_eur_per_mw: float = 0.0
     pipe_opex_eur_per_mwh: float = 0.0
     pipe_cap_max_mw: float = 500.0
+    pipe_cap_max_mwh: float = None
     pipe_lifetime_years: int = 40
 
     def __post_init__(self) -> None:
