@@ -12,6 +12,7 @@ import pandas as pd
 from shapely.geometry import MultiPoint
 
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
+from pypeline.energy_system.pipe import Pipe
 from pypeline.units import Unit
 
 
@@ -22,10 +23,11 @@ class EnergySystem:
     units: Unit
     street_network: nx.Graph | None = None
     technology_registry: TechnologyRegistry | None = None
-    commodity_config: dict[str, Any] = field(default_factory=dict)
+    grid_prices: dict[str, float] = field(default_factory=dict)
+    supply_prices: dict[str, float] = field(default_factory=dict)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
-    inter_district_pipe_specs: dict[tuple[int, int], dict[str, Any]] | None = None
+    pipes: list[Pipe] = field(default_factory=list)
 
 
 @dataclass
@@ -100,6 +102,7 @@ class Scenario:
     retain_existing_output_drop_per_year: Number | None = None
     lockout_years: int = 2
 
+    @property
     def years(self) -> list[int]:
         return list(range(self.start_year, self.end_year + 1, self.year_gap))
 

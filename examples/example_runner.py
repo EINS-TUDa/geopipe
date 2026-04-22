@@ -107,7 +107,6 @@ def build_case_energy_system_from_scenario(
 
     energy_system = build_energy_system(
         model_name=model_name,
-        region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
         heating_shares_file=heating_shares_file,
         region_builder_config_overrides=region_builder_config_overrides,
@@ -183,7 +182,7 @@ def _build_execution_result(
         results_obj=results_obj,
         results_raw=results_obj.raw,
         results_report_html=report_path,
-        years=scenario.years(),
+        years=scenario.years,
         plotter=EnergySystemPlotter(energy_system),
         plots_dir=plots_dir,
         project_root=project_root,
@@ -277,16 +276,18 @@ def run_scenario_case(
         retain_existing_output_drop_per_year=config.retain_existing_output_drop_per_year,
         lockout_years=config.lockout_years,
     )
+    case_dir = config.scenario_file.parent
     backend = create_cesm_backend(
-        config.project_root,
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
         dt_hours=config.dt_hours,
         scenario=scenario,
         demand_name=config.demand_name,
+        timeseries_dir=case_dir / "input_data",
+        output_dir=case_dir / "output_data",
     )
-    solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
+    solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
     report_path = _write_results_report(
         output_dir=plots_dir,
@@ -337,7 +338,6 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
 
     energy_system = build_energy_system(
         model_name=config.model_name,
-        region_topologies=topology_result.region_topologies,
         street_network=topology_result.network,
         heating_shares_file=config.heating_shares_file,
         region_builder_config_overrides=config.region_builder_config_overrides,
@@ -361,13 +361,14 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         lockout_years=config.lockout_years,
     )
     backend = create_cesm_backend(
-        config.project_root,
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
         dt_hours=config.dt_hours,
         scenario=scenario,
         demand_name=config.demand_name,
+        timeseries_dir=config.input_dir,
+        output_dir=config.output_dir,
     )
     solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
     results_obj = solution.results

@@ -66,10 +66,26 @@ def _canon_co(name: Optional[str]) -> str:
     return name
 
 
-def _write_demand_profile(timeseries_dir: Path, profile_name: str, profile: np.ndarray) -> Path:
-    path = timeseries_dir / f"{profile_name}.txt"
-    path.write_text(" ".join(f"{x:.8f}" for x in profile.tolist()), encoding="utf-8")
-    return path
+def commodity_config_from_energy_system(
+    energy_system: "EnergySystem",
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Extract and validate commodity price maps from an EnergySystem."""
+    grid_prices = sanitize_price_map(getattr(energy_system, "grid_prices", None))
+    supply_prices = sanitize_price_map(getattr(energy_system, "supply_prices", None))
+    if not grid_prices:
+        raise ValueError("Missing grid price map on EnergySystem.grid_prices")
+    if not supply_prices:
+        raise ValueError("Missing supply price map on EnergySystem.supply_prices")
+    return grid_prices, supply_prices
+
+
+def write_demand_profile(timeseries_dir: Path, profile_name: str, profile_full: np.ndarray) -> None:
+    """Write a normalized 8760-hour demand profile into CESM timeseries format."""
+    values = np.asarray(profile_full, dtype=float)
+    if values.size != 8760:
+        raise ValueError("Demand profile must contain exactly 8760 values")
+    profile_path = timeseries_dir / f"{profile_name}.txt"
+    profile_path.write_text(" ".join(f"{float(v):.8f}" for v in values), encoding="utf-8")
 
 
 def _units_df() -> pd.DataFrame:
@@ -238,26 +254,10 @@ def _write_techmap_workbook(
     )
 
 
-def commodity_config_from_energy_system(es: "EnergySystem") -> tuple[dict[str, float], dict[str, float]]:
-    """Extract and validate commodity grid/supply prices from an EnergySystem."""
-    config_raw = getattr(es, "commodity_config", None)
-    if config_raw is None:
-        raise ValueError("EnergySystem.commodity_config is required to provide commodity prices")
-    if not isinstance(config_raw, dict):
-        raise ValueError("EnergySystem.commodity_config must be a mapping")
-
-    grid_raw = config_raw.get("grid_prices")
-    supply_raw = config_raw.get("supply_prices_eur_per_mwh")
-    if not isinstance(grid_raw, dict) or not isinstance(supply_raw, dict):
-        raise ValueError("EnergySystem.commodity_config must include grid_prices and supply_prices_eur_per_mwh mappings")
-
-    return sanitize_price_map(grid_raw), sanitize_price_map(supply_raw)
-
-
 def resolve_retain_schedule(
     *,
     explicit_schedule: Optional[list[float]],
-    scenario: "Scenario" | None,
+    scenario: "Scenario",
 ) -> Optional[list[float]]:
     """Resolve retention schedule from explicit values or scenario fields."""
     if explicit_schedule:
@@ -265,11 +265,11 @@ def resolve_retain_schedule(
     if scenario is None:
         return None
 
-    scen_schedule = getattr(scenario, "retain_existing_output_schedule", None)
+    scen_schedule = scenario.retain_existing_output_schedule
     if scen_schedule:
         return scen_schedule
 
-    drop_val_raw = getattr(scenario, "retain_existing_output_drop_per_year", None)
+    drop_val_raw = scenario.retain_existing_output_drop_per_year
     if drop_val_raw is None:
         return None
     try:
@@ -280,7 +280,7 @@ def resolve_retain_schedule(
         return None
 
     drop_val = max(0.0, drop_val)
-    years = scenario.years() if hasattr(scenario, "years") else []
+    years = scenario.years
     if not years:
         return None
     start_year = years[0]

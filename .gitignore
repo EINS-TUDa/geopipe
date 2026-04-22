@@ -6,7 +6,8 @@ scripts/
 *.DS_Store
 .vscode
 site/
-output_data/*
+**/output_data/*
 plots/*
 .claude
 *.log
+*.html

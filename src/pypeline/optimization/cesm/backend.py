@@ -81,7 +81,11 @@ class CESMOptimizationBackend(OptimizationBackend):
         if not isinstance(energy_system, EnergySystem):
             raise TypeError("CESMOptimizationBackend.solve expects an EnergySystem")
 
-        logger.debug("solve: energy_system commodity_config=%s", energy_system.commodity_config)
+        logger.debug(
+            "solve: energy_system prices grid=%s supply=%s",
+            getattr(energy_system, "grid_prices", None),
+            getattr(energy_system, "supply_prices", None),
+        )
 
         scenario_obj = scenario or self.scenario
         if scenario_obj is None:
