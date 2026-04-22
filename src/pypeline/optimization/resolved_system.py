@@ -23,7 +23,7 @@ class ResolvedSystem:
     # Scenario-derived
     scenario_years: list[int]
     discount_rate: float
-    lockout_years: int
+    lockout_until_year: int
 
     # Regions
     region_ids: list[int]
@@ -68,7 +68,7 @@ def resolve_system(
 
     scenario_years = scenario.years
     discount_rate = float(scenario.discount_rate)
-    lockout_years = max(0, int(scenario.lockout_years))
+    lockout_until_year = scenario.lockout_until_year
 
     retain_schedule = resolve_retain_schedule(
         explicit_schedule=retain_existing_output_schedule,
@@ -125,7 +125,7 @@ def resolve_system(
     return ResolvedSystem(
         scenario_years=scenario_years,
         discount_rate=discount_rate,
-        lockout_years=lockout_years,
+        lockout_until_year=lockout_until_year,
         region_ids=region_ids,
         demand_commodity=demand_commodity or "residential_heat",
         demand_profile=demand_profile,

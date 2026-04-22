@@ -105,7 +105,7 @@ def _write_cesm_inputs(
     end_year_int = scenario_years[-1]
     year_step_int = scenario_years[1] - scenario_years[0] if len(scenario_years) > 1 else 1
     discount_rate = resolved.discount_rate
-    lockout_years = resolved.lockout_years
+    lockout_until_year = resolved.lockout_until_year
 
     if resolved.retain_schedule is None:
         raise ValueError("retain_existing_output_schedule must be provided by the scenario (no defaults)")
@@ -538,7 +538,7 @@ def _write_cesm_inputs(
         retain_factor=retain_factor,
         retain_years_factor=retain_existing_output_years_factor,
         retain_schedule=retain_schedule,
-        lockout_years=lockout_years,
+        lockout_until_year=lockout_until_year,
         elec_price_eur_per_mwh=elec_price_eur_per_mwh,
         local_dhn_capex_base_by_district=local_dhn_capex_base_by_district,
     )
