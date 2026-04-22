@@ -374,7 +374,7 @@ def _write_cesm_inputs(
         conv_procs.append("HeatDemand")
     else:
         conv_procs += [f"HeatDemand_D{i}" for i in districts]
-        conv_procs += [f"Pipe_D{rc.region_id_in}_D{rc.region_id_out}" for rc in pipe_connections]
+        conv_procs += [f"Pipe_D{pipe.region_id_in}_D{pipe.region_id_out}" for pipe in pipe_connections]
     for tech in sel_list:
         from pypeline.energy_technology.technology import split_base_and_district as _sbd, \
             is_central_heat_supply as _ichs
@@ -491,9 +491,9 @@ def _write_cesm_inputs(
             }
         )
 
-    for rc in pipe_connections:
+    for pipe in pipe_connections:
         # Pipe_Di_Dj: import into district Di from district Dj.
-        i, j = rc.region_id_in, rc.region_id_out
+        i, j = pipe.region_id_in, pipe.region_id_out
         src_idx = district_index.get(j)
         if src_idx is None:
             raise KeyError(f"Missing district index for source district {j}")
@@ -507,13 +507,13 @@ def _write_cesm_inputs(
             "commodity_in": src_comm,
             "commodity_out": dst_comm,
             "scenario": scenario_name,
-            "efficiency": max(0.0, 1.0 - float(rc.pipe_loss_fraction)),
+            "efficiency": max(0.0, 1.0 - float(pipe.pipe_loss_fraction)),
             "technical_availability": 1.0,
-            "technical_lifetime": int(rc.pipe_lifetime_years),
-            "cap_max": float(rc.pipe_cap_max_mw),
-            "max_eout": UNBOUNDED_ENERGY,
-            "opex_cost_energy": float(rc.pipe_opex_eur_per_mwh),
-            "capex_cost_base": float(rc.pipe_capex_base_eur),
+            "technical_lifetime": pipe.pipe_lifetime_years,
+            "cap_max": pipe.pipe_cap_max_mw,
+            "max_eout": None,
+            "opex_cost_energy": pipe.pipe_opex_eur_per_mwh,
+            "capex_cost_base": pipe.pipe_capex_base_eur,
         }
         cs_rows.append(row)
 

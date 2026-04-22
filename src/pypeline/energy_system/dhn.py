@@ -113,6 +113,7 @@ def build_inter_dhn_pipes_from_topologies(
 
             if touching:
                 length_m = 0.0
+                below_threshold = True
             else:
                 if not nodes_a or not nodes_b:
                     continue
@@ -138,8 +139,8 @@ def build_inter_dhn_pipes_from_topologies(
                     continue
 
                 length_m = float(min(reachable.values()))
+                below_threshold = length_m < below_distance_threshold_m if below_distance_threshold_m is not None else False
 
-            below_threshold = length_m < below_distance_threshold_m if below_distance_threshold_m is not None else False
             length_km = length_m / 1000.0
             pipe_capex_base = pipe_capex_eur_per_km * length_km
 
