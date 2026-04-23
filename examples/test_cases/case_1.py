@@ -26,8 +26,6 @@ CASE_CONFIG = ScenarioCaseConfig(
     commodity_activation_year_by_name={"hydrogen": 2040},
     technology_activation_year_by_name={"ind_heat_pump": 2040},
     apply_injections=True,
-    default_central_tech="CHP",
-    min_distance = 5,
     region_builder_config_overrides={
         "min_heat_grid_share": 0.0,
         "heat_grid_names": ("heat_exchanger",),

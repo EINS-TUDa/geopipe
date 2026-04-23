@@ -511,8 +511,6 @@ def _write_cesm_inputs(
         }
         cs_rows.append(row)
 
-    lockout_years = max(0, int(lockout_until_year - start_year_int))
-
     builder = _ConversionRowsBuilder(
         scenario_name=scenario_name,
         scenario_years=scenario_years,
@@ -534,7 +532,7 @@ def _write_cesm_inputs(
         retain_factor=retain_factor,
         retain_years_factor=retain_existing_output_years_factor,
         retain_schedule=retain_schedule,
-        lockout_years=lockout_years,
+        lockout_until_year=lockout_until_year,
         elec_price_eur_per_mwh=elec_price_eur_per_mwh,
         local_dhn_capex_base_by_district=local_dhn_capex_base_by_district,
     )
