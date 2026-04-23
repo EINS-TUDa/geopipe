@@ -5,150 +5,146 @@ interface by orchestrating the full solve pipeline::
 
     CESMOptimizationBackend.solve(energy_system, scenario)
         │
-        ├─ resolve_system() + input_writer._write_cesm_inputs()
-        │       resolves backend inputs and writes XLSX + timeseries TXT
+        ├─ input_writer.write_cesm_inputs_from_energy_system()
+        │       writes techmap XLSX to output_dir
+        │       writes timeseries TXT to timeseries_dir
         │
-        ├─ _run_cli()
-        │       invokes the CESM solver as a subprocess
+        ├─ _run_cesm()
+        │       calls the CESM Python API directly (Parser → Model → save_output)
+        │       writes db.sqlite to output_dir / run_subdir
         │
         ├─ result_parser.backfill_missing_commodity_timeseries()
-        │       fills gaps in output_co_y_t from subprocess timeseries
+        │       fills gaps in output_co_y_t from timeseries
         │
         └─ result_parser.parse_cesm_outputs()
                 returns CESMResults → Solution
 """
 from __future__ import annotations
-import json
 import logging
-import subprocess
+import sqlite3
 from pathlib import Path
 from typing import List, Optional
+from gurobipy import GRB
+
+from cesm.core.input_parser import Parser
+from cesm.core.model import Model
 
 from pypeline.energy_system.core import EnergySystem, Scenario
-from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 from pypeline.optimization.cesm.result_parser import (
     backfill_missing_commodity_timeseries,
     parse_cesm_outputs,
 )
-from pypeline.optimization.resolved_system import resolve_system
 from pypeline.optimization.solver import OptimizationBackend, Solution
+from pypeline.optimization.resolved_system import resolve_system
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 
 logger = logging.getLogger(__name__)
 
 
+def _status_text(status: int) -> str:
+    if GRB is None:
+        return f"status={status}"
+    mapping = {
+        GRB.OPTIMAL: "OPTIMAL",
+        GRB.INFEASIBLE: "INFEASIBLE",
+        GRB.INF_OR_UNBD: "INF_OR_UNBD",
+        GRB.UNBOUNDED: "UNBOUNDED",
+        GRB.TIME_LIMIT: "TIME_LIMIT",
+        GRB.INTERRUPTED: "INTERRUPTED",
+        GRB.NUMERIC: "NUMERIC",
+        GRB.SUBOPTIMAL: "SUBOPTIMAL",
+    }
+    return mapping.get(status, f"status={status}")
+
+
 class CESMOptimizationBackend(OptimizationBackend):
-    """Optimization backend that writes CESM inputs, invokes CESM, and parses results."""
+    """Optimization backend that writes CESM inputs, runs the CESM solver, and parses results."""
 
     def __init__(
         self,
-        model_name: Optional[str],
-        scenario_name: Optional[str],
-        tss_name: Optional[str],
-        dt_hours: int = 4,
-        workdir: str | Path = "CESM",
-        cli: Optional[List[str]] = None,
-        run_args: Optional[List[str]] = None,
-        run_subdir: Optional[str] = None,
+        tss_name: str,
+        timeseries_dir: str | Path,
+        output_dir: str | Path,
+        dt_hours: int,
         results_db_name: str = "db.sqlite",
-        write_inputs: bool = True,
-        scenario: Scenario | None = None,
         demand_name: str = "residential_heat",
         retain_existing_output_factor: float | None = None,
         retain_existing_output_years_factor: float | None = None,
         retain_existing_output_schedule: Optional[List[float]] = None,
     ):
-        self.workdir = Path(workdir)
-        self.workdir.mkdir(parents=True, exist_ok=True)
+        self.timeseries_dir = Path(timeseries_dir)
+        self.output_dir = Path(output_dir)
+        self.timeseries_dir.mkdir(parents=True, exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.cli = cli or ["env\\Scripts\\python.exe", "-m", "main", "run"]
-        self.run_args = run_args or []
-
-        self.model_name = model_name
-        self.scenario_name = scenario_name
         self.tss_name = tss_name
         self.dt_hours = int(dt_hours)
-        self.run_subdir = run_subdir or (f"{self.model_name}-{self.scenario_name}" if self.model_name and self.scenario_name else None)
+        self.run_subdir = None
         self.results_db_name = results_db_name
 
-        self.write_inputs = write_inputs
-        self.scenario = scenario
         self.demand_name = demand_name
         self.retain_existing_output_factor = retain_existing_output_factor
         self.retain_existing_output_years_factor = retain_existing_output_years_factor
         self.retain_existing_output_schedule = retain_existing_output_schedule
 
     # OptimizationBackend API ------------------------------------------------
-    def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None, demand_name: str | None = None) -> Solution:
-        if not isinstance(energy_system, EnergySystem):
-            raise TypeError("CESMOptimizationBackend.solve expects an EnergySystem")
-
-        logger.debug(
-            "solve: energy_system prices grid=%s supply=%s",
-            getattr(energy_system, "grid_prices", None),
-            getattr(energy_system, "supply_prices", None),
-        )
-
-        scenario_obj = scenario or self.scenario
-        if scenario_obj is None:
-            raise ValueError("scenario is required to write CESM inputs")
-        demand = demand_name or self.demand_name or "residential_heat"
-
-        self._materialize_inputs_from_energy_system(energy_system, scenario_obj, demand)
-        self._run_cli()
-        db_path = self._expected_run_db()
-        if not db_path.exists():
-            raise FileNotFoundError(
-                f"Expected DB not found: {db_path}\n"
-                f"Check logs: {self.workdir / 'cesm_stdout.log'}, {self.workdir / 'cesm_stderr.log'} "
-                f"and command {self.workdir / 'cesm_cmd.txt'}"
-            )
+    def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
+        self.run_subdir = f"{energy_system.name}-{scenario.name}"
+        self._materialize_inputs_from_energy_system(energy_system, scenario)
+        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name)
+        db_path = self.output_dir / self.run_subdir / self.results_db_name
         backfill_missing_commodity_timeseries(db_path)
         results = parse_cesm_outputs(db_path)
-        return Solution(energy_system=energy_system, scenario=scenario_obj, results=results)
+        return Solution(energy_system=energy_system, scenario=scenario, results=results)
 
-    # Internal helpers -------------------------------------------------------
-    def _expected_run_db(self) -> Path:
-        if not self.run_subdir:
-            raise ValueError("run_subdir is not set (expected '{model}-{scenario}').")
-        primary = self.workdir / "Runs" / self.run_subdir / self.results_db_name
-        return primary
-
-    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario, demand_name: str) -> None:
-        if not self.write_inputs:
-            return
-
+    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario) -> None:
         resolved = resolve_system(
             energy_system,
             scenario,
-            demand_name=demand_name,
             retain_existing_output_schedule=self.retain_existing_output_schedule,
         )
-
         _write_cesm_inputs(
             resolved,
-            techmap_dir=self.workdir / "Data" / "Techmap",
-            timeseries_dir=self.workdir / "Data" / "TimeSeries",
-            model_name=self.model_name,
-            scenario_name=self.scenario_name,
+            techmap_dir=self.output_dir,
+            timeseries_dir=self.timeseries_dir,
+            model_name=energy_system.name,
+            scenario_name=scenario.name,
             tss_name=self.tss_name,
             dt_hours=self.dt_hours,
             retain_existing_output_factor=self.retain_existing_output_factor,
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,
         )
 
-    def _run_cli(self, extra_args: list[str] | None = None) -> None:
-        exe = self.cli[0]
-        exe_path = Path(exe)
-        if not exe_path.is_absolute():
-            exe_path = (self.workdir / exe_path).resolve()
-        if not exe_path.exists():
-            raise FileNotFoundError(
-                f"CESM executable not found: {exe_path}\nWorkdir: {self.workdir.resolve()}\nCLI: {self.cli}"
-            )
-        cmd = [str(exe_path), *self.cli[1:], *self.run_args]
-        if extra_args:
-            cmd.extend(extra_args)
-        (self.workdir / "cesm_cmd.txt").write_text(json.dumps(cmd, indent=2))
-        cp = subprocess.run(cmd, cwd=self.workdir, text=True)
-        if cp.returncode != 0:
-            raise RuntimeError(f"CESM failed (exit {cp.returncode}). See logs in workdir")
+    def _run_cesm(self, energy_system_name: str, scenario_name: str) -> None:
+        db_dir = self.output_dir / self.run_subdir
+        db_path = db_dir / self.results_db_name
+        db_dir.mkdir(parents=True, exist_ok=True)
+
+        conn = sqlite3.connect(":memory:")
+        parser = Parser(energy_system_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
+        parser.parse()
+        model = Model(conn=conn)
+        model.solve()
+
+        grb_model = getattr(model, "model", None)
+        status = int(getattr(grb_model, "Status", -1))
+        if GRB is not None and status not in (GRB.OPTIMAL, GRB.SUBOPTIMAL):
+            logger.error("CESM optimization did not produce a solution: %s", _status_text(status))
+            if status == GRB.INFEASIBLE:
+                try:
+                    grb_model.computeIIS()
+                    iis_path = db_dir / "model_iis.ilp"
+                    grb_model.write(str(iis_path))
+                    logger.error("Wrote IIS file: %s", iis_path)
+                except Exception as iis_exc:  # pragma: no cover
+                    logger.error("IIS computation failed: %s", iis_exc)
+            conn.close()
+            raise RuntimeError(f"CESM optimization failed with status {_status_text(status)}")
+
+        model.save_output()
+        if db_path.exists():
+            db_path.unlink()
+        disk = sqlite3.connect(str(db_path))
+        conn.backup(disk)
+        disk.close()
+        conn.close()

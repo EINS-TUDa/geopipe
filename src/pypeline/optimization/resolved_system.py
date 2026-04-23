@@ -1,168 +1,141 @@
-"""Resolved optimization inputs for backend writers."""
+"""Backend-agnostic intermediate representation of EnergySystem + Scenario.
 
+``ResolvedSystem`` contains all domain data that an optimization backend needs,
+pre-computed for a specific set of scenario years.  It is built once per
+``solve()`` call and passed to every backend's input-writer, keeping
+backend-specific code free of domain-derivation logic.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, TYPE_CHECKING
 
-from pypeline.energy_system.core import EnergySystem, RegionDemand, Scenario
 from pypeline.energy_system.pipe import Pipe
 from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
-from pypeline.optimization.dhn import enforce_historical_fernwaerme_dependency
-from pypeline.validation import (
-    assert_fractional,
-    renormalize_to_one,
-    sanitize_price_map,
-    to_int_id,
-)
-from pypeline.energy_technology.technology import Technology
+
+if TYPE_CHECKING:
+    from pypeline.energy_system.core import EnergySystem, Scenario
+    from pypeline.energy_technology.technology import Technology
 
 
 @dataclass
 class ResolvedSystem:
-    """Single bundle of resolved optimization inputs for CESM writers."""
-
-    scenario_years: List[int]
-    region_ids: List[int]
-    demand_commodity: str
-    annual_demand: Dict[int, Dict[int, float]]
-    demand_profile: List[float]
-    technologies: Dict[str, Technology]
-    constraints: Dict[str, Dict[int, float]] | None
-    region_metrics: Dict[int, Dict[str, Dict[str, float]]]
-    historical_exchanger_targets_mwh: Dict[int, float]
-    retain_schedule: List[float]
+    # Scenario-derived
+    scenario_years: list[int]
     discount_rate: float
     lockout_until_year: int
-    grid_prices: Dict[str, float]
-    supply_prices: Dict[str, float]
-    pipe_connections: List[Pipe]
-    local_dhn_costs: Dict[int, Dict[str, float]]
-    data_dir: str | Path | None
 
+    # Regions
+    region_ids: list[int]
 
-def _try_get_fractional_profile(region_demand: RegionDemand) -> Optional[List[float]]:
-    prof = region_demand.profile
-    if prof is not None:
-        try:
-            seq = [float(x) for x in prof]
-            if len(seq) == 8760:
-                return seq
-        except (TypeError, ValueError):
-            pass
-    return None
+    # Primary demand commodity and its normalized 8760-hour profile
+    demand_commodity: str
+    demand_profile: list[float]
 
+    # Annual demand per region per year: rid -> year -> MWh
+    annual_demand: dict[int, dict[int, float]]
 
-def _safe_int_id(raw: Any, fallback: int) -> int:
-    try:
-        return to_int_id(raw)
-    except ValueError:
-        return int(fallback)
+    # Per-region technology metrics: rid -> tech_name -> {initial_capacity, initial_energy_output}
+    region_metrics: dict[int, dict[str, dict[str, float]]]
+
+    # All technologies referenced by region_technologies
+    technologies: dict[str, "Technology"]
+
+    # Commodity pricing
+    grid_prices: dict[str, float]
+    supply_prices: dict[str, float]
+
+    # Retention schedule (None = no retention constraint)
+    retain_schedule: list[float] | None
+
+    # Domain constraints (raw from EnergySystem.constraints)
+    constraints: dict[str, Any]
+
+    # Local DHN capex per region: rid -> {local_grid_capex_base_eur: float}
+    local_dhn_costs: dict[int, dict[str, float]]
+
+    # Inter-district pipe connections
+    pipe_connections: list[Pipe] = field(default_factory=list)
 
 
 def resolve_system(
-    energy_system: EnergySystem,
-    scenario: Scenario,
+    energy_system: "EnergySystem",
+    scenario: "Scenario",
     *,
-    demand_name: str = "residential_heat",
     retain_existing_output_schedule: list[float] | None = None,
 ) -> ResolvedSystem:
-    """Resolve EnergySystem + Scenario into a backend-ready ResolvedSystem."""
-    regions = energy_system.regions
-    if not regions:
-        raise ValueError("EnergySystem has no regions")
+    """Build a ``ResolvedSystem`` from an ``EnergySystem`` and a ``Scenario``."""
 
-    scenario_years = list(scenario.years)
-    if not scenario_years:
-        raise ValueError("Scenario has no years")
-
-    d0 = regions[0].get_demand(demand_name)
-    if d0 is None:
-        raise ValueError(f"First region has no demand name '{demand_name}'")
-    demand_commodity = d0.demand.commodity_in
-
-    region_ids: List[int] = []
-    annual_demand: Dict[int, Dict[int, float]] = {}
-    demand_profile: Optional[List[float]] = None
-    region_metrics_raw: Dict[int, Dict[str, Dict[str, float]]] = {}
-    technologies: Dict[str, Technology] = {}
-
-    for idx, region in enumerate(regions):
-        rid = _safe_int_id(region.id, idx)
-        region_ids.append(rid)
-
-        rd = region.get_demand(demand_name)
-        if rd is None:
-            raise ValueError(f"Region {rid} has no demand '{demand_name}'")
-
-        ann = rd.annual_value()
-        annual_demand[rid] = {year: ann for year in scenario_years}
-
-        if demand_profile is None:
-            prof = _try_get_fractional_profile(rd)
-            if prof is not None:
-                demand_profile = renormalize_to_one(prof)
-
-        metrics = region_metrics_raw.setdefault(rid, {})
-        for region_technology in region.region_technologies:
-            tech = region_technology.technology
-            tech_name = tech.name
-            technologies.setdefault(tech_name, tech)
-            metrics[tech_name] = {
-                "initial_energy_output": float(region_technology.initial_energy_output),
-                "initial_capacity": float(region_technology.initial_capacity),
-            }
-
-    hours = 8760
-    if demand_profile is None:
-        demand_profile = [1.0 / hours] * hours
-    assert_fractional(demand_profile, "Demand profile f_h")
-
-    region_metrics, historical_targets = enforce_historical_fernwaerme_dependency(region_metrics_raw)
+    scenario_years = scenario.years
+    discount_rate = float(scenario.discount_rate)
+    lockout_until_year = scenario.lockout_until_year
 
     retain_schedule = resolve_retain_schedule(
         explicit_schedule=retain_existing_output_schedule,
         scenario=scenario,
     )
-    if retain_schedule is None:
-        raise ValueError("retain_existing_output_schedule must be provided via scenario or argument")
 
-    grid_prices = sanitize_price_map(getattr(energy_system, "grid_prices", None))
-    supply_prices = sanitize_price_map(getattr(energy_system, "supply_prices", None))
-    if not grid_prices:
-        raise ValueError("Missing grid price map on EnergySystem.grid_prices")
-    if not supply_prices:
-        raise ValueError("Missing supply price map on EnergySystem.supply_prices")
+    demand_commodity: str | None = None
+    demand_profile: list[float] | None = None
+    annual_demand: dict[int, dict[int, float]] = {}
+    region_metrics: dict[int, dict[str, dict[str, float]]] = {}
+    technologies: dict[str, Any] = {}
+    region_ids: list[int] = []
 
-    if getattr(energy_system, "inter_district_pipe_specs", None):
-        raise ValueError(
-            "inter_district_pipe_specs is no longer supported. "
-            "Provide explicit EnergySystem.pipes instead."
-        )
+    for region in energy_system.regions:
+        rid = region.id
+        region_ids.append(rid)
+        total_ann = 0.0
+
+        for rd in region.region_demands:
+            if demand_commodity is None:
+                demand_commodity = rd.demand.commodity_in
+            if demand_profile is None and rd.profile is not None:
+                try:
+                    prof = [float(x) for x in rd.profile]
+                    if len(prof) == 8760:
+                        demand_profile = prof
+                except (TypeError, ValueError):
+                    pass
+            if rd.demand.commodity_in == demand_commodity:
+                total_ann += float(rd.value or 0.0)
+
+        annual_demand[rid] = {year: total_ann for year in scenario_years}
+
+        metrics: dict[str, dict[str, float]] = {}
+        for rt in region.region_technologies:
+            tech = rt.technology
+            technologies.setdefault(tech.name, tech)
+            metrics[tech.name] = {
+                "initial_capacity": float(rt.initial_capacity),
+                "initial_energy_output": float(rt.initial_energy_output),
+            }
+        region_metrics[rid] = metrics
+
+    if demand_profile is None:
+        raise ValueError("No 8760-hour demand profile found in any region demand")
 
     local_dhn_costs = {
         region.id: {"local_grid_capex_base_eur": region.local_dhn_capex_base_eur}
         for region in energy_system.regions
         if region.local_dhn_capex_base_eur is not None
     }
+    constraints = dict(energy_system.constraints or {})
 
     return ResolvedSystem(
         scenario_years=scenario_years,
+        discount_rate=discount_rate,
+        lockout_until_year=lockout_until_year,
         region_ids=region_ids,
-        demand_commodity=demand_commodity,
-        annual_demand=annual_demand,
+        demand_commodity=demand_commodity or "residential_heat",
         demand_profile=demand_profile,
-        technologies=technologies,
-        constraints=energy_system.constraints,
+        annual_demand=annual_demand,
         region_metrics=region_metrics,
-        historical_exchanger_targets_mwh=historical_targets,
-        retain_schedule=[float(v) for v in retain_schedule],
-        discount_rate=float(getattr(scenario, "discount_rate")),
-        lockout_until_year=int(scenario_years[0] + max(0, int(getattr(scenario, "lockout_years")))),
-        grid_prices=grid_prices,
-        supply_prices=supply_prices,
-        pipe_connections=list(getattr(energy_system, "pipes", []) or []),
+        technologies=technologies,
+        grid_prices=dict(energy_system.grid_prices or {}),
+        supply_prices=dict(energy_system.supply_prices or {}),
+        retain_schedule=retain_schedule,
+        constraints=constraints,
         local_dhn_costs=local_dhn_costs,
-        data_dir=getattr(energy_system, "data_dir", None),
+        pipe_connections=list(energy_system.pipes or []),
     )

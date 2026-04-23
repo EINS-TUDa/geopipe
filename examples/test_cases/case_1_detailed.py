@@ -25,7 +25,7 @@ def main():
         model_name="Case1",
         scenario_name="BaseCase1",
         tss_name="4ThinWeeks",
-        dt_hours=4,
+        dt_hours=3,
         demand_name="residential_heat",
         start_year=2020,
         end_year=2030,
@@ -90,7 +90,7 @@ def main():
         output_dir=CASE_DIR / "output_data",
         results_db_name="db.sqlite",
         tss_name=config.tss_name,
-        dt_hours = 3,
+        dt_hours=config.dt_hours,
         demand_name=config.demand_name,
     )
 

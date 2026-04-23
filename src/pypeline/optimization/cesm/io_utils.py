@@ -66,28 +66,6 @@ def _canon_co(name: Optional[str]) -> str:
     return name
 
 
-def commodity_config_from_energy_system(
-    energy_system: "EnergySystem",
-) -> tuple[dict[str, float], dict[str, float]]:
-    """Extract and validate commodity price maps from an EnergySystem."""
-    grid_prices = sanitize_price_map(getattr(energy_system, "grid_prices", None))
-    supply_prices = sanitize_price_map(getattr(energy_system, "supply_prices", None))
-    if not grid_prices:
-        raise ValueError("Missing grid price map on EnergySystem.grid_prices")
-    if not supply_prices:
-        raise ValueError("Missing supply price map on EnergySystem.supply_prices")
-    return grid_prices, supply_prices
-
-
-def write_demand_profile(timeseries_dir: Path, profile_name: str, profile_full: np.ndarray) -> None:
-    """Write a normalized 8760-hour demand profile into CESM timeseries format."""
-    values = np.asarray(profile_full, dtype=float)
-    if values.size != 8760:
-        raise ValueError("Demand profile must contain exactly 8760 values")
-    profile_path = timeseries_dir / f"{profile_name}.txt"
-    profile_path.write_text(" ".join(f"{float(v):.8f}" for v in values), encoding="utf-8")
-
-
 def _units_df() -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -164,11 +142,7 @@ def _format_year_profile(pairs: list[tuple[int, float]]) -> str | None:
     for year, value in pairs:
         year_i = int(year)
         value_f = float(value)
-        if math.isnan(value_f):
-            val_s = "NaN"
-        else:
-            val_s = f"{value_f:.10g}"
-        segments.append(f"{year_i} {val_s}")
+        segments.append(f"{year_i} {value_f:.10g}")
     return "[" + " ; ".join(segments) + "]"
 
 

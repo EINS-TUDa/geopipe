@@ -1,8 +1,13 @@
 from pathlib import Path
+import geopandas as gpd
 import pytest
-from pypeline.energy_technology.technology import Technology
+from shapely.geometry import Polygon
+import pandas as pd
+from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
-from pypeline.optimization.resolved_system import ResolvedSystem
+from pypeline.optimization.resolved_system import resolve_system
+from pypeline.units import UnitKW
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -10,25 +15,30 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DISTRICT_ID = 4
 
 
-def _build_resolved() -> ResolvedSystem:
-    return ResolvedSystem(
-        scenario_years=[2020, 2025],
-        region_ids=[DISTRICT_ID],
-        demand_commodity="residential_heat",
-        annual_demand={DISTRICT_ID: {2020: 100.0, 2025: 100.0}},
-        demand_profile=[1.0 / 8760.0] * 8760,
-        technologies={},
+def _build_scenario() -> Scenario:
+    return Scenario(name="Base", start_year=2020, end_year=2025, year_gap=5, discount_rate=0.05, lockout_years=0)
+
+
+def _build_energy_system(data_dir=None, supply_prices=None) -> EnergySystem:
+    demand = Demand(demand_type="residential_heat", commodity_in="residential_heat")
+    region_demand = RegionDemand(demand=demand, value=100.0, profile=pd.Series([1.0 / 8760.0] * 8760))
+    region = Region(id_=DISTRICT_ID, region_demands=[region_demand], region_technologies=[])
+    return EnergySystem(
+        name="test",
+        regions=[region],
+        units=UnitKW(),
         constraints={},
-        region_metrics={},
-        historical_exchanger_targets_mwh={},
-        retain_schedule=[1.0, 0.95],
-        discount_rate=0.05,
-        lockout_until_year=2020,
+        data_dir=data_dir,
         grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices={"oil": 80.0},
-        pipe_connections=[],
-        local_dhn_costs={},
-        data_dir=REPO_ROOT / "data",
+        supply_prices=supply_prices or {},
+    )
+
+
+def _single_polygon() -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        [{"id": DISTRICT_ID, "geometry": Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])}],
+        geometry="geometry",
+        crs="EPSG:3035",
     )
 
 
@@ -41,8 +51,6 @@ def _ensure_tss(workdir: Path) -> None:
 
 def missing_supply_t(tmp_path: Path) -> None:
     """Checks for missing supply pricing inputs."""
-    resolved = _build_resolved()
-
     selected_techs = [
         Technology(
             f"ind_gas_boiler_D{DISTRICT_ID}",
@@ -56,6 +64,8 @@ def missing_supply_t(tmp_path: Path) -> None:
     workdir = tmp_path / "cesm_strict_supply_price"
     _ensure_tss(workdir)
 
+    es = _build_energy_system(data_dir=REPO_ROOT / "data", supply_prices={"oil": 80.0})
+    resolved = resolve_system(es, _build_scenario(), retain_existing_output_schedule=[1.0, 0.95])
     with pytest.raises(ValueError, match="Missing supply price for commodity 'gas'"):
         _write_cesm_inputs(
             resolved,

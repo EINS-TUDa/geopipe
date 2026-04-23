@@ -3,7 +3,7 @@ import pytest
 
 from pypeline.energy_system.core import Region
 from pypeline.energy_system.dhn import build_inter_dhn_pipes_from_topologies
-from pypeline.energy_system.pipe import Pipe
+from pypeline.energy_system.region_connection import RegionConnection
 
 
 def _region(region_id: int, u: tuple[float, float], v: tuple[float, float]) -> Region:
@@ -19,7 +19,7 @@ def _region(region_id: int, u: tuple[float, float], v: tuple[float, float]) -> R
     return Region(region_id, topology=topo)
 
 
-def _by_ids(connections: list[Pipe], id_in: int, id_out: int) -> Pipe | None:
+def _by_ids(connections: list[RegionConnection], id_in: int, id_out: int) -> RegionConnection | None:
     for rc in connections:
         if rc.region_id_in == id_in and rc.region_id_out == id_out:
             return rc
