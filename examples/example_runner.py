@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from pypeline.energy_system.core import Scenario
 from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
+from pypeline.optimization import CESMOptimizationBackend
 from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.factory import (build_energy_system,build_scenario,create_cesm_backend)
+from pypeline.factory import build_energy_system
 from pypeline.topology_builder.cli.simple import build_topology_from_case
 from pypeline.topology_builder.cli.dijkstra import build_topology_from_dataset
 from pypeline.topology_builder.core import (edge_metrics_from_topology_result,streets_for_topology_plot)
@@ -84,6 +86,34 @@ class ScenarioExecutionResult:
     topology_plot_title: str
     topology_plot_filename: str
     results_obj: Any = None
+
+
+class _CliScenario(Scenario):
+    @property
+    def lockout_until_year(self) -> int:
+        return int(self.start_year) + max(0, int(self.lockout_years))
+
+
+def _build_cli_scenario(
+    *,
+    model_name: str,
+    scenario_name: str,
+    tss_name: str,
+    start_year: int,
+    end_year: int,
+    year_gap: int,
+    retain_existing_output_drop_per_year: float,
+    lockout_years: int,
+) -> Scenario:
+    return _CliScenario(
+        name=f"{model_name}-{scenario_name}",
+        start_year=start_year,
+        end_year=end_year,
+        year_gap=year_gap,
+        tss=tss_name,
+        retain_existing_output_drop_per_year=retain_existing_output_drop_per_year,
+        lockout_years=lockout_years,
+    )
 
 
 def build_case_energy_system_from_scenario(
@@ -266,7 +296,7 @@ def run_scenario_case(
     plots_dir = _case_plots_dir(config)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    scenario = build_scenario(
+    scenario = _build_cli_scenario(
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
@@ -277,15 +307,14 @@ def run_scenario_case(
         lockout_years=config.lockout_years,
     )
     case_dir = config.scenario_file.parent
-    backend = create_cesm_backend(
-        model_name=config.model_name,
-        scenario_name=config.scenario_name,
+    backend = CESMOptimizationBackend(
         tss_name=config.tss_name,
-        dt_hours=config.dt_hours,
-        scenario=scenario,
-        demand_name=config.demand_name,
         timeseries_dir=case_dir / "input_data",
         output_dir=case_dir / "output_data",
+        dt_hours=config.dt_hours,
+        results_db_name="db.sqlite",
+        demand_name=config.demand_name,
+        retain_existing_output_schedule=scenario.retain_existing_output_schedule,
     )
     solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
@@ -350,7 +379,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
     plots_dir = _dijkstra_plots_dir(config)
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    scenario = build_scenario(
+    scenario = _build_cli_scenario(
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
@@ -360,17 +389,16 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         retain_existing_output_drop_per_year=config.retain_existing_output_drop_per_year,
         lockout_years=config.lockout_years,
     )
-    backend = create_cesm_backend(
-        model_name=config.model_name,
-        scenario_name=config.scenario_name,
+    backend = CESMOptimizationBackend(
         tss_name=config.tss_name,
-        dt_hours=config.dt_hours,
-        scenario=scenario,
-        demand_name=config.demand_name,
         timeseries_dir=config.input_dir,
         output_dir=config.output_dir,
+        dt_hours=config.dt_hours,
+        results_db_name="db.sqlite",
+        demand_name=config.demand_name,
+        retain_existing_output_schedule=scenario.retain_existing_output_schedule,
     )
-    solution = backend.solve(energy_system, scenario=scenario, demand_name=config.demand_name)
+    solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
     report_path = _write_results_report(
         output_dir=plots_dir,

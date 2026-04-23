@@ -1,6 +1,7 @@
 """CESM input file writing: techmap XLSX and timeseries TXT.
 
-This module converts a resolved system input bundle into the two files the CESM
+Converts an :class:`~pypeline.energy_system.core.EnergySystem` and
+:class:`~pypeline.energy_system.core.Scenario` into the two files the CESM
 solver needs:
 
 * An Excel **techmap** workbook (scenario, commodities, conversion processes,
@@ -9,58 +10,46 @@ solver needs:
 
 Typical call chain::
 
-    ResolvedSystem
+    EnergySystem + Scenario
         ↓  _write_cesm_inputs()
     XLSX + TXT on disk                           ← this file
         ↓  _ConversionRowsBuilder.build_rows()  ← conversion_rows.py
     ConversionSubProcess rows (one per tech / district combination)
+
+Public entry point: :func:`write_cesm_inputs_from_energy_system`.
 """
 from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Optional, Union
 
-import numpy as np
 import pandas as pd
 
+from pypeline.energy_system.rule_book import DHN_TECH_NAMES
 from pypeline.optimization.cesm.io_utils import (
     _canon_co,
     _convsubproc_dataframe,
     _format_year_profile,
     _profile_to_map_and_scalar,
     _value_for_year,
-    write_demand_profile as _write_demand_profile,
     _write_techmap_workbook,
     _units_df,
     _scenario_df,
     _tss_df,
 )
-from pypeline.energy_technology.technology import (
-    Technology,
-    split_base_and_district as _split_base_and_district,
-)
+from pypeline.energy_technology.technology import (Technology, split_base_and_district as _split_base_and_district)
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
-from pypeline.optimization.cesm.conversion_rows import (
-    UNBOUNDED_CAP,
-    _ConversionRowsBuilder,
-)
-from pypeline.optimization.dhn import (
-    build_pipe_rows,
-    parse_dhn_constraints,
-)
+from pypeline.optimization.cesm.conversion_rows import (_ConversionRowsBuilder)
 from pypeline.optimization.resolved_system import ResolvedSystem
 from pypeline.validation import (
-    ensure_tss_indices,
-    normalize_profile_for_tss,
     sanitize_price_map,
     to_int_id,
 )
 
 logger = logging.getLogger(__name__)
 PathLike = Union[str, Path]
-
 
 @dataclass
 class _CesmIOPaths:
@@ -86,6 +75,7 @@ def _log_techmap_stats(*, commodity_count: int, convproc_count: int, convsubproc
         convsubproc_rows,
     )
 
+
 def _write_cesm_inputs(
         resolved: ResolvedSystem,
         *,
@@ -98,57 +88,40 @@ def _write_cesm_inputs(
         heat_commodity_base: str | None = None,
         selected_techs: list[Technology] | TechnologyRegistry | None = None,
         retain_existing_output_factor: float | None = None,
-        retain_existing_output_years_factor: float | None = None,
+        retain_existing_output_years_factor: float | None = None
 ) -> None:
     paths = _prepare_io_paths(Path(techmap_dir), Path(timeseries_dir), model_name, tss_name)
-    ts_dir = paths.timeseries_dir
-    scenario_years: List[int] = list(resolved.scenario_years)
+
+    scenario_years = resolved.scenario_years
     if not scenario_years:
         raise ValueError("scenario years cannot be empty")
+    start_year_int = scenario_years[0]
+    end_year_int = scenario_years[-1]
+    year_step_int = scenario_years[1] - scenario_years[0] if len(scenario_years) > 1 else 1
+    discount_rate = resolved.discount_rate
+    lockout_until_year = resolved.lockout_until_year
 
-    start_year_int = int(scenario_years[0])
-    end_year_int = int(scenario_years[-1])
-    year_step_int = int(scenario_years[1] - scenario_years[0]) if len(scenario_years) > 1 else 1
-    start_year = start_year_int
-    end_year = end_year_int
-    year_gap = year_step_int
-    discount_rate = float(resolved.discount_rate)
-    lockout_years = max(0, int(resolved.lockout_until_year - start_year_int))
-    om_regions = list(resolved.region_ids)
+    if resolved.retain_schedule is None:
+        raise ValueError("retain_existing_output_schedule must be provided by the scenario (no defaults)")
+
+    om_regions = resolved.region_ids
     grid_prices = sanitize_price_map(resolved.grid_prices)
     supply_prices = sanitize_price_map(resolved.supply_prices)
     elec_price_eur_per_mwh = float(grid_prices["electricity"])
     export_price_eur_per_mwh = float(grid_prices["export"])
-    retain_existing_output_schedule = list(resolved.retain_schedule or [])
-    local_dhn_costs = dict(resolved.local_dhn_costs or {})
-    pipe_connections = list(resolved.pipe_connections or [])
 
-    logger.debug(
-        "commodity pricing resolved: grid_prices=%s, elec=%s, export=%s, supply_prices=%s",
-        grid_prices,
-        elec_price_eur_per_mwh,
-        export_price_eur_per_mwh,
-        supply_prices,
-    )
-
-    profile_full = np.asarray(list(resolved.demand_profile), dtype=float)
-    if profile_full.size != 8760:
-        raise ValueError("resolved.demand_profile must contain exactly 8760 values")
-    tss_vals = ensure_tss_indices(paths.tss_file)
-    profile_full = normalize_profile_for_tss(profile_full, tss_vals)
     demand_profile_name = "HeatDemandProfile"
-    _write_demand_profile(ts_dir, demand_profile_name, profile_full)
-    heat_names: List[str]
-    pipe_rows: list[dict[str, Any]] = []
-    base_heat_name = heat_commodity_base or resolved.demand_commodity
+    demand_commodity = resolved.demand_commodity
+    base_heat_name = heat_commodity_base or demand_commodity
     districts = list(range(len(om_regions)))
+
+    heat_names: List[str]
     if len(districts) == 1:
         heat_names = [f"{base_heat_name}"]
     else:
         heat_names = [f"{base_heat_name}_D{i}" for i in districts]
-        pipe_rows = build_pipe_rows(
-            pipe_connections=pipe_connections,
-        )
+
+    pipe_connections = resolved.pipe_connections
 
     district_index = {d: idx for idx, d in enumerate(districts)}
     if len(districts) <= 1:
@@ -161,19 +134,10 @@ def _write_cesm_inputs(
     district_heat_in_names = {d: f"district_heat_in_D{d}" for d in districts}
     district_heat_out_names = {d: f"district_heat_out_D{d}" for d in districts}
 
-
-    def _annual_demands_from_om() -> List[float]:
-        if not om_regions:
-            return []
-        annual_map = resolved.annual_demand
-        target_year = int(start_year)
-        values: List[float] = []
-        for rid in om_regions:
-            per_year = annual_map[rid]
-            values.append(float(per_year[target_year]))
-        return values
-
-    annual_heat_by_d = _annual_demands_from_om()
+    annual_heat_by_d = (
+        [float(resolved.annual_demand[rid][start_year_int]) for rid in om_regions]
+        if om_regions else []
+    )
     if not annual_heat_by_d:
         annual_heat_by_d = [0.0] * len(districts)
     if len(annual_heat_by_d) != len(districts):
@@ -188,9 +152,9 @@ def _write_cesm_inputs(
     units_df = _units_df()
     scenario_df = _scenario_df(
         scenario_name=scenario_name,
-        start_year=start_year,
-        end_year=end_year,
-        year_gap=year_gap,
+        start_year=start_year_int,
+        end_year=end_year_int,
+        year_gap=year_step_int,
         tss_name=tss_name,
         discount_rate=discount_rate,
     )
@@ -208,9 +172,7 @@ def _write_cesm_inputs(
     elif isinstance(selected_techs, list):
         sel_list = [t for t in selected_techs if isinstance(t, Technology)]
     elif selected_techs is None:
-        om_techs = resolved.technologies
-        if isinstance(om_techs, dict):
-            sel_list = [t for t in om_techs.values() if isinstance(t, Technology)]
+        sel_list = [t for t in resolved.technologies.values() if isinstance(t, Technology)]
     dedup: dict[str, Technology] = {}
     filtered: list[Technology] = []
     for tech in sel_list:
@@ -219,25 +181,41 @@ def _write_cesm_inputs(
             filtered.append(tech)
     sel_list = filtered
 
-    local_dhn_capex_base_by_district: dict[int, float] = {}
-    if local_dhn_costs is not None:
-        local_dhn_capex_base_by_district = {
-            int(district_id): float(payload["local_grid_capex_base_eur"])
-            for district_id, payload in local_dhn_costs.items()
-        }
-
-    historical_exchanger_targets_mwh = dict(resolved.historical_exchanger_targets_mwh or {})
+    local_dhn_capex_base_by_district: dict[int, float] = {
+        int(district_id): float(payload["local_grid_capex_base_eur"])
+        for district_id, payload in resolved.local_dhn_costs.items()
+    }
 
     constraints_raw = resolved.constraints or {}
     if constraints_raw and not isinstance(constraints_raw, dict):
         raise ValueError("constraints must be provided as a mapping")
 
-    demand_commodity = resolved.demand_commodity or "residential_heat"
+    min_dhn_targets_raw = constraints_raw.get("min_dhn_throughput_mwh", {}) if constraints_raw else {}
+    if min_dhn_targets_raw and not isinstance(min_dhn_targets_raw, dict):
+        raise ValueError("min_dhn_throughput_mwh constraint must be a mapping of region ids to values")
+    min_dhn_targets: dict[int, float] = {}
+    for key, value in (min_dhn_targets_raw or {}).items():
+        rid = to_int_id(key)
+        val = float(value)
+        if val > 0:
+            min_dhn_targets[rid] = float(val)
 
-    min_dhn_targets, min_heat_grid_targets = parse_dhn_constraints(
-        constraints_raw,
-        demand_commodity=demand_commodity,
-    )
+    min_heat_grid_key = f"min_heat_grid_{demand_commodity}"
+    min_heat_grid_raw = constraints_raw.get(min_heat_grid_key, {}) if constraints_raw else {}
+    if min_heat_grid_raw and not isinstance(min_heat_grid_raw, dict):
+        raise ValueError(f"{min_heat_grid_key} constraint must be a mapping of region ids to values")
+    min_heat_grid_targets: dict[int, float] = {}
+    for key, value in (min_heat_grid_raw or {}).items():
+        rid = to_int_id(key)
+        val = float(value)
+        if val > 0:
+            min_heat_grid_targets[rid] = float(val)
+
+    if "min_pipe_import_share_by_region" in constraints_raw:
+        raise ValueError(
+            "Constraint 'min_pipe_import_share_by_region' is no longer supported. "
+            "Use exchanger-level constraints ('min_dhn_throughput_mwh' and/or historical exchanger metrics) instead."
+        )
 
     min_central_cap_raw = constraints_raw.get("min_central_cap_mw", {}) if constraints_raw else {}
     min_central_cap_targets: dict[str, float] = {}
@@ -295,17 +273,13 @@ def _write_cesm_inputs(
             raise ValueError(f"technology_activation_year['{technology_raw}'] must be an integer year") from exc
         technology_activation_year[technology] = max(start_year_int, activation_year)
 
-    om_region_ids = list(om_regions)
     district_to_region: dict[int, int] = {}
     for idx, district_id in enumerate(districts):
-        if idx >= len(om_region_ids):
+        if idx >= len(om_regions):
             raise ValueError(f"Missing region id for district {district_id}")
-        raw_rid = om_region_ids[idx]
-        district_to_region[district_id] = to_int_id(raw_rid)
+        district_to_region[district_id] = om_regions[idx]
 
-    region_metrics = resolved.region_metrics or {}
-    if not isinstance(region_metrics, dict):
-        region_metrics = {}
+    region_metrics = resolved.region_metrics
 
     total_metrics: dict[str, dict[str, float]] = {}
     for rid, tech_map in region_metrics.items():
@@ -321,7 +295,27 @@ def _write_cesm_inputs(
             agg["initial_energy_output"] += float(metrics["initial_energy_output"] or 0.0)
             agg["initial_capacity"] += float(metrics["initial_capacity"] or 0.0)
 
-    primary_heat_exchanger = "heat_exchanger"
+    primary_heat_exchanger = DHN_TECH_NAMES[0]
+    historical_exchanger_targets_mwh: dict[int, float] = {}
+    for district, rid in district_to_region.items():
+        district_metrics = region_metrics.get(rid)
+        if district_metrics is None:
+            continue
+        if not isinstance(district_metrics, dict):
+            raise TypeError(f"region_technology_metrics[{rid}] must be a dict")
+        hx_key = f"{primary_heat_exchanger}_D{district}"
+        hx_metrics = district_metrics.get(hx_key)
+        if hx_metrics is None:
+            continue
+        if not isinstance(hx_metrics, dict):
+            raise TypeError(f"region_technology_metrics[{rid}][{hx_key}] must be a dict")
+        hx_output = float(hx_metrics.get("initial_energy_output", 0.0) or 0.0)
+        if hx_output <= 0.0:
+            continue
+        historical_exchanger_targets_mwh[rid] = max(
+            historical_exchanger_targets_mwh.get(rid, 0.0),
+            hx_output,
+        )
 
     if retain_existing_output_factor is None:
         retain_factor: float | None = None
@@ -329,19 +323,12 @@ def _write_cesm_inputs(
         retain_factor = max(0.0, float(retain_existing_output_factor))
 
     retain_schedule: Optional[List[float]] = None
-    if retain_existing_output_schedule:
-        sanitized: List[float] = []
-        for entry in retain_existing_output_schedule:
-            val = float(entry)
-            if math.isnan(val):
-                raise ValueError("retain_existing_output_schedule contains NaN")
-            sanitized.append(max(0.0, val))
-        if sanitized:
-            retain_schedule = sanitized
-
-    if lockout_years is None:
-        raise ValueError("lockout_years must be provided by the scenario (no defaults)")
-    lockout_years = max(0, int(lockout_years))
+    for entry in (resolved.retain_schedule or []):
+        val = float(entry)
+        if math.isnan(val):
+            raise ValueError("retain_existing_output_schedule contains NaN")
+        retain_schedule = retain_schedule or []
+        retain_schedule.append(max(0.0, val))
 
     logger.debug(
         "retain_existing_output_factor=%s -> retain_factor=%s",
@@ -381,10 +368,7 @@ def _write_cesm_inputs(
         conv_procs.append("HeatDemand")
     else:
         conv_procs += [f"HeatDemand_D{i}" for i in districts]
-        conv_procs += [
-            f"Pipe_D{int(pipe_row['region_id_in'])}_D{int(pipe_row['region_id_out'])}"
-            for pipe_row in pipe_rows
-        ]
+        conv_procs += [f"Pipe_D{pipe.region_id_in}_D{pipe.region_id_out}" for pipe in pipe_connections]
     for tech in sel_list:
         from pypeline.energy_technology.technology import split_base_and_district as _sbd, \
             is_central_heat_supply as _ichs
@@ -450,6 +434,8 @@ def _write_cesm_inputs(
                 "scenario": scenario_name,
                 "efficiency": 1.0,
                 "technical_availability": 1.0,
+                "max_eout": math.nan,
+                "cap_max": math.nan,
                 "opex_cost_energy": price,
             }
         )
@@ -471,7 +457,8 @@ def _write_cesm_inputs(
             "scenario": scenario_name,
             "efficiency": 1.0,
             "technical_availability": 1.0,
-            "cap_max": None,
+            "max_eout": math.nan,
+            "cap_max": math.nan,
             "opex_cost_energy": float(export_price_eur_per_mwh),
         }
     )
@@ -498,10 +485,9 @@ def _write_cesm_inputs(
             }
         )
 
-    for pipe_row in pipe_rows:
+    for pipe in pipe_connections:
         # Pipe_Di_Dj: import into district Di from district Dj.
-        i = int(pipe_row["region_id_in"])
-        j = int(pipe_row["region_id_out"])
+        i, j = pipe.region_id_in, pipe.region_id_out
         src_idx = district_index.get(j)
         if src_idx is None:
             raise KeyError(f"Missing district index for source district {j}")
@@ -515,18 +501,17 @@ def _write_cesm_inputs(
             "commodity_in": src_comm,
             "commodity_out": dst_comm,
             "scenario": scenario_name,
-            "efficiency": float(pipe_row["efficiency"]),
+            "efficiency": max(0.0, 1.0 - float(pipe.pipe_loss_fraction)),
             "technical_availability": 1.0,
-            "technical_lifetime": int(pipe_row["technical_lifetime"]),
-            "cap_max": float(pipe_row["cap_max"]),
-            "opex_cost_energy": float(pipe_row["opex_cost_energy"]),
-            "capex_cost_power": float(pipe_row["capex_cost_power"]),
-            "capex_cost_base": pipe_row.get("capex_cost_base"),
+            "technical_lifetime": pipe.pipe_lifetime_years,
+            "cap_max": pipe.pipe_cap_max_mw,
+            "max_eout": pipe.pipe_cap_max_mwh,
+            "opex_cost_energy": pipe.pipe_opex_eur_per_mwh,
+            "capex_cost_base": pipe.pipe_capex_base_eur,
         }
-        pipe_max_eout = pipe_row.get("max_eout")
-        if pipe_max_eout is not None:
-            row["max_eout"] = float(pipe_max_eout)
         cs_rows.append(row)
+
+    lockout_years = max(0, int(lockout_until_year - start_year_int))
 
     builder = _ConversionRowsBuilder(
         scenario_name=scenario_name,
@@ -644,7 +629,7 @@ def _write_cesm_inputs(
                     if column == "cap_max":
                         # Keep post-activation rows effectively unbounded when cap_max is unspecified.
                         # No NaN here: CESM profile interpolation drops NaN and  backfills zero values into later years.
-                        pairs.append((year_i, float(UNBOUNDED_CAP)))
+                        pairs.append((year_i, 10000000.0))
                     continue
                 pairs.append((year_i, float(base_value)))
 
