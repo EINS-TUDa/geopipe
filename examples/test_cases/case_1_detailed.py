@@ -59,10 +59,12 @@ def main():
     builder.set_demands(default=True)
     builder.set_technology_registry(tech_registry)
     builder.set_data_registry(create_local_data_registry(config.heating_shares_file))
+    builder.set_imports(import_yaml=CASE_DIR / "input_data" / "imports.yaml")
+    builder.set_energy_system_rule_book(EnergySystemRuleBook())
+
     builder.set_default_region_builder_config()
     if config.region_builder_config_overrides:
         builder.set_region_builder_config(config.region_builder_config_overrides, merge=True)
-    builder.set_energy_system_rule_book(EnergySystemRuleBook())
 
     energy_system = builder.build()
     apply_injected_techs(energy_system, topology_result.injected_techs or [])

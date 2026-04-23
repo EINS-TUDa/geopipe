@@ -16,6 +16,7 @@ from pypeline.energy_system.dhn import (
     build_district_heat_grid_from_topology,
     build_inter_dhn_pipes_from_topologies,
 )
+from pypeline.energy_system.imports import Imports, load_imports_from_yaml
 from pypeline.energy_system.region import RegionBuilder
 from pypeline.energy_system.rule_book import (
     DEFAULT_HEAT_GRID_COST_DATASET,
@@ -42,9 +43,7 @@ class EnergySystemBuilder:
         self.unit: Unit = UnitEnum.GW.unit
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
-        default_grid, default_supply = self._load_default_prices()
-        self.grid_prices: dict[str, float] = default_grid
-        self.supply_prices: dict[str, float] = default_supply
+        self.imports: list[Imports] | None = None
         self.pipe_technology_name: str = "heat_pipe"
         self._dhn_central_seed_cache: dict[int, str] = {}
 
@@ -129,33 +128,8 @@ class EnergySystemBuilder:
             ),
         ]
 
-    def _load_default_prices(self) -> tuple[dict[str, float], dict[str, float]]:
-        root = Path(__file__).resolve().parents[1]
-        candidates = [
-            root / "energy_technology" / "configs" / "commodities.yaml",
-            root.parent / "configs" / "commodities.yaml",
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                cfg = yaml.safe_load(candidate.read_text(encoding="utf-8"))
-                if isinstance(cfg, dict):
-                    grid = {str(k): float(v) for k, v in (cfg.get("grid_prices") or {}).items()}
-                    supply = {str(k): float(v) for k, v in (cfg.get("supply_prices_eur_per_mwh") or {}).items()}
-                    return grid, supply
-        return {}, {}
-
-    def set_commodity_prices(
-        self,
-        *,
-        grid_prices: dict[str, Any],
-        supply_prices_eur_per_mwh: dict[str, Any],
-    ):
-        if not isinstance(grid_prices, dict):
-            raise TypeError("grid_prices must be a mapping")
-        if not isinstance(supply_prices_eur_per_mwh, dict):
-            raise TypeError("supply_prices_eur_per_mwh must be a mapping")
-        self.grid_prices = {str(k): float(v) for k, v in grid_prices.items()}
-        self.supply_prices = {str(k): float(v) for k, v in supply_prices_eur_per_mwh.items()}
+    def set_imports(self, import_yaml: str | Path):
+        self.imports = load_imports_from_yaml(import_yaml)
         return self
 
     def set_default_region_builder_config(self):
@@ -349,8 +323,7 @@ class EnergySystemBuilder:
             street_network=self.street_network,
             units=self.unit,
             technology_registry=self.technology_registry,
-            grid_prices=self.grid_prices,
-            supply_prices=self.supply_prices,
+            imports=self.imports,
             pipes=pipes,
         )
 
@@ -409,3 +382,6 @@ class EnergySystemBuilder:
             raise ValueError(
                 f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
             )
+        if not self.imports:
+            raise ValueError("Imports must be set using set_imports() with a non-empty imports.yaml")
+

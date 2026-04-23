@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from pypeline.energy_system.imports import Imports
 from pypeline.energy_system.pipe import Pipe
 from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
 
@@ -41,9 +42,8 @@ class ResolvedSystem:
     # All technologies referenced by region_technologies
     technologies: dict[str, "Technology"]
 
-    # Commodity pricing
-    grid_prices: dict[str, float]
-    supply_prices: dict[str, float]
+    # Commodity imports (electricity buy price + fuel supply prices)
+    imports: list[Imports]
 
     # Retention schedule (None = no retention constraint)
     retain_schedule: list[float] | None
@@ -132,8 +132,7 @@ def resolve_system(
         annual_demand=annual_demand,
         region_metrics=region_metrics,
         technologies=technologies,
-        grid_prices=dict(energy_system.grid_prices or {}),
-        supply_prices=dict(energy_system.supply_prices or {}),
+        imports=energy_system.imports,
         retain_schedule=retain_schedule,
         constraints=constraints,
         local_dhn_costs=local_dhn_costs,

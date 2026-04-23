@@ -8,6 +8,7 @@ from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 import pandas as pd
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_system.imports import Imports
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 from pypeline.optimization.resolved_system import resolve_system
@@ -76,8 +77,6 @@ def _build_energy_system(
     data_dir=None,
     constraints: dict | None = None,
     region_technologies: list | None = None,
-    grid_prices: dict | None = None,
-    supply_prices: dict | None = None,
 ) -> EnergySystem:
     demand = Demand(demand_type="residential_heat", commodity_in="residential_heat")
     region_demand = RegionDemand(demand=demand, value=1200.0, profile=pd.Series([1.0 / 8760.0] * 8760))
@@ -88,8 +87,10 @@ def _build_energy_system(
         units=UnitKW(),
         constraints=constraints or {},
         data_dir=data_dir,
-        grid_prices=grid_prices or {"electricity": 140.0, "export": 0.0},
-        supply_prices=supply_prices or {"gas": 30.0},
+        imports=[
+            Imports(commodity_out="electricity", price_eur_per_mwh=140.0),
+            Imports(commodity_out="gas", price_eur_per_mwh=30.0),
+        ],
     )
 
 

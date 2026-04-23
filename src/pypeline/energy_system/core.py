@@ -12,6 +12,7 @@ import pandas as pd
 from shapely.geometry import MultiPoint
 
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
+from pypeline.energy_system.imports import Imports
 from pypeline.energy_system.pipe import Pipe
 from pypeline.units import Unit
 
@@ -23,8 +24,7 @@ class EnergySystem:
     units: Unit
     street_network: nx.Graph | None = None
     technology_registry: TechnologyRegistry | None = None
-    grid_prices: dict[str, float] = field(default_factory=dict)
-    supply_prices: dict[str, float] = field(default_factory=dict)
+    imports: list[Imports] = field(default_factory=list)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
     pipes: list[Pipe] = field(default_factory=list)

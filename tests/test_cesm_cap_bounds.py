@@ -7,6 +7,7 @@ from shapely.geometry import Polygon
 
 import pandas as pd
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_system.imports import Imports
 from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
@@ -87,8 +88,10 @@ def _mock_energy_system(data_dir=None, constraints=None) -> EnergySystem:
         units=UnitKW(),
         constraints=constraints or {},
         data_dir=data_dir,
-        grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices={"gas": 60.0},
+        imports=[
+            Imports(commodity_out="electricity", price_eur_per_mwh=120.0),
+            Imports(commodity_out="gas", price_eur_per_mwh=60.0),
+        ],
     )
 
 
@@ -138,8 +141,10 @@ def _mock_two_district_energy_system(data_dir=None) -> EnergySystem:
         units=UnitKW(),
         constraints={},
         data_dir=data_dir,
-        grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices={"gas": 60.0},
+        imports=[
+            Imports(commodity_out="electricity", price_eur_per_mwh=120.0),
+            Imports(commodity_out="gas", price_eur_per_mwh=60.0),
+        ],
     )
 
 

@@ -4,6 +4,7 @@ import pytest
 from shapely.geometry import Polygon
 import pandas as pd
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_system.imports import Imports
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 from pypeline.optimization.resolved_system import resolve_system
@@ -19,7 +20,7 @@ def _build_scenario() -> Scenario:
     return Scenario(name="Base", start_year=2020, end_year=2025, year_gap=5, dt_hours=1, discount_rate=0.05, lockout_years=0)
 
 
-def _build_energy_system(data_dir=None, supply_prices=None) -> EnergySystem:
+def _build_energy_system(data_dir=None, extra_imports: list[Imports] | None = None) -> EnergySystem:
     demand = Demand(demand_type="residential_heat", commodity_in="residential_heat")
     region_demand = RegionDemand(demand=demand, value=100.0, profile=pd.Series([1.0 / 8760.0] * 8760))
     region = Region(id_=DISTRICT_ID, region_demands=[region_demand], region_technologies=[])
@@ -29,8 +30,7 @@ def _build_energy_system(data_dir=None, supply_prices=None) -> EnergySystem:
         units=UnitKW(),
         constraints={},
         data_dir=data_dir,
-        grid_prices={"electricity": 120.0, "export": 0.0},
-        supply_prices=supply_prices or {},
+        imports=[Imports(commodity_out="electricity", price_eur_per_mwh=120.0)] + (extra_imports or []),
     )
 
 
@@ -64,7 +64,7 @@ def missing_supply_t(tmp_path: Path) -> None:
     workdir = tmp_path / "cesm_strict_supply_price"
     _ensure_tss(workdir)
 
-    es = _build_energy_system(data_dir=REPO_ROOT / "data", supply_prices={"oil": 80.0})
+    es = _build_energy_system(data_dir=REPO_ROOT / "data", extra_imports=[Imports(commodity_out="oil", price_eur_per_mwh=80.0)])
     resolved = resolve_system(es, _build_scenario(), retain_existing_output_schedule=[1.0, 0.95])
     with pytest.raises(ValueError, match="Missing supply price for commodity 'gas'"):
         _write_cesm_inputs(

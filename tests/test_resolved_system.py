@@ -1,6 +1,7 @@
 import pandas as pd
 import pytest
 from pypeline.energy_system.core import Demand, EnergySystem, Region, RegionDemand, Scenario
+from pypeline.energy_system.imports import Imports
 from pypeline.energy_system.region_connection import RegionConnection
 from pypeline.energy_technology.technology import RegionTechnology, Technology
 from pypeline.optimization.resolved_system import resolve_system
@@ -17,16 +18,17 @@ def _scenario(start=2020, end=2025, gap=5, lockout=0) -> Scenario:
 
 def _es(
     regions: list,
-    grid_prices=None,
-    supply_prices=None,
+    imports: list[Imports] | None = None,
     region_connections=None,
 ) -> EnergySystem:
     return EnergySystem(
         name="test",
         regions=regions,
         units=UnitKW(),
-        grid_prices=grid_prices or {"electricity": 100.0, "export": 0.0},
-        supply_prices=supply_prices or {"gas": 50.0},
+        imports=imports or [
+            Imports(commodity_out="electricity", price_eur_per_mwh=100.0),
+            Imports(commodity_out="gas", price_eur_per_mwh=50.0),
+        ],
         pipes=region_connections or [],
     )
 
@@ -92,10 +94,16 @@ def region_metrics_t():
 
 
 def prices_passed_through_t():
-    es = _es([_region(0)], grid_prices={"electricity": 150.0, "export": 5.0}, supply_prices={"gas": 40.0})
+    custom_imports = [
+        Imports(commodity_out="electricity", price_eur_per_mwh=150.0),
+        Imports(commodity_out="gas", price_eur_per_mwh=40.0),
+    ]
+    es = _es([_region(0)], imports=custom_imports)
     resolved = resolve_system(es, _scenario())
-    assert resolved.grid_prices["electricity"] == pytest.approx(150.0)
-    assert resolved.supply_prices["gas"] == pytest.approx(40.0)
+    elec = next(i for i in resolved.imports if i.commodity_out == "electricity")
+    gas = next(i for i in resolved.imports if i.commodity_out == "gas")
+    assert elec.price_eur_per_mwh == pytest.approx(150.0)
+    assert gas.price_eur_per_mwh == pytest.approx(40.0)
 
 
 def retain_schedule_from_explicit_t():

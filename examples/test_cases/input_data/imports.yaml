@@ -1,0 +1,11 @@
+imports:
+  - commodity_out: electricity
+    price_eur_per_mwh: 80.0
+  - commodity_out: gas
+    price_eur_per_mwh: 120.0
+  - commodity_out: oil
+    price_eur_per_mwh: 110.0
+  - commodity_out: hydrogen
+    price_eur_per_mwh: 180.0
+  - commodity_out: biomass
+    price_eur_per_mwh: 80.0

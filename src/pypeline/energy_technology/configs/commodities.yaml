@@ -1,9 +1,0 @@
-grid_prices:
-  electricity: 80.0   
-  export: 0.0       
-
-supply_prices_eur_per_mwh:
-  gas: 120.0
-  oil: 110.0
-  hydrogen: 180.0
-  biomass: 80.0

@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from pypeline.energy_system.core import EnergySystem, Scenario
+from pypeline.energy_system.imports import Imports
 from pypeline.optimization.cesm.backend import CESMOptimizationBackend
 from pypeline.optimization.solver import Results
 from pypeline.units import UnitEnum
@@ -16,8 +17,10 @@ def _minimal_energy_system() -> EnergySystem:
         name="ES",
         regions=[],
         units=UnitEnum.GW.unit,
-        grid_prices={"electricity": 100.0, "export": 0.0},
-        supply_prices={"gas": 50.0},
+        imports=[
+            Imports(commodity_out="electricity", price_eur_per_mwh=100.0),
+            Imports(commodity_out="gas", price_eur_per_mwh=50.0),
+        ],
     )
 
 
