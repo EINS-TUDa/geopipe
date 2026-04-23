@@ -21,11 +21,9 @@ from pypeline.energy_system.rule_book import (
     DEFAULT_HEAT_GRID_COST_DATASET,
     DEFAULT_HEAT_GRID_DEMAND_NAME,
     EnergySystemRuleBook,
-    HEAT_EXCHANGER_NAMES,
     HeatExchangerCostAdjustmentRule,
     MinimumHeatGridConstraintRule,
     MinimumHeatGridOutputRule,
-    PRIMARY_HEAT_EXCHANGER,
     RegionRuleBook,
 )
 from pypeline.units import Unit, UnitEnum
@@ -115,7 +113,7 @@ class EnergySystemBuilder:
                         CensusTechnology.Renewable: "ind_heat_pump",
                         CensusTechnology.Electric: None,
                         CensusTechnology.Coal: None,
-                        CensusTechnology.District_Heating: PRIMARY_HEAT_EXCHANGER,
+                        CensusTechnology.District_Heating: "heat_exchanger",
                         CensusTechnology.NoEnergyCarrier: None,
                     },
                 },
@@ -166,7 +164,7 @@ class EnergySystemBuilder:
             "min_heat_grid_output_mwh": 0.0,
             "min_heat_grid_share": None,
             "heat_grid_demand_name": DEFAULT_HEAT_GRID_DEMAND_NAME,
-            "heat_grid_names": HEAT_EXCHANGER_NAMES,
+            "heat_grid_names": ("heat_exchanger",),
             "interdistrict_free_pipe_max_length_m": None,
             "heat_grid_cost_dataset": DEFAULT_HEAT_GRID_COST_DATASET,
             "heat_grid_cost_scaling": 1.0,
@@ -182,7 +180,7 @@ class EnergySystemBuilder:
         min_output = float(config.get("min_heat_grid_output_mwh", 0.0) or 0.0)
         min_share_raw = config.get("min_heat_grid_share")
         demand_name = config.get("heat_grid_demand_name", DEFAULT_HEAT_GRID_DEMAND_NAME)
-        heat_grid_names = config.get("heat_grid_names", HEAT_EXCHANGER_NAMES)
+        heat_grid_names = config.get("heat_grid_names", ("heat_exchanger",))
 
         min_share = None
         if min_share_raw is not None:

@@ -49,3 +49,21 @@ def invalid_yaml_t(tmp_path):
     message = str(excinfo.value)
     assert "bad_tech" in message
     assert str(yaml_path) in message
+
+
+def nan_cap_max_yaml_is_unbounded_t(tmp_path):
+    """Checks YAML NaN cap_max values are normalized to unbounded (None)."""
+    yaml_path = tmp_path / "nan_cap.yaml"
+    yaml_path.write_text(
+        "heat_grid_unbounded:\n"
+        "  commodity_in: district_heat_in\n"
+        "  commodity_out: district_heat_out\n"
+        "  cap_max: .nan\n"
+        "  max_units: 1\n"
+    )
+
+    specs = _load_specs_from_yaml(yaml_path, None)
+
+    assert len(specs) == 1
+    assert specs[0].name == "heat_grid_unbounded"
+    assert specs[0].cap_max is None

@@ -20,7 +20,6 @@ from __future__ import annotations
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
 from pypeline.optimization.cesm.io_utils import ( _canon_co,_format_year_profile,_profile_to_map_and_scalar)
 from pypeline.energy_technology.technology import (
     Technology,
@@ -33,10 +32,7 @@ from pypeline.validation import require_finite, require_float, require_positive_
 _require_float = require_float
 _require_finite = require_finite
 _require_positive_int = require_positive_int
-
 UNBOUNDED_CAP = 1e9
-UNBOUNDED_ENERGY = 1e12
-PRIMARY_HEAT_EXCHANGER: str = HEAT_EXCHANGER_NAMES[0]
 
 
 class _ConversionRowsBuilder:
@@ -94,7 +90,7 @@ class _ConversionRowsBuilder:
             "ind_heat_pump": self._rows_residential,
             "ind_gas_boiler": self._rows_residential,
             "ind_oil_boiler": self._rows_residential,
-            PRIMARY_HEAT_EXCHANGER: self._rows_heat_exchanger,
+            "heat_exchanger": self._rows_heat_exchanger,
             "heat_grid": self._rows_default,
             "cen_heat_pump": self._rows_central_heat_supply,
             "cen_gas_boiler": self._rows_central_heat_supply,
@@ -368,9 +364,6 @@ class _ConversionRowsBuilder:
         overrides: Optional[dict[str, Any]],
     ) -> None:
         base_name, _ = _split_base_and_district(tech.name)
-        if base_name == "heat_grid":
-            row["max_units"] = 1
-            row["cap_min"] = 0.0
         metrics = self._existing_metrics(tech, district)
         existing = self._existing_overrides(tech, district, metrics)
         merged = self._merge_overrides(existing, overrides)
@@ -494,10 +487,16 @@ class _ConversionRowsBuilder:
 
     @staticmethod
     def _ensure_unit_capacity(row: dict[str, Any], existing_capacity: float) -> None:
-        unit_cap_val = _require_float("cap_max", row.get("cap_max"))
+        cap_max_raw = row.get("cap_max")
+        if cap_max_raw is None:
+            return
+        unit_cap_val = _require_float("cap_max", cap_max_raw)
         if not math.isfinite(unit_cap_val) or unit_cap_val <= 0.0:
             raise ValueError("cap_max must be positive and finite")
-        max_units_int = int(row.get("max_units"))
+        max_units_raw = row.get("max_units")
+        if max_units_raw is None:
+            raise ValueError("max_units must be set when cap_max is finite")
+        max_units_int = int(max_units_raw)
         if max_units_int < 1:
             raise ValueError("max_units must be >= 1")
         required_units = 0
@@ -527,7 +526,7 @@ class _ConversionRowsBuilder:
             base_name, _ = _split_base_and_district(tech.name)
             is_indirect = base_name.startswith("ind_")
             is_central = _is_central_heat_supply(tech.name)
-            is_dhn_pass_through = base_name == "heat_grid" or base_name == PRIMARY_HEAT_EXCHANGER
+            is_dhn_pass_through = base_name == "heat_grid" or base_name == "heat_exchanger"
 
             if is_central and output > 0.0 and cap <= 0.0:
                 raise ValueError(f"Invalid central retention metrics for {tech.name}: initial_energy_output requires positive initial_capacity")
@@ -655,7 +654,10 @@ class _ConversionRowsBuilder:
             return
 
         # Use total capacity (cap_max * max_units), so multi-unit builds are honored.
-        max_units = _require_float("max_units", row.get("max_units"))
+        max_units_raw = row.get("max_units")
+        if max_units_raw is None:
+            return
+        max_units = _require_float("max_units", max_units_raw)
         cap_max_map = self._profile_to_map(cap_max_value)
         if not cap_max_map and self.scenario_years:
             cap_max_map = {year: cap_max_peak for year in self.scenario_years}
@@ -763,7 +765,7 @@ class _ConversionRowsBuilder:
                     row[col] = formatted
 
         def _adjust_cap_max(year: int, base: Optional[float]) -> Optional[float]:
-            if is_indirect and year == first_year:
+            if is_indirect and year == first_year and lockout_until_year > first_year:
                 # First year: allow scaling only for technologies that already exist.
                 if cap_limit <= 0.0:
                     return 0.0
@@ -782,16 +784,12 @@ class _ConversionRowsBuilder:
         def _adjust_cap_min(year: int, base: Optional[float]) -> Optional[float]:
             if base is None:
                 return None
-            base_val = base
             if year < lockout_until_year and not is_indirect and not is_heat_grid:
                 # During lockout we keep existing capacity via cap_res_* and cap_max,
                 # but must not force minimum new-build unit activation (cap_min),
                 # otherwise CESM's build_min_activation can become infeasible.
                 return 0.0
-            # Keep user-specified minima for later years when there is no existing capacity.
-            if cap_limit <= 0.0:
-                return base_val
-            return base_val
+            return base
 
         def _adjust_cap_res_min(year: int, base: Optional[float]) -> Optional[float]:
             if base is None:
@@ -812,6 +810,23 @@ class _ConversionRowsBuilder:
         _update_column("cap_min", _adjust_cap_min)
         _update_column("cap_res_min", _adjust_cap_res_min)
         _update_column("cap_res_max", _adjust_cap_res_max)
+        
+        is_central = _is_central_heat_supply(tech.name)
+        has_forced_central_cap_target = row.get("conversion_process_name") in self.min_central_cap_targets
+        if is_central and cap_limit > 0.0 and not has_forced_central_cap_target:
+            # Keep retained stock via cap_res_* and lockout cap_max in early years,
+            # but make post-lockout cap_max unbounded. This avoids recurring forced
+            # cap_new from Installed_Units while preserving central cap_min semantics
+            # when a new build is actually chosen.
+            cap_max_pairs: list[tuple[int, float]] = []
+            for year in self.scenario_years:
+                if year < lockout_until_year:
+                    cap_max_pairs.append((year, cap_limit))
+                else:
+                    cap_max_pairs.append((year, float("nan")))
+            cap_max_profile = self._format_profile(cap_max_pairs)
+            if cap_max_profile:
+                row["cap_max"] = cap_max_profile
 
     # Misc helpers -----------------------------------------------------------
     def _years_since_start(self, year: int) -> float:
@@ -881,20 +896,39 @@ def tech_to_cesms_row(
 
     base_name, _ = _split_base_and_district(tech.name)
     is_indirect = base_name.startswith("ind_")
+    is_central = _is_central_heat_supply(tech.name)
 
     if is_indirect:
         cap_max_val = None
-    elif cap_max_attr is None:
-        raise ValueError(f"cap_max is required for technology '{tech.name}'")
     else:
-        cap_max_val = _require_finite(f"cap_max for {tech.name}", cap_max_attr, gt_zero=True)
+        cap_max_missing = cap_max_attr is None
+        if not cap_max_missing:
+            try:
+                cap_max_raw = float(cap_max_attr)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"cap_max for {tech.name} must be numeric") from exc
+            cap_max_missing = math.isnan(cap_max_raw)
+        if cap_max_missing:
+            if is_central:
+                raise ValueError(f"cap_max is required for central technology '{tech.name}'")
+            cap_max_val = None
+        else:
+            cap_max_val = _require_finite(f"cap_max for {tech.name}", cap_max_attr, gt_zero=True)
 
     if is_indirect:
         max_units_val = None
+    elif max_units is None and cap_max_val is not None:
+        raise ValueError(f"max_units is required for technology '{tech.name}' when cap_max is finite")
     elif max_units is None:
-        raise ValueError(f"max_units is required for technology '{tech.name}'")
+        max_units_val = None
     else:
         max_units_val = _require_positive_int("max_units", max_units)
+
+    if cap_max_val is None and not is_indirect and not is_central:
+        # For unbounded non-central rows, avoid unit-based build activation defaults.
+        capex_base_val = None
+        max_units_val = None
+
     cap_min_val = None
     if cap_min_attr is not None:
         cap_min_val = _require_finite(f"cap_min for {tech.name}", cap_min_attr, allow_zero=True, gt_zero=False)

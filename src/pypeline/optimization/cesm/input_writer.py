@@ -27,7 +27,7 @@ from typing import Any, List, Optional, Union
 
 import pandas as pd
 
-from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES
+from pypeline.energy_system.rule_book import DHN_TECH_NAMES
 from pypeline.optimization.cesm.io_utils import (
     _canon_co,
     _convsubproc_dataframe,
@@ -41,11 +41,7 @@ from pypeline.optimization.cesm.io_utils import (
 )
 from pypeline.energy_technology.technology import (Technology, split_base_and_district as _split_base_and_district)
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
-from pypeline.optimization.cesm.conversion_rows import (
-    UNBOUNDED_CAP,
-    UNBOUNDED_ENERGY,
-    _ConversionRowsBuilder,
-)
+from pypeline.optimization.cesm.conversion_rows import (_ConversionRowsBuilder)
 from pypeline.optimization.resolved_system import ResolvedSystem
 from pypeline.validation import (
     sanitize_price_map,
@@ -53,9 +49,7 @@ from pypeline.validation import (
 )
 
 logger = logging.getLogger(__name__)
-
 PathLike = Union[str, Path]
-
 
 @dataclass
 class _CesmIOPaths:
@@ -301,7 +295,7 @@ def _write_cesm_inputs(
             agg["initial_energy_output"] += float(metrics["initial_energy_output"] or 0.0)
             agg["initial_capacity"] += float(metrics["initial_capacity"] or 0.0)
 
-    primary_heat_exchanger = HEAT_EXCHANGER_NAMES[0]
+    primary_heat_exchanger = DHN_TECH_NAMES[0]
     historical_exchanger_targets_mwh: dict[int, float] = {}
     for district, rid in district_to_region.items():
         district_metrics = region_metrics.get(rid)
@@ -440,8 +434,8 @@ def _write_cesm_inputs(
                 "scenario": scenario_name,
                 "efficiency": 1.0,
                 "technical_availability": 1.0,
-                "max_eout": UNBOUNDED_ENERGY,
-                "cap_max": UNBOUNDED_CAP,
+                "max_eout": math.nan,
+                "cap_max": math.nan,
                 "opex_cost_energy": price,
             }
         )
@@ -463,8 +457,8 @@ def _write_cesm_inputs(
             "scenario": scenario_name,
             "efficiency": 1.0,
             "technical_availability": 1.0,
-            "max_eout": UNBOUNDED_ENERGY,
-            "cap_max": UNBOUNDED_CAP,
+            "max_eout": math.nan,
+            "cap_max": math.nan,
             "opex_cost_energy": float(export_price_eur_per_mwh),
         }
     )
@@ -517,6 +511,8 @@ def _write_cesm_inputs(
         }
         cs_rows.append(row)
 
+    lockout_years = max(0, int(lockout_until_year - start_year_int))
+
     builder = _ConversionRowsBuilder(
         scenario_name=scenario_name,
         scenario_years=scenario_years,
@@ -538,7 +534,7 @@ def _write_cesm_inputs(
         retain_factor=retain_factor,
         retain_years_factor=retain_existing_output_years_factor,
         retain_schedule=retain_schedule,
-        lockout_until_year=lockout_until_year,
+        lockout_years=lockout_years,
         elec_price_eur_per_mwh=elec_price_eur_per_mwh,
         local_dhn_capex_base_by_district=local_dhn_capex_base_by_district,
     )
@@ -631,7 +627,9 @@ def _write_cesm_inputs(
                 base_value = _value_for_year(profile_map, scalar, year_i)
                 if base_value is None:
                     if column == "cap_max":
-                        pairs.append((year_i, float(UNBOUNDED_CAP)))
+                        # Keep post-activation rows effectively unbounded when cap_max is unspecified.
+                        # No NaN here: CESM profile interpolation drops NaN and  backfills zero values into later years.
+                        pairs.append((year_i, 10000000.0))
                     continue
                 pairs.append((year_i, float(base_value)))
 

@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pypeline.data.data_registry import DataRegistry
 from pypeline.validation import normalize_shares_or_zero
 from pypeline.energy_system.core import Demand, Region, RegionDemand
-from pypeline.energy_system.rule_book import HEAT_EXCHANGER_NAMES, PRIMARY_HEAT_EXCHANGER, RegionRuleBook
+from pypeline.energy_system.rule_book import RegionRuleBook
 import networkx as nx
 
 from pypeline.energy_technology.technology import (
@@ -23,7 +23,7 @@ from pypeline.energy_technology.technology_registry import (
     TechnologyNotFoundError,
 )
 
-REGIONAL_TECH_ALIAS_MAP: dict[str, tuple[str, ...]] = {PRIMARY_HEAT_EXCHANGER: HEAT_EXCHANGER_NAMES[1:]}
+REGIONAL_TECH_ALIAS_MAP: dict[str, tuple[str, ...]] = {"heat_exchanger": tuple()}
 EXCLUDED_TECH_NAMES: tuple[str, ...] = ("heat_pipe",)
 
 
@@ -69,7 +69,7 @@ def _central_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
 
 def _regional_base_names(registry: TechnologyRegistry) -> tuple[str, ...]:
     base_names: list[str] = list(_central_base_names(registry))
-    for static_name in ("heat_grid", PRIMARY_HEAT_EXCHANGER, *_indirect_base_names(registry)):
+    for static_name in ("heat_grid", "heat_exchanger", *_indirect_base_names(registry)):
         if _is_excluded(static_name):
             continue
         if registry.has_technology(static_name):
@@ -152,7 +152,7 @@ def _is_other_district_clone(name: str, district_id: int) -> bool:
     if district_suffix is None:
         return False
     canonical_base = _canonical_regional_base(base)
-    if not (_is_central_base(canonical_base) or canonical_base in {"heat_grid", PRIMARY_HEAT_EXCHANGER}):
+    if not (_is_central_base(canonical_base) or canonical_base in {"heat_grid", "heat_exchanger"}):
         return False
     expected = _localized_name(canonical_base, district_id)
     return base_no_unit != expected
@@ -322,7 +322,7 @@ class RegionBuilder:
             commodity_out = f"district_heat_out{suffix}"
         elif _is_central_base(base_name):
             commodity_out = f"district_heat_in{suffix}"
-        elif base_name == PRIMARY_HEAT_EXCHANGER:
+        elif base_name == "heat_exchanger":
             commodity_in = f"district_heat_out{suffix}"
 
         cap_max_value = None if unlimited else base_tech.cap_max
@@ -501,7 +501,7 @@ class RegionBuilder:
                 collection.append(region_technology)
                 technologies_with_shares.add(tech)
 
-                localized_heat_exchanger = localized_map.get(PRIMARY_HEAT_EXCHANGER)
+                localized_heat_exchanger = localized_map.get("heat_exchanger")
                 if (
                     localized_heat_exchanger
                     and tech == localized_heat_exchanger

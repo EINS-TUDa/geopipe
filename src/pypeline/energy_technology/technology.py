@@ -53,13 +53,7 @@ class Technology:
         self.pipe_capex_eur_per_km = pipe_capex_eur_per_km
         self.cap_min = cap_min
         self.cap_max = cap_max
-        if max_units is None:
-            self.max_units = None
-        else:
-            try:
-                self.max_units = max(1, int(max_units))
-            except Exception:
-                self.max_units = None
+        self.max_units = max_units
         self.out_frac_min = out_frac_min
         self.out_frac_max = out_frac_max
         self.in_frac_min = in_frac_min
@@ -101,12 +95,6 @@ class Technology:
         payload.update(overrides)
         return Technology(**payload)
 
-
-DHN_TECH_BASE_NAMES: tuple[str, ...] = (
-    "heat_exchanger",
-    "ind_district_heating_connection",
-    "heat_grid",
-)
 INDIRECT_TECH_PREFIX: str = "ind_"
 CENTRAL_TECH_PREFIX: str = "cen_"
 

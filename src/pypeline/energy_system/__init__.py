@@ -11,8 +11,6 @@ from pypeline.energy_system.dhn import (
 )
 from pypeline.energy_system.region import RegionBuilder
 from pypeline.energy_system.rule_book import (
-	HEAT_EXCHANGER_NAMES,
-	PRIMARY_HEAT_EXCHANGER,
 	EnergySystemRule,
 	EnergySystemRuleBook,
 	RegionRule,
@@ -35,6 +33,4 @@ __all__ = [
 	"EnergySystemRule",
 	"RegionRuleBook",
 	"EnergySystemRuleBook",
-	"HEAT_EXCHANGER_NAMES",
-	"PRIMARY_HEAT_EXCHANGER",
 ]

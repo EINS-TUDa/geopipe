@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -186,7 +187,7 @@ class _SpecInference:
         lowered: str,
         provided_keys: set[str] | None,
     ) -> None:
-        if "heat_exchanger" not in lowered and not lowered.startswith("ind_district_heating_connection"):
+        if "heat_exchanger" not in lowered:
             return
         if not provided_keys or "stage" not in provided_keys:
             item["stage"] = TechnologyStage.STAGE1.value
@@ -323,6 +324,19 @@ def _collect_additional_paths(extra_paths: Iterable[str | Path] | None) -> List[
     return resolved
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in {"", "none", "null", "nan"}:
+            return None
+    parsed = float(value)
+    if math.isnan(parsed):
+        return None
+    return parsed
+
+
 def _spec_from_dict(data: Dict) -> TechnologySpec:
     validate_spec_dict(data)
     stage = data.get("stage")
@@ -338,12 +352,10 @@ def _spec_from_dict(data: Dict) -> TechnologySpec:
         capex_cost_power=float(data.get("capex_cost_power", 0.0)),
         capex_cost_base=float(data.get("capex_cost_base", 0.0)),
         pipe_capex_eur_per_km=(
-            float(data["pipe_capex_eur_per_km"])
-            if data.get("pipe_capex_eur_per_km") is not None
-            else None
+            _optional_float(data.get("pipe_capex_eur_per_km"))
         ),
-        cap_min=float(data["cap_min"]) if data.get("cap_min") is not None else None,
-        cap_max=float(data["cap_max"]) if data.get("cap_max") is not None else None,
+        cap_min=_optional_float(data.get("cap_min")),
+        cap_max=_optional_float(data.get("cap_max")),
         max_units=int(data["max_units"]) if data.get("max_units") is not None else None,
         stage=TechnologyStage(stage) if stage else TechnologyStage.STAGE1,
         category=TechnologyCategory(category) if category else TechnologyCategory.DEMAND_LINK,

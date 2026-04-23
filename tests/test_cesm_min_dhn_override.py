@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from pypeline.energy_technology.technology import Technology
 from pypeline.optimization.cesm.conversion_rows import _ConversionRowsBuilder
@@ -201,3 +203,58 @@ def lockout_capmin_t(district: int) -> None:
 
     assert cap_min_profile[2020] == 0.0
     assert cap_min_profile[2025] == 0.3
+
+
+@pytest.mark.parametrize("district", [0, 6])
+def retained_central_no_forced_build_t(district: int) -> None:
+    """Checks retained central rows keep post-lockout cap_min but do not keep post-lockout cap_max locks."""
+    tech_name = f"cen_heat_pump_D{district}"
+    builder = _ConversionRowsBuilder(
+        scenario_name="Base",
+        scenario_years=[2020, 2025, 2030],
+        demand_commodity=f"residential_heat_D{district}",
+        districts=[district],
+        district_index={district: 0},
+        heat_names=[f"residential_heat_D{district}"],
+        district_heat_in_names={district: f"district_heat_in_D{district}"},
+        district_heat_out_names={district: f"district_heat_out_D{district}"},
+        min_dhn_targets={},
+        min_heat_grid_targets={},
+        min_central_cap_targets={},
+        min_central_cap_totals={},
+        min_central_cap_totals_by_co={},
+        exchanger_throughput_targets={},
+        district_to_region={district: district},
+        region_metrics={
+            district: {
+                tech_name: {
+                    "initial_capacity": 2.0,
+                    "initial_energy_output": 0.0,
+                }
+            }
+        },
+        total_metrics={},
+        retain_factor=None,
+        retain_years_factor=None,
+        retain_schedule=None,
+        lockout_years=2,
+        elec_price_eur_per_mwh=120.0,
+    )
+
+    cen_hp = Technology(
+        tech_name,
+        "electricity",
+        f"district_heat_in_D{district}",
+        cap_min=0.3,
+        cap_max=20.0,
+        max_units=10,
+    )
+
+    row = builder.rows_for_technology(cen_hp)[0]
+    cap_min_profile = _profile_value_by_year(row.get("cap_min"))
+    cap_max_profile = _profile_value_by_year(row.get("cap_max"))
+
+    assert cap_min_profile[2020] == 0.0
+    assert cap_min_profile[2025] == 0.3
+    assert cap_max_profile[2020] == pytest.approx(2.0)
+    assert math.isnan(cap_max_profile[2025])

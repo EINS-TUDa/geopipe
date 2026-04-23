@@ -70,3 +70,41 @@ def row_overrides_t(src_district: int, dst_district: int):
     assert row["capex_cost_power"] == 50000.0
     assert math.isclose(row["capex_cost_base"], 2500.0)
     assert row["cap_active"] is None
+
+
+def nan_cap_max_non_central_unbounded_t():
+    """Checks NaN cap_max is treated as unbounded for non-central technologies."""
+    tech = DummyTech(
+        name="heat_grid",
+        commodity_in="district_heat_in",
+        commodity_out="district_heat_out",
+        cap_max=float("nan"),
+        max_units=1,
+    )
+    row = tech_to_cesms_row(
+        tech,
+        cp_name="heat_grid",
+        cin="district_heat_in",
+        cout="district_heat_out",
+        scenario_name="S",
+    )
+    assert row["cap_max"] is None
+
+
+def nan_cap_max_central_rejected_t():
+    """Checks central technologies must keep finite cap_max for unit-based constraints."""
+    tech = DummyTech(
+        name="cen_heat_pump",
+        commodity_in="electricity",
+        commodity_out="district_heat_in",
+        cap_max=float("nan"),
+        max_units=1,
+    )
+    with pytest.raises(ValueError, match="cap_max is required for central technology"):
+        tech_to_cesms_row(
+            tech,
+            cp_name="cen_heat_pump",
+            cin="electricity",
+            cout="district_heat_in",
+            scenario_name="S",
+        )

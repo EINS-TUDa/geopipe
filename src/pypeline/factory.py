@@ -72,20 +72,30 @@ def build_energy_system(
     builder.set_default_region_builder_config()
     if region_builder_config_overrides:
         builder.set_region_builder_config(region_builder_config_overrides, merge=True)
-    builder.set_energy_system_rule_book(rulebook if rulebook is not None else EnergySystemRuleBook())
+
+    rb = EnergySystemRuleBook()
+    if rulebook is not None:
+        for rule in getattr(rulebook, "rules", []):
+            rb.add_rule(rule)
+    if commodity_activation_year_by_name:
+        rb.add_rule(
+            CommodityActivationYearRule(
+                activation_year_by_commodity=commodity_activation_year_by_name,
+                overwrite=True,
+            )
+        )
+    if technology_activation_year_by_name:
+        rb.add_rule(
+            TechnologyActivationYearRule(
+                activation_year_by_technology=technology_activation_year_by_name,
+                overwrite=True,
+            )
+        )
+
+    builder.set_energy_system_rule_book(rb)
 
     energy_system = builder.build()
     apply_injected_techs(energy_system, injected_techs or [])
-    if commodity_activation_year_by_name:
-        energy_system = CommodityActivationYearRule(
-            activation_year_by_commodity=commodity_activation_year_by_name,
-            overwrite=True,
-        ).apply(energy_system)
-    if technology_activation_year_by_name:
-        energy_system = TechnologyActivationYearRule(
-            activation_year_by_technology=technology_activation_year_by_name,
-            overwrite=True,
-        ).apply(energy_system)
 
     return energy_system
 

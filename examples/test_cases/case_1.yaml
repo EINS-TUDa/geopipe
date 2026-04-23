@@ -6,19 +6,20 @@ regions:
   - region_id: 1
     street_segment_ids:
       - DEBYBDLMgJ00028F
-
+  - region_id: 2
+    street_segment_ids:
+      - DEBYBDLMgJ0001tN
 injections:
   - type: demand
-    magnitude: 20.0
+    magnitude: 500.0
     street_segment_id: DEBYBDLMgJ0003kU
     commodity_type: residential_heat
-  - type: supply
-    region_id: 0
-    technology: cen_gas_boiler
-    initial_capacity_mw: 10.0
-    initial_output_mw: 5.0
+  - type: demand
+    magnitude: 1000.0
+    street_segment_id: DEBYBDLMgJ0001tN
+    commodity_type: residential_heat
   - type: supply
     region_id: 1
     technology: cen_heat_pump
-    initial_capacity_mw: 10.0
-    initial_output_mw: 10.0
+    initial_capacity_mw: 0.3
+    initial_output_mw: 0.0
