@@ -93,7 +93,8 @@ class Scenario:
     start_year: int
     end_year: int
     year_gap: int
-    tss: str = "4Times"
+    dt_hours: int
+    tss: str
     co2_price: Number | dict[int, Number] | None = None
     co2_limit: Number | dict[int, Number] | None = None
     rules: list[str] = field(default_factory=list)

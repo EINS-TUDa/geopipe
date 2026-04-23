@@ -12,7 +12,7 @@ def _flat_profile() -> pd.Series:
 
 
 def _scenario(start=2020, end=2025, gap=5, lockout=0) -> Scenario:
-    return Scenario(name="Test", start_year=start, end_year=end, year_gap=gap, discount_rate=0.05, lockout_years=lockout)
+    return Scenario(name="Test", start_year=start, end_year=end, year_gap=gap, dt_hours=1, discount_rate=0.05, lockout_years=lockout)
 
 
 def _es(

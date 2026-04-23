@@ -16,7 +16,7 @@ DISTRICT_ID = 4
 
 
 def _build_scenario() -> Scenario:
-    return Scenario(name="Base", start_year=2020, end_year=2025, year_gap=5, discount_rate=0.05, lockout_years=0)
+    return Scenario(name="Base", start_year=2020, end_year=2025, year_gap=5, dt_hours=1, discount_rate=0.05, lockout_years=0)
 
 
 def _build_energy_system(data_dir=None, supply_prices=None) -> EnergySystem:

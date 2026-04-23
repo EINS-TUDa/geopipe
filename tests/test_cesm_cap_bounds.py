@@ -69,7 +69,7 @@ def _two_polygons() -> gpd.GeoDataFrame:
 
 
 def _mock_scenario_single() -> Scenario:
-    return Scenario(name="Base", start_year=2020, end_year=2030, year_gap=5, discount_rate=0.05, lockout_years=0)
+    return Scenario(name="Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, discount_rate=0.05, lockout_years=0)
 
 
 def _mock_energy_system(data_dir=None, constraints=None) -> EnergySystem:
@@ -108,7 +108,7 @@ def _selected_techs() -> list[Technology]:
 
 
 def _mock_scenario_two_district() -> Scenario:
-    return Scenario(name="Base", start_year=2020, end_year=2025, year_gap=5, discount_rate=0.05, lockout_years=0)
+    return Scenario(name="Base", start_year=2020, end_year=2025, year_gap=5, dt_hours=1, discount_rate=0.05, lockout_years=0)
 
 
 def _mock_two_district_energy_system(data_dir=None) -> EnergySystem:

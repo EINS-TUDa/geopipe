@@ -23,11 +23,6 @@ def create_local_data_registry(
 
 def create_cesm_backend(
     *,
-    model_name: str,
-    scenario_name: str,
-    tss_name: str,
-    dt_hours: int,
-    scenario: Scenario,
     demand_name: str,
     timeseries_dir: Path,
     output_dir: Path,
@@ -35,14 +30,7 @@ def create_cesm_backend(
     return CESMOptimizationBackend(
         timeseries_dir=timeseries_dir,
         output_dir=output_dir,
-        run_subdir=f"{model_name}-{scenario_name}",
         results_db_name="db.sqlite",
-        write_inputs=True,
-        model_name=model_name,
-        scenario_name=scenario_name,
-        tss_name=tss_name,
-        dt_hours=dt_hours,
-        scenario=scenario,
         demand_name=demand_name,
     )
 
@@ -104,6 +92,7 @@ def build_scenario(
     model_name: str,
     scenario_name: str,
     tss_name: str,
+    dt_hours: int,
     start_year: int,
     end_year: int,
     year_gap: int,
@@ -116,6 +105,7 @@ def build_scenario(
         start_year=start_year,
         end_year=end_year,
         year_gap=year_gap,
+        dt_hours=dt_hours,
         tss=tss_name,
         retain_existing_output_drop_per_year=retain_existing_output_drop_per_year,
         lockout_years=lockout_years,

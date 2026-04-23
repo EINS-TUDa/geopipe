@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from examples.example_runner import ScenarioCaseConfig, _validate_case_regions, _case_plots_dir, _write_results_report
+from examples.example_runner import ScenarioCaseConfig, _validate_case_regions, _case_plots_dir, write_results_report
 from pypeline import TechnologyRegistry, EnergySystemBuilder, EnergySystemRuleBook
 from pypeline.energy_system import Scenario
 from pypeline.factory import create_local_data_registry
@@ -37,7 +37,7 @@ def main():
             "min_heat_grid_share": 0.1,
             "heat_grid_names": ("heat_exchanger",),
         },
-        expected_region_ids=(0, 1),
+        expected_region_ids=(0, 1, 2),
     )
 
     cfg = SimpleTopologyBuilderConfig(
@@ -73,6 +73,7 @@ def main():
         start_year=config.start_year,
         end_year=config.end_year,
         year_gap=config.year_gap,
+        dt_hours=config.dt_hours,
         tss=config.tss_name,
         retain_existing_output_drop_per_year=config.retain_existing_output_drop_per_year,
         lockout_years=config.lockout_years,
@@ -89,15 +90,13 @@ def main():
         timeseries_dir=CASE_DIR / "input_data",
         output_dir=CASE_DIR / "output_data",
         results_db_name="db.sqlite",
-        tss_name=config.tss_name,
-        dt_hours=config.dt_hours,
         demand_name=config.demand_name,
     )
 
     solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
-    report_path = _write_results_report(
-        output_dir=plots_dir,
+    write_results_report(
+        output_dir=CASE_DIR / "output_data",
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         results_obj=results_obj,
@@ -114,7 +113,7 @@ def main():
     )
 
     from compare_techmaps import compare_techmaps
-    compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison")
+    compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison.html")
 
     # --- 1) Street topology plot ---
     # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(

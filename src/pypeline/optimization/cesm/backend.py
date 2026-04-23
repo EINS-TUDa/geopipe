@@ -62,10 +62,8 @@ class CESMOptimizationBackend(OptimizationBackend):
 
     def __init__(
         self,
-        tss_name: str,
         timeseries_dir: str | Path,
         output_dir: str | Path,
-        dt_hours: int,
         results_db_name: str = "db.sqlite",
         demand_name: str = "residential_heat",
         retain_existing_output_factor: float | None = None,
@@ -77,8 +75,6 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.timeseries_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.tss_name = tss_name
-        self.dt_hours = int(dt_hours)
         self.run_subdir = None
         self.results_db_name = results_db_name
 
@@ -109,8 +105,8 @@ class CESMOptimizationBackend(OptimizationBackend):
             timeseries_dir=self.timeseries_dir,
             model_name=energy_system.name,
             scenario_name=scenario.name,
-            tss_name=self.tss_name,
-            dt_hours=self.dt_hours,
+            tss_name=scenario.tss,
+            dt_hours=scenario.dt_hours,
             retain_existing_output_factor=self.retain_existing_output_factor,
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,
         )

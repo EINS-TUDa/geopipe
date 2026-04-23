@@ -27,6 +27,7 @@ def _minimal_scenario() -> Scenario:
         start_year=2020,
         end_year=2020,
         year_gap=1,
+        dt_hours=1,
         lockout_years=0,
         retain_existing_output_schedule=[1.0],
     )

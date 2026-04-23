@@ -68,7 +68,7 @@ def _profile_value_for_year(value, year: int) -> float:
 
 
 def _build_scenario(lockout_years: int = 0) -> Scenario:
-    return Scenario(name="Base", start_year=2020, end_year=2030, year_gap=5, discount_rate=0.05, lockout_years=lockout_years)
+    return Scenario(name="Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, discount_rate=0.05, lockout_years=lockout_years)
 
 
 def _build_energy_system(

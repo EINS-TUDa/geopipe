@@ -103,6 +103,7 @@ def _build_cli_scenario(
     model_name: str,
     scenario_name: str,
     tss_name: str,
+    dt_hours: int,
     start_year: int,
     end_year: int,
     year_gap: int,
@@ -114,6 +115,7 @@ def _build_cli_scenario(
         start_year=start_year,
         end_year=end_year,
         year_gap=year_gap,
+        dt_hours=dt_hours,
         tss=tss_name,
         retain_existing_output_drop_per_year=retain_existing_output_drop_per_year,
         lockout_years=lockout_years,
@@ -266,7 +268,7 @@ def _ensure_cli_timeseries_inputs(
     _write_heat_demand_profile_file(profile=profile, timeseries_dir=timeseries_dir)
 
 
-def _write_results_report(
+def write_results_report(
     *,
     output_dir: Path,
     model_name: str,
@@ -396,6 +398,7 @@ def run_scenario_case(
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
+        dt_hours=config.dt_hours,
         start_year=config.start_year,
         end_year=config.end_year,
         year_gap=config.year_gap,
@@ -411,17 +414,15 @@ def run_scenario_case(
         project_root=config.project_root,
     )
     backend = CESMOptimizationBackend(
-        tss_name=config.tss_name,
         timeseries_dir=case_dir / "input_data",
         output_dir=case_dir / "output_data",
-        dt_hours=config.dt_hours,
         results_db_name="db.sqlite",
         demand_name=config.demand_name,
         retain_existing_output_schedule=scenario.retain_existing_output_schedule,
     )
     solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
-    report_path = _write_results_report(
+    report_path = write_results_report(
         output_dir=plots_dir,
         model_name=config.model_name,
         scenario_name=config.scenario_name,
@@ -486,6 +487,7 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         model_name=config.model_name,
         scenario_name=config.scenario_name,
         tss_name=config.tss_name,
+        dt_hours=config.dt_hours,
         start_year=config.start_year,
         end_year=config.end_year,
         year_gap=config.year_gap,
@@ -500,17 +502,15 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         project_root=config.project_root,
     )
     backend = CESMOptimizationBackend(
-        tss_name=config.tss_name,
         timeseries_dir=config.input_dir,
         output_dir=config.output_dir,
-        dt_hours=config.dt_hours,
         results_db_name="db.sqlite",
         demand_name=config.demand_name,
         retain_existing_output_schedule=scenario.retain_existing_output_schedule,
     )
     solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
-    report_path = _write_results_report(
+    report_path = write_results_report(
         output_dir=plots_dir,
         model_name=config.model_name,
         scenario_name=config.scenario_name,
