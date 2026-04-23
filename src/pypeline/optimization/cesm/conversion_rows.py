@@ -59,7 +59,7 @@ class _ConversionRowsBuilder:
         retain_factor: float | None,
         retain_years_factor: float | None,
         retain_schedule: Optional[List[float]],
-        lockout_years: int,
+        lockout_until_year: int,
         elec_price_eur_per_mwh: float,
         local_dhn_capex_base_by_district: Optional[dict[int, float]] = None,
     ) -> None:
@@ -84,10 +84,7 @@ class _ConversionRowsBuilder:
         self.retain_years_factor = retain_years_factor
         self.retain_schedule = retain_schedule
         self.local_dhn_capex_base_by_district = local_dhn_capex_base_by_district or {}
-        self.lockout_years = max(0, int(lockout_years))
-        self.lockout_until_year = (
-            self.scenario_years[0] + self.lockout_years if self.scenario_years else None
-        )
+        self.lockout_until_year = int(lockout_until_year)
         self.elec_price_eur_per_mwh = elec_price_eur_per_mwh
         self._tech_builders = {
             "ind_heat_pump": self._rows_residential,
@@ -420,7 +417,7 @@ class _ConversionRowsBuilder:
         if cap_max_peak and cap_max_peak > 0.0:
             per_unit_min = min(enforce_min, cap_max_peak)
 
-        if self.scenario_years and self.lockout_until_year is not None:
+        if self.scenario_years:
             cap_min_existing_map = self._profile_to_map(row.get("cap_min"))
             cap_res_min_existing_map = self._profile_to_map(row.get("cap_res_min"))
 
@@ -558,8 +555,7 @@ class _ConversionRowsBuilder:
                             pairs.append((year, 0.0))
                             continue
                         if (
-                            self.lockout_until_year is not None
-                            and year < self.lockout_until_year
+                            year < self.lockout_until_year
                             and not is_indirect
                             and not _is_central_heat_supply(tech.name)
                         ):
@@ -728,7 +724,7 @@ class _ConversionRowsBuilder:
             if existing_output > 0.0:
                 cap_limit = max(cap_limit, existing_output / 8760.0)
         first_year = self.scenario_years[0]
-        lockout_until_year = self.lockout_until_year if self.lockout_until_year is not None else first_year
+        lockout_until_year = self.lockout_until_year
 
         def _coerce_default(value: Any) -> Optional[float]:
             if value is None:

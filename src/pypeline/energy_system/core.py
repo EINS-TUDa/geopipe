@@ -100,11 +100,16 @@ class Scenario:
     discount_rate: float = 0.05
     retain_existing_output_schedule: list[float] | None = None
     retain_existing_output_drop_per_year: Number | None = None
-    lockout_years: int = 2
+    lockout_years: int = 0
 
     @property
     def years(self) -> list[int]:
         return list(range(self.start_year, self.end_year + 1, self.year_gap))
+
+    @property
+    def lockout_until_year(self) -> int:
+        # new capacity only allowed after lockout_until_year
+        return self.start_year + self.lockout_years
 
 
 class Region:
