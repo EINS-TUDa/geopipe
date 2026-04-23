@@ -3,7 +3,9 @@ executing CESM optimization, and producing plots and reports."""
 
 from __future__ import annotations
 from dataclasses import dataclass
+import logging
 from pathlib import Path
+import shutil
 from typing import Any
 from pypeline.energy_system.core import Scenario
 from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
@@ -13,6 +15,8 @@ from pypeline.factory import build_energy_system
 from pypeline.topology_builder.cli.simple import build_topology_from_case
 from pypeline.topology_builder.cli.dijkstra import build_topology_from_dataset
 from pypeline.topology_builder.core import (edge_metrics_from_topology_result,streets_for_topology_plot)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -170,6 +174,98 @@ def _dijkstra_plots_dir(config: DijkstraScenarioConfig) -> Path:
     return config.output_dir / "plots"
 
 
+def _ensure_tss_seed_file(*, timeseries_dir: Path, tss_name: str, project_root: Path) -> None:
+    target = timeseries_dir / f"{tss_name}.txt"
+    if target.exists():
+        return
+
+    candidates = [
+        project_root / "examples" / "test_cases" / "input_data" / f"{tss_name}.txt",
+        project_root / "Data" / "TimeSeries" / f"{tss_name}.txt",
+        project_root / "data" / f"{tss_name}.txt",
+    ]
+    source = next((path for path in candidates if path.exists()), None)
+    if source is None:
+        raise FileNotFoundError(
+            f"Missing TSS seed file for '{tss_name}'. Expected one of: {candidates}"
+        )
+
+    shutil.copyfile(source, target)
+    logger.info("Copied TSS file %s -> %s", source, target)
+
+
+def _derive_heat_demand_profile_from_energy_system(
+    energy_system: Any,
+    *,
+    demand_name: str,
+) -> list[float]:
+    demand_key = str(demand_name).strip().lower()
+    profiles: list[tuple[list[float], float]] = []
+
+    for region in getattr(energy_system, "regions", []):
+        for region_demand in getattr(region, "region_demands", []):
+            demand = getattr(region_demand, "demand", None)
+            demand_type = str(getattr(demand, "demand_type", "") or "").strip().lower()
+            commodity_in = str(getattr(demand, "commodity_in", "") or "").strip().lower()
+            if demand_key not in {demand_type, commodity_in}:
+                continue
+
+            profile_raw = getattr(region_demand, "profile", None)
+            if profile_raw is None:
+                continue
+            if hasattr(profile_raw, "tolist"):
+                profile_raw = profile_raw.tolist()
+
+            profile = [float(value) for value in profile_raw]
+            if len(profile) != 8760:
+                continue
+
+            annual_weight = max(0.0, float(getattr(region_demand, "value", 0.0) or 0.0))
+            profiles.append((profile, annual_weight))
+
+    if not profiles:
+        raise ValueError(
+            "Could not derive HeatDemandProfile from region demands; "
+            f"no 8760 profile found for demand '{demand_name}'."
+        )
+
+    weighted = [(profile, weight) for profile, weight in profiles if weight > 0.0]
+    if not weighted:
+        weighted = [(profile, 1.0) for profile, _ in profiles]
+
+    aggregate = [0.0] * 8760
+    total_weight = sum(weight for _, weight in weighted)
+    for profile, weight in weighted:
+        factor = float(weight) / float(total_weight)
+        for idx, value in enumerate(profile):
+            aggregate[idx] += factor * float(value)
+
+    profile_sum = float(sum(aggregate))
+    if profile_sum <= 0.0:
+        raise ValueError("Derived HeatDemandProfile has non-positive sum")
+    return [value / profile_sum for value in aggregate]
+
+
+def _write_heat_demand_profile_file(*, profile: list[float], timeseries_dir: Path) -> None:
+    output_path = timeseries_dir / "HeatDemandProfile.txt"
+    output_path.write_text(" ".join(f"{value:.8f}" for value in profile), encoding="utf-8")
+    logger.info("Wrote demand profile: %s", output_path)
+
+
+def _ensure_cli_timeseries_inputs(
+    *,
+    energy_system: Any,
+    demand_name: str,
+    tss_name: str,
+    timeseries_dir: Path,
+    project_root: Path,
+) -> None:
+    timeseries_dir.mkdir(parents=True, exist_ok=True)
+    _ensure_tss_seed_file(timeseries_dir=timeseries_dir, tss_name=tss_name, project_root=project_root)
+    profile = _derive_heat_demand_profile_from_energy_system(energy_system, demand_name=demand_name)
+    _write_heat_demand_profile_file(profile=profile, timeseries_dir=timeseries_dir)
+
+
 def _write_results_report(
     *,
     output_dir: Path,
@@ -307,6 +403,13 @@ def run_scenario_case(
         lockout_years=config.lockout_years,
     )
     case_dir = config.scenario_file.parent
+    _ensure_cli_timeseries_inputs(
+        energy_system=energy_system,
+        demand_name=config.demand_name,
+        tss_name=config.tss_name,
+        timeseries_dir=case_dir / "input_data",
+        project_root=config.project_root,
+    )
     backend = CESMOptimizationBackend(
         tss_name=config.tss_name,
         timeseries_dir=case_dir / "input_data",
@@ -388,6 +491,13 @@ def run_dijkstra_scenario(config: DijkstraScenarioConfig) -> ScenarioExecutionRe
         year_gap=config.year_gap,
         retain_existing_output_drop_per_year=config.retain_existing_output_drop_per_year,
         lockout_years=config.lockout_years,
+    )
+    _ensure_cli_timeseries_inputs(
+        energy_system=energy_system,
+        demand_name=config.demand_name,
+        tss_name=config.tss_name,
+        timeseries_dir=config.input_dir,
+        project_root=config.project_root,
     )
     backend = CESMOptimizationBackend(
         tss_name=config.tss_name,

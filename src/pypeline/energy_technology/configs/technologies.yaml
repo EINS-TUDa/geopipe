@@ -111,4 +111,4 @@ heat_pipe:
   opex_cost_power: 0.0
   opex_cost_energy: 1.44
   pipe_capex_eur_per_km: 1000000.0 # €/km
-  cap_max: 100000.0
+  cap_max: 1000.0 # 500MW each direction = 1000MW

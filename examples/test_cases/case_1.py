@@ -1,4 +1,4 @@
-"""showcases dhn utilization and central tech injection"""
+"""showcases dhn utilization and central tech injection, forced by some tech unavailability before 2040"""
 
 from __future__ import annotations
 from pathlib import Path
