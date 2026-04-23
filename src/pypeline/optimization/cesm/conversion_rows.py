@@ -32,6 +32,7 @@ from pypeline.validation import require_finite, require_float, require_positive_
 _require_float = require_float
 _require_finite = require_finite
 _require_positive_int = require_positive_int
+UNBOUNDED_CAP = 1e9
 
 
 class _ConversionRowsBuilder:
@@ -530,13 +531,6 @@ class _ConversionRowsBuilder:
             is_central = _is_central_heat_supply(tech.name)
             is_dhn_pass_through = base_name == "heat_grid" or base_name == "heat_exchanger"
 
-            if is_central and district is not None:
-                rid = self.district_to_region.get(district)
-                historical_hx_output = 0.0 if rid is None else float(self.exchanger_throughput_targets.get(rid, 0.0) or 0.0)
-                if historical_hx_output <= 0.0:
-                    # Central injections must not force DHN expansion in districts without historical Fernwaerme.
-                    output = 0.0
-
             if is_central and output > 0.0 and cap <= 0.0:
                 raise ValueError(f"Invalid central retention metrics for {tech.name}: initial_energy_output requires positive initial_capacity")
 
@@ -775,7 +769,7 @@ class _ConversionRowsBuilder:
                     row[col] = formatted
 
         def _adjust_cap_max(year: int, base: Optional[float]) -> Optional[float]:
-            if is_indirect and year == first_year:
+            if is_indirect and year == first_year and lockout_until_year > first_year:
                 # First year: allow scaling only for technologies that already exist.
                 if cap_limit <= 0.0:
                     return 0.0

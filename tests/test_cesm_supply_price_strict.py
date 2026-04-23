@@ -1,10 +1,8 @@
 from pathlib import Path
-import geopandas as gpd
 import pytest
-from shapely.geometry import Polygon
 from pypeline.energy_technology.technology import Technology
-from pypeline.optimization.optimization_context import OptimizationContext
-from pypeline.optimization.cesm.input_writer import _write_cesm_inputs_from_optimization_context
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
+from pypeline.optimization.resolved_system import ResolvedSystem
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -12,28 +10,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DISTRICT_ID = 4
 
 
-def _build_om() -> OptimizationContext:
-    years = [2020, 2025]
-    return OptimizationContext(
-        years=years,
-        regions=[DISTRICT_ID],
-        commodity="residential_heat",
+def _build_resolved() -> ResolvedSystem:
+    return ResolvedSystem(
+        scenario_years=[2020, 2025],
+        region_ids=[DISTRICT_ID],
+        demand_commodity="residential_heat",
         annual_demand={DISTRICT_ID: {2020: 100.0, 2025: 100.0}},
         demand_profile=[1.0 / 8760.0] * 8760,
-        schedules={},
-        tss_indices=[],
-        tss_weights=[],
-        constraints={},
         technologies={},
-        region_technology_metrics={},
-    )
-
-
-def _single_polygon() -> gpd.GeoDataFrame:
-    return gpd.GeoDataFrame(
-        [{"id": DISTRICT_ID, "geometry": Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])}],
-        geometry="geometry",
-        crs="EPSG:3035",
+        constraints={},
+        region_metrics={},
+        historical_exchanger_targets_mwh={},
+        retain_schedule=[1.0, 0.95],
+        discount_rate=0.05,
+        lockout_until_year=2020,
+        grid_prices={"electricity": 120.0, "export": 0.0},
+        supply_prices={"oil": 80.0},
+        pipe_connections=[],
+        local_dhn_costs={},
+        data_dir=REPO_ROOT / "data",
     )
 
 
@@ -46,8 +41,7 @@ def _ensure_tss(workdir: Path) -> None:
 
 def missing_supply_t(tmp_path: Path) -> None:
     """Checks for missing supply pricing inputs."""
-    om = _build_om()
-    polygons = _single_polygon()
+    resolved = _build_resolved()
 
     selected_techs = [
         Technology(
@@ -63,26 +57,13 @@ def missing_supply_t(tmp_path: Path) -> None:
     _ensure_tss(workdir)
 
     with pytest.raises(ValueError, match="Missing supply price for commodity 'gas'"):
-        _write_cesm_inputs_from_optimization_context(
-            om,
-            workdir=workdir,
+        _write_cesm_inputs(
+            resolved,
+            techmap_dir=workdir / "Data" / "Techmap",
+            timeseries_dir=workdir / "Data" / "TimeSeries",
             model_name="StrictSupplyPrice",
             scenario_name="Base",
             tss_name="4ThinWeeks",
-            polygons_gdf=polygons,
-            data_dir=REPO_ROOT / "data",
-            start_year=2020,
-            end_year=2025,
-            year_gap=5,
-            discount_rate=0.05,
             dt_hours=1,
-            pipe_loss_fraction=0.02,
-            pipe_cap_max_mw=500.0,
-            pipe_opex_eur_per_mwh=2.0,
-            pipe_capex_eur_per_mw=30.0,
-            pipe_lifetime_years=40,
-            grid_prices={"electricity": 120.0, "export": 0.0},
-            supply_prices={"oil": 80.0},
             selected_techs=selected_techs,
-            retain_existing_output_schedule=[1.0, 0.95],
         )

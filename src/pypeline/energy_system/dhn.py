@@ -8,19 +8,8 @@ from collections.abc import Hashable
 from math import isfinite
 import networkx as nx
 from pypeline.energy_system.core import Region
+from pypeline.energy_system.pipe import Pipe
 
-
-def _demand_nodes(
-    graph: nx.Graph,
-    demand_column: str = "total_heat_demand",
-) -> set[tuple[float, float]]:
-    """Return all nodes that are endpoints of demand-carrying edges."""
-    nodes: set[tuple[float, float]] = set()
-    for u, v, data in graph.edges(data=True):
-        if data.get(demand_column, 0.0) > 0.0:
-            nodes.add(u)
-            nodes.add(v)
-    return nodes
 
 
 def _normalize_region_owner(raw: object) -> int | None:
@@ -98,25 +87,19 @@ def build_inter_dhn_pipes_from_topologies(
     regions: list[Region],
     full_network: nx.Graph,
     pipe_capex_eur_per_km: float,
-    demand_column: str = "total_heat_demand",
     region_id_column: str = "id",
-    min_interdistrict_pipe_length_m: float = 1.0,
-    free_pipe_max_length_m: float | None = None,
-) -> dict[tuple[int, int], dict[str, float | bool]]:
-    """Compute inter-district pipe specs using legal shortest paths on the street network."""
-    capex_per_km = float(pipe_capex_eur_per_km)
-    if not isfinite(capex_per_km) or capex_per_km < 0.0:
-        raise ValueError("pipe_capex_eur_per_km must be finite and >= 0")
-    if free_pipe_max_length_m is not None:
-        free_threshold = float(free_pipe_max_length_m)
-        if not isfinite(free_threshold) or free_threshold < 0.0:
-            raise ValueError("free_pipe_max_length_m must be finite and >= 0 when provided")
-    else:
-        free_threshold = None
+    below_distance_threshold_m: float | None = None,
+    pipe_loss_fraction: float = 0.02,
+    pipe_capex_eur_per_mw: float = 0.0,
+    pipe_opex_eur_per_mwh: float = 0.0,
+    pipe_cap_max_mw: float = 500.0,
+    pipe_lifetime_years: int = 40,
+) -> list[Pipe]:
+    """Compute inter-district pipe connections using legal shortest paths on the street network."""
     if len(regions) < 2:
-        return {}
+        return []
 
-    records: dict[tuple[int, int], dict[str, float | bool]] = {}
+    connections: list[Pipe] = []
     edge_owner_map = _edge_owner_by_pair(full_network, region_id_column=region_id_column)
 
     for i, region_a in enumerate(regions):
@@ -124,50 +107,58 @@ def build_inter_dhn_pipes_from_topologies(
             if j <= i:
                 continue
 
-            sources = _demand_nodes(region_a.topology, demand_column)
-            targets = _demand_nodes(region_b.topology, demand_column)
-            if not sources or not targets:
-                continue
+            nodes_a = set(region_a.topology.nodes)
+            nodes_b = set(region_b.topology.nodes)
+            touching = bool(nodes_a.intersection(nodes_b))
 
-            legal_network = _legal_pair_network(
-                full_network,
-                region_a_id=int(region_a.id),
-                region_b_id=int(region_b.id),
-                edge_owner_by_pair=edge_owner_map,
-            )
+            if touching:
+                length_m = 0.0
+                below_threshold = True
+            else:
+                if not nodes_a or not nodes_b:
+                    continue
 
-            try:
-                dist = nx.multi_source_dijkstra_path_length(
-                    legal_network,
-                    sources=sources,
-                    weight="length",
+                legal_network = _legal_pair_network(
+                    full_network,
+                    region_a_id=int(region_a.id),
+                    region_b_id=int(region_b.id),
+                    edge_owner_by_pair=edge_owner_map,
                 )
-            except nx.NetworkXNoPath:
-                continue
 
-            reachable = {node: dist[node] for node in targets if node in dist}
-            if not reachable:
-                continue
+                try:
+                    dist = nx.multi_source_dijkstra_path_length(
+                        legal_network,
+                        sources=nodes_a,
+                        weight="length",
+                    )
+                except nx.NetworkXNoPath:
+                    continue
 
-            raw_length_m = float(min(reachable.values()))
-            used_length_m = max(raw_length_m, float(min_interdistrict_pipe_length_m))
-            touching = bool(set(region_a.topology.nodes).intersection(set(region_b.topology.nodes)))
-            is_free = touching or (free_threshold is not None and raw_length_m <= free_threshold + 1e-9)
+                reachable = {node: dist[node] for node in nodes_b if node in dist}
+                if not reachable:
+                    continue
 
-            length_m = used_length_m
-            min_pipe_km = length_m / 1000.0
-            payload = {
-                "min_pipe_km": float(min_pipe_km),
-                "pipe_capex_base_eur": float(capex_per_km * min_pipe_km),
-                "path_length_m_raw": float(raw_length_m),
-                "path_length_m_used": float(used_length_m),
-                "is_touching": bool(touching),
-                "is_free": bool(is_free),
-            }
-            records[(region_a.id, region_b.id)] = payload
-            records[(region_b.id, region_a.id)] = payload
+                length_m = float(min(reachable.values()))
+                below_threshold = length_m < below_distance_threshold_m if below_distance_threshold_m is not None else False
 
-    return records
+            length_km = length_m / 1000.0
+            pipe_capex_base = pipe_capex_eur_per_km * length_km
+
+            for id_in, id_out in [(region_a.id, region_b.id), (region_b.id, region_a.id)]:
+                connections.append(Pipe(
+                    region_id_in=id_in,
+                    region_id_out=id_out,
+                    pipe_length_km=length_km,
+                    pipe_capex_base_eur=pipe_capex_base,
+                    below_distance_threshold=below_threshold,
+                    pipe_loss_fraction=pipe_loss_fraction,
+                    pipe_capex_eur_per_mw=pipe_capex_eur_per_mw,
+                    pipe_opex_eur_per_mwh=pipe_opex_eur_per_mwh,
+                    pipe_cap_max_mw=pipe_cap_max_mw,
+                    pipe_lifetime_years=pipe_lifetime_years,
+                ))
+
+    return connections
 
 
 __all__ = [

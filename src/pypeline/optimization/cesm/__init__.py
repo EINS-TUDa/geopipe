@@ -7,8 +7,9 @@ backend.py
     input writing, subprocess invocation, and result parsing.
 
 input_writer.py
-    Converts an :class:`~pypeline.optimization.optimization_context.OptimizationContext`
-    into the CESM techmap XLSX and timeseries TXT files.
+    Converts an :class:`~pypeline.energy_system.core.EnergySystem` and
+    :class:`~pypeline.energy_system.core.Scenario` into the CESM techmap XLSX
+    and timeseries TXT files.
 
 conversion_rows.py
     :class:`_ConversionRowsBuilder` and :func:`tech_to_cesms_row` — build the
@@ -24,11 +25,9 @@ cli.py
     :class:`CESMOptimizationBackend`.
 """
 from pypeline.optimization.cesm.backend import CESMOptimizationBackend
-from pypeline.optimization.cesm.input_writer import write_cesm_inputs_from_energy_system
 from pypeline.optimization.cesm.result_parser import CESMResults
 
 __all__ = [
     "CESMOptimizationBackend",
-    "write_cesm_inputs_from_energy_system",
     "CESMResults",
 ]

@@ -34,7 +34,6 @@ class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
         self.energy_system_name = energy_system_name
         self.base_crs = base_crs
-        self.region_topologies: list[nx.Graph] | None = None
         self.street_network: nx.Graph | None = None
         self.rule_book: EnergySystemRuleBook | None = None
         self.region_rule_book: RegionRuleBook | None = None
@@ -43,7 +42,9 @@ class EnergySystemBuilder:
         self.unit: Unit = UnitEnum.GW.unit
         self.region_builder_config: dict[str, Any] | None = None
         self.demands: list[Demand] | None = None
-        self.commodity_config: dict[str, Any] | None = self._load_default_commodity_config()
+        default_grid, default_supply = self._load_default_prices()
+        self.grid_prices: dict[str, float] = default_grid
+        self.supply_prices: dict[str, float] = default_supply
         self.pipe_technology_name: str = "heat_pipe"
         self._dhn_central_seed_cache: dict[int, str] = {}
 
@@ -53,10 +54,6 @@ class EnergySystemBuilder:
 
     def set_street_network(self, network: nx.Graph):
         self.street_network = network
-        return self
-
-    def set_region_topologies(self, topologies: list[nx.Graph]):
-        self.region_topologies = list(topologies)
         return self
 
     def set_region_rule_book(self, rule_book: RegionRuleBook):
@@ -132,7 +129,7 @@ class EnergySystemBuilder:
             ),
         ]
 
-    def _load_default_commodity_config(self) -> dict[str, Any]:
+    def _load_default_prices(self) -> tuple[dict[str, float], dict[str, float]]:
         root = Path(__file__).resolve().parents[1]
         candidates = [
             root / "energy_technology" / "configs" / "commodities.yaml",
@@ -142,17 +139,10 @@ class EnergySystemBuilder:
             if candidate.exists():
                 cfg = yaml.safe_load(candidate.read_text(encoding="utf-8"))
                 if isinstance(cfg, dict):
-                    return cfg
-        return {}
-
-    def set_commodity_config(self, config: dict[str, Any] | None):
-        if config is None:
-            self.commodity_config = {}
-            return self
-        if not isinstance(config, dict):
-            raise TypeError("commodity_config must be a mapping")
-        self.commodity_config = dict(config)
-        return self
+                    grid = {str(k): float(v) for k, v in (cfg.get("grid_prices") or {}).items()}
+                    supply = {str(k): float(v) for k, v in (cfg.get("supply_prices_eur_per_mwh") or {}).items()}
+                    return grid, supply
+        return {}, {}
 
     def set_commodity_prices(
         self,
@@ -164,11 +154,8 @@ class EnergySystemBuilder:
             raise TypeError("grid_prices must be a mapping")
         if not isinstance(supply_prices_eur_per_mwh, dict):
             raise TypeError("supply_prices_eur_per_mwh must be a mapping")
-        config: dict[str, Any] = {
-            "grid_prices": dict(grid_prices),
-            "supply_prices_eur_per_mwh": dict(supply_prices_eur_per_mwh),
-        }
-        self.commodity_config = config
+        self.grid_prices = {str(k): float(v) for k, v in grid_prices.items()}
+        self.supply_prices = {str(k): float(v) for k, v in supply_prices_eur_per_mwh.items()}
         return self
 
     def set_default_region_builder_config(self):
@@ -309,22 +296,6 @@ class EnergySystemBuilder:
         self._dhn_central_seed_cache[district_id_i] = selected
         return selected
 
-    def _resolve_street_network(self) -> nx.Graph:
-        if self.street_network is not None:
-            return self.street_network
-        if self.data_registry is not None:
-            try:
-                network = self.data_registry.query({"key": "street_network", "base_crs": self.base_crs})
-                if network is not None:
-                    return network
-            except LookupError:
-                pass
-        raise ValueError(
-            "No street network available for inter-district routing. "
-            "Set one explicitly via set_street_network() or provide a 'street_network' "
-            "entry in the data registry."
-        )
-
     def build(self) -> EnergySystem:
         self.verify()
         self._dhn_central_seed_cache = {}
@@ -345,10 +316,7 @@ class EnergySystemBuilder:
             rb.set_rule_book(self.region_rule_book)
 
         regions: list[Region] = []
-        for idx, topology in enumerate(self.region_topologies):
-            region_id = topology.graph.get("id", idx)
-            if not isinstance(region_id, int):
-                region_id = idx
+        for region_id, topology in self._region_subgraphs():
             regions.append(rb.build(topology=topology, region_id=region_id))
 
         pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
@@ -359,26 +327,31 @@ class EnergySystemBuilder:
             )
             region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
 
-        street_network = self._resolve_street_network()
-
-        inter_district_pipe_specs = None
+        pipes = []
         if len(regions) > 1:
-            free_pipe_max_length_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
-            inter_district_pipe_specs = build_inter_dhn_pipes_from_topologies(
+            distance_threshold_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
+            pipe_eff = max(0.0, min(1.0, float(pipe_tech.efficiency)))
+            pipes = build_inter_dhn_pipes_from_topologies(
                 regions=regions,
-                full_network=street_network,
-                pipe_capex_eur_per_km=1.0,
-                free_pipe_max_length_m=(None if free_pipe_max_length_m is None else float(free_pipe_max_length_m)),
+                full_network=self.street_network,
+                pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
+                below_distance_threshold_m=(None if distance_threshold_m is None else float(distance_threshold_m)),
+                pipe_loss_fraction=max(0.0, 1.0 - pipe_eff),
+                pipe_capex_eur_per_mw=float(pipe_tech.capex_cost_power),
+                pipe_opex_eur_per_mwh=float(pipe_tech.opex_cost_energy),
+                pipe_cap_max_mw=float(pipe_tech.cap_max),
+                pipe_lifetime_years=int(pipe_tech.technical_lifetime),
             )
 
         es = EnergySystem(
             name=self.energy_system_name,
             regions=regions,
-            street_network=street_network,
+            street_network=self.street_network,
             units=self.unit,
             technology_registry=self.technology_registry,
-            commodity_config=self.commodity_config or {},
-            inter_district_pipe_specs=inter_district_pipe_specs,
+            grid_prices=self.grid_prices,
+            supply_prices=self.supply_prices,
+            pipes=pipes,
         )
 
         if self.rule_book:
@@ -386,11 +359,48 @@ class EnergySystemBuilder:
 
         return es
 
+    def _region_subgraphs(self) -> list[tuple[int, nx.Graph]]:
+        """Extract one subgraph per region from street_network using the 'id' edge attribute."""
+        buckets: dict[int, list[tuple]] = {}
+        for u, v, data in self.street_network.edges(data=True):
+            raw = data.get("id")
+            if raw is None:
+                continue
+            try:
+                region_id = int(float(raw))
+            except (TypeError, ValueError):
+                continue
+            buckets.setdefault(region_id, []).append((u, v, data))
+
+        result = []
+        for region_id in sorted(buckets):
+            sub = nx.Graph()
+            sub.graph.update(self.street_network.graph)
+            sub.graph["id"] = region_id
+            for u, v, data in buckets[region_id]:
+                sub.add_edge(u, v, **data)
+            result.append((region_id, sub))
+        return result
+
     def verify(self):
         if not isinstance(self.base_crs, str):
             raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
-        if not isinstance(self.region_topologies, list) or not self.region_topologies:
-            raise ValueError("Region topologies must be set as a non-empty list of NetworkX graphs")
+        if not isinstance(self.street_network, nx.Graph):
+            raise ValueError("street_network must be set as a NetworkX graph before building")
+        region_ids = set()
+        for _, _, d in self.street_network.edges(data=True):
+            raw = d.get("id")
+            try:
+                region_ids.add(int(float(raw)))
+            except (TypeError, ValueError):
+                pass
+        if not region_ids:
+            raise ValueError(
+                "street_network has no edges with a valid 'id' attribute. "
+                "Every edge must carry an integer 'id' indicating its region. "
+                "Use set_street_network() with a graph produced by gdf_to_nx() after "
+                "assigning region ids to the street GeoDataFrame."
+            )
         if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
             raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
         if not isinstance(self.data_registry, DataRegistry):

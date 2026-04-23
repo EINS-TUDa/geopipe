@@ -5,8 +5,8 @@ interface by orchestrating the full solve pipeline::
 
     CESMOptimizationBackend.solve(energy_system, scenario)
         │
-        ├─ input_writer.write_cesm_inputs_from_energy_system()
-        │       builds OptimizationContext, writes XLSX + timeseries TXT
+        ├─ resolve_system() + input_writer._write_cesm_inputs()
+        │       resolves backend inputs and writes XLSX + timeseries TXT
         │
         ├─ _run_cli()
         │       invokes the CESM solver as a subprocess
@@ -25,11 +25,12 @@ from pathlib import Path
 from typing import List, Optional
 
 from pypeline.energy_system.core import EnergySystem, Scenario
-from pypeline.optimization.cesm.input_writer import write_cesm_inputs_from_energy_system
+from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 from pypeline.optimization.cesm.result_parser import (
     backfill_missing_commodity_timeseries,
     parse_cesm_outputs,
 )
+from pypeline.optimization.resolved_system import resolve_system
 from pypeline.optimization.solver import OptimizationBackend, Solution
 
 logger = logging.getLogger(__name__)
@@ -116,18 +117,23 @@ class CESMOptimizationBackend(OptimizationBackend):
         if not self.write_inputs:
             return
 
-        write_cesm_inputs_from_energy_system(
+        resolved = resolve_system(
             energy_system,
             scenario,
-            workdir=self.workdir,
+            demand_name=demand_name,
+            retain_existing_output_schedule=self.retain_existing_output_schedule,
+        )
+
+        _write_cesm_inputs(
+            resolved,
+            techmap_dir=self.workdir / "Data" / "Techmap",
+            timeseries_dir=self.workdir / "Data" / "TimeSeries",
             model_name=self.model_name,
             scenario_name=self.scenario_name,
             tss_name=self.tss_name,
             dt_hours=self.dt_hours,
-            demand_name=demand_name,
             retain_existing_output_factor=self.retain_existing_output_factor,
             retain_existing_output_years_factor=self.retain_existing_output_years_factor,
-            retain_existing_output_schedule=self.retain_existing_output_schedule,
         )
 
     def _run_cli(self, extra_args: list[str] | None = None) -> None:
