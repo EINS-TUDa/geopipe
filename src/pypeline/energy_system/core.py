@@ -40,12 +40,21 @@ class Demand:
     profile_query_params: dict[str, Any] | None = None
     technology_shares_query_params: dict[str, Any] | None = None
 
+    @property
+    def name(self) -> str:
+        return f"{self.commodity_in}_Demand"
+
 
 @dataclass
 class RegionDemand:
     demand: Demand
-    value: float | None = None
-    profile: pd.Series | None = None
+    value: float | dict[int, float] | None
+    profile: pd.Series
+    profile_name: str
+
+    @property
+    def name(self) -> str:
+        return self.demand.name
 
     def __post_init__(self) -> None:
         self.check_types()
@@ -55,9 +64,9 @@ class RegionDemand:
         if not isinstance(self.demand, Demand):
             raise TypeError(f"demand must be a Demand instance, got {type(self.demand).__name__}")
 
-        if self.value is not None:
+        if self.value is not None and not isinstance(self.value, dict):
             if not isinstance(self.value, (int, float)):
-                raise TypeError(f"value must be numeric, got {type(self.value).__name__}")
+                raise TypeError(f"value must be numeric or dict[int, float], got {type(self.value).__name__}")
             self.value = float(self.value)
 
         if self.profile is not None and not isinstance(self.profile, pd.Series):
@@ -83,10 +92,6 @@ class RegionDemand:
     def annual_value(self) -> float:
         return float(self.value) if self.value is not None else 0.0
 
-
-Number = int | float
-
-
 @dataclass
 class Scenario:
     name: str
@@ -95,12 +100,12 @@ class Scenario:
     year_gap: int
     dt_hours: int
     tss: str
-    co2_price: Number | dict[int, Number] | None = None
-    co2_limit: Number | dict[int, Number] | None = None
+    co2_price: float | dict[int, float] | None = None
+    co2_limit: float | dict[int, float] | None = None
     rules: list[str] = field(default_factory=list)
     discount_rate: float = 0.05
     retain_existing_output_schedule: list[float] | None = None
-    retain_existing_output_drop_per_year: Number | None = None
+    retain_existing_output_drop_per_year: float | None = None
     lockout_years: int = 0
 
     @property

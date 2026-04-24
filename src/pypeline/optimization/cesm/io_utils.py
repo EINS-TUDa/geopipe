@@ -79,31 +79,6 @@ def _units_df() -> pd.DataFrame:
     )
 
 
-def _scenario_df(*, scenario_name: str, start_year: int | None, end_year: int | None, year_gap: int | None, tss_name: str, discount_rate: float) -> pd.DataFrame:
-    if start_year is None:
-        start_year = 2020
-    if end_year is None:
-        end_year = start_year
-    if year_gap is None:
-        year_gap = 1
-    return pd.DataFrame(
-        [{
-            "scenario_name": scenario_name,
-            "from_year": int(start_year),
-            "until_year": int(end_year),
-            "year_step": int(year_gap),
-            "discount_rate": float(discount_rate),
-            "TSS": tss_name,
-            "annual_co2_limit": np.nan,
-            "co2_price": np.nan,
-        }],
-        columns=[
-            "scenario_name", "from_year", "until_year", "year_step",
-            "discount_rate", "TSS", "annual_co2_limit", "co2_price",
-        ],
-    )
-
-
 def _tss_df(*, tss_name: str, dt_hours: int) -> pd.DataFrame:
     return pd.DataFrame([{"TSS_name": tss_name, "dt": int(dt_hours)}], columns=["TSS_name", "dt"])
 

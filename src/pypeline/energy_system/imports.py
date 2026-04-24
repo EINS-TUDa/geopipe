@@ -9,9 +9,9 @@ import yaml
 @dataclass
 class Imports:
     commodity_out: str
-    price_eur_per_mwh: float
-    co2_emissions_ton_per_mwh: float = 0.0
-    max_capacity_mw: float | None = None
+    price_eur_per_mwh: float | dict[int, float]
+    co2_emissions_ton_per_mwh: float | dict[int, float] | None = None
+    max_capacity_mw: float | dict[int, float] | None = None
 
     @property
     def name(self) -> str:
@@ -31,13 +31,25 @@ def load_imports_from_yaml(path: str | Path) -> list[Imports]:
         commodity_out = entry.get("commodity_out")
         if not commodity_out:
             raise ValueError(f"imports[{i}] is missing required field 'commodity_out'")
-        price = entry.get("price_eur_per_mwh")
-        if price is None:
+        price_raw = entry.get("price_eur_per_mwh")
+        if price_raw is None:
             raise ValueError(f"imports[{i}] ({commodity_out}) is missing required field 'price_eur_per_mwh'")
+        if isinstance(price_raw, dict):
+            price: float | dict[int, float] = {int(k): float(v) for k, v in price_raw.items()}
+        else:
+            price = float(price_raw)
         result.append(Imports(
             commodity_out=str(commodity_out),
-            price_eur_per_mwh=float(price),
-            co2_emissions_ton_per_mwh=float(entry.get("co2_emissions_ton_per_mwh", 0.0)),
-            max_capacity_mw=float(entry["max_capacity_mw"]) if "max_capacity_mw" in entry else None,
+            price_eur_per_mwh=price,
+            co2_emissions_ton_per_mwh=(
+                {int(k): float(v) for k, v in entry["co2_emissions_ton_per_mwh"].items()}
+                if isinstance(entry.get("co2_emissions_ton_per_mwh"), dict)
+                else float(entry["co2_emissions_ton_per_mwh"]) if "co2_emissions_ton_per_mwh" in entry else None
+            ),
+            max_capacity_mw=(
+                {int(k): float(v) for k, v in entry["max_capacity_mw"].items()}
+                if isinstance(entry.get("max_capacity_mw"), dict)
+                else float(entry["max_capacity_mw"]) if "max_capacity_mw" in entry else None
+            ),
         ))
     return result

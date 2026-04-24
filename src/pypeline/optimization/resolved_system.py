@@ -10,24 +10,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from pypeline.energy_system.core import RegionDemand, Scenario
 from pypeline.energy_system.imports import Imports
 from pypeline.energy_system.pipe import Pipe
 from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
 
 if TYPE_CHECKING:
-    from pypeline.energy_system.core import EnergySystem, Scenario
+    from pypeline.energy_system.core import EnergySystem
     from pypeline.energy_technology.technology import Technology
 
 
 @dataclass
 class ResolvedSystem:
-    # Scenario-derived
-    scenario_years: list[int]
-    discount_rate: float
-    lockout_until_year: int
+    # Scenario (flat config — stored directly, no derivation needed)
+    scenario: Scenario
 
     # Regions
     region_ids: list[int]
+    region_demands: dict[int, list[RegionDemand]]
 
     # Primary demand commodity and its normalized 8760-hour profile
     demand_commodity: str
@@ -60,15 +60,11 @@ class ResolvedSystem:
 
 def resolve_system(
     energy_system: "EnergySystem",
-    scenario: "Scenario",
+    scenario: Scenario,
     *,
     retain_existing_output_schedule: list[float] | None = None,
 ) -> ResolvedSystem:
     """Build a ``ResolvedSystem`` from an ``EnergySystem`` and a ``Scenario``."""
-
-    scenario_years = scenario.years
-    discount_rate = float(scenario.discount_rate)
-    lockout_until_year = scenario.lockout_until_year
 
     retain_schedule = resolve_retain_schedule(
         explicit_schedule=retain_existing_output_schedule,
@@ -81,10 +77,12 @@ def resolve_system(
     region_metrics: dict[int, dict[str, dict[str, float]]] = {}
     technologies: dict[str, Any] = {}
     region_ids: list[int] = []
+    region_demands: dict[int, list[RegionDemand]] = {}
 
     for region in energy_system.regions:
         rid = region.id
         region_ids.append(rid)
+        region_demands[rid] = region.region_demands
         total_ann = 0.0
 
         for rd in region.region_demands:
@@ -100,7 +98,7 @@ def resolve_system(
             if rd.demand.commodity_in == demand_commodity:
                 total_ann += float(rd.value or 0.0)
 
-        annual_demand[rid] = {year: total_ann for year in scenario_years}
+        annual_demand[rid] = {year: total_ann for year in scenario.years}
 
         metrics: dict[str, dict[str, float]] = {}
         for rt in region.region_technologies:
@@ -123,10 +121,9 @@ def resolve_system(
     constraints = dict(energy_system.constraints or {})
 
     return ResolvedSystem(
-        scenario_years=scenario_years,
-        discount_rate=discount_rate,
-        lockout_until_year=lockout_until_year,
+        scenario=scenario,
         region_ids=region_ids,
+        region_demands=region_demands,
         demand_commodity=demand_commodity or "residential_heat",
         demand_profile=demand_profile,
         annual_demand=annual_demand,
