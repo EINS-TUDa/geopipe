@@ -21,7 +21,7 @@ Public entry point: :func:`write_cesm_inputs_from_energy_system`.
 from __future__ import annotations
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Union
 
@@ -47,6 +47,7 @@ from pypeline.energy_technology.technology import (
 )
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm.conversion_rows import _ConversionRowsBuilder
+from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
 from pypeline.optimization.resolved_system import ResolvedSystem
 from pypeline.validation import to_int_id
 
@@ -83,21 +84,33 @@ def _log_techmap_stats(*, commodity_count: int, convproc_count: int, convsubproc
     )
 
 
-def _extract_prices(imports: list[Imports]) -> tuple[float, dict[str, float]]:
-    """Split imports into the electricity buy price and a supply-price dict for all other commodities."""
-    elec_price: float | None = None
-    supply_prices: dict[str, float] = {}
-    for imp in imports:
-        if imp.commodity_out == "electricity":
-            elec_price = imp.price_eur_per_mwh
-        else:
-            supply_prices[imp.commodity_out] = imp.price_eur_per_mwh
-    if elec_price is None:
-        raise ValueError(
-            "No 'electricity' entry found in imports. "
-            "Add an imports.yaml entry with commodity_out: electricity."
-        )
-    return elec_price, supply_prices
+def _imports_to_supply_csps(
+    imports: list[Imports],
+    supply_candidates: list[str],
+    scenario_name: str,
+) -> list[ConversionSubProcess]:
+    """Build a ConversionSubProcess for each supply candidate using its matching Imports entry."""
+    import_by_commodity = {imp.commodity_out.lower(): imp for imp in imports}
+    csps: list[ConversionSubProcess] = []
+    for commodity in supply_candidates:
+        imp = import_by_commodity.get(commodity.lower())
+        if imp is None:
+            raise ValueError(
+                f"Missing supply price for commodity '{commodity}' in commodity configuration "
+                "(supply_prices_eur_per_mwh)."
+            )
+        csps.append(ConversionSubProcess(
+            conversion_process_name=imp.name,
+            commodity_in="Dummy",
+            commodity_out=commodity,
+            scenario=scenario_name,
+            efficiency=1.0,
+            technical_availability=1.0,
+            max_eout=math.nan,
+            cap_max=math.nan,
+            opex_cost_energy=imp.price_eur_per_mwh,
+        ))
+    return csps
 
 
 # ---------------------------------------------------------------------------
@@ -354,10 +367,9 @@ def _build_techmap_lists(
     naming: _NamingContext,
     sel_list: list[Technology],
     pipe_connections: list,
-    supply_prices: dict[str, float],
     scenario_name: str,
-) -> tuple[list[str], list[str], list[dict[str, Any]]]:
-    """Returns (commodity_list, conv_procs, extra_supply_rows)."""
+) -> tuple[list[str], list[str], list[str]]:
+    """Returns (commodity_list, conv_procs, supply_candidates)."""
     districts = naming.districts
     demand_commodity = naming.demand_commodity
     hx_base_name = DHN_TECH_NAMES[0]
@@ -441,32 +453,13 @@ def _build_techmap_lists(
             if name not in conv_procs:
                 conv_procs.append(name)
 
-    # Supply rows for commodities that must be purchased from outside
-    supply_price_defaults = {k.lower(): float(v) for k, v in supply_prices.items()}
-    extra_supply_rows: list[dict[str, Any]] = []
+    # Register supply process names in conv_procs
     for commodity in supply_candidates:
         cp_name = f"{commodity.capitalize()}Supply"
         if cp_name not in conv_procs:
             conv_procs.append(cp_name)
-        commodity_key = commodity.lower()
-        if commodity_key not in supply_price_defaults:
-            raise ValueError(
-                f"Missing supply price for commodity '{commodity}' in commodity configuration "
-                "(supply_prices_eur_per_mwh)."
-            )
-        extra_supply_rows.append({
-            "conversion_process_name": cp_name,
-            "commodity_in": "Dummy",
-            "commodity_out": commodity,
-            "scenario": scenario_name,
-            "efficiency": 1.0,
-            "technical_availability": 1.0,
-            "max_eout": math.nan,
-            "cap_max": math.nan,
-            "opex_cost_energy": float(supply_price_defaults[commodity_key]),
-        })
 
-    return commodity_list, conv_procs, extra_supply_rows
+    return commodity_list, conv_procs, supply_candidates
 
 
 # ---------------------------------------------------------------------------
@@ -505,13 +498,13 @@ def _build_cs_rows(
     district_ctx: _DistrictContext,
     constraints: _ParsedConstraints,
     sel_list: list[Technology],
-    extra_supply_rows: list[dict[str, Any]],
+    imports: list[Imports],
+    supply_candidates: list[str],
     pipe_connections: list,
     *,
     scenario_name: str,
     scenario_years: list[int],
     annual_heat_by_d: list[float],
-    elec_price_eur_per_mwh: float,
     retain_existing_output_years_factor: float | None,
     lockout_until_year: int,
 ) -> list[dict[str, Any]]:
@@ -521,8 +514,16 @@ def _build_cs_rows(
     district_heat_in_names = naming.district_heat_in_names
     district_heat_out_names = naming.district_heat_out_names
 
-    cs_rows: list[dict[str, Any]] = []
-    cs_rows.extend(extra_supply_rows)
+    elec_import = next((imp for imp in imports if imp.commodity_out == "electricity"), None)
+    if elec_import is None:
+        raise ValueError(
+            "No 'electricity' entry found in imports. "
+            "Add an imports.yaml entry with commodity_out: electricity."
+        )
+    elec_price_eur_per_mwh = elec_import.price_eur_per_mwh
+
+    supply_csps = _imports_to_supply_csps(imports, supply_candidates, scenario_name)
+    cs_rows: list[dict[str, Any]] = [asdict(csp) for csp in supply_csps]
 
     for i in districts:
         heat_comm = heat_names[i]
@@ -717,8 +718,6 @@ def _write_cesm_inputs(
     end_year = scenario_years[-1]
     year_step = scenario_years[1] - scenario_years[0] if len(scenario_years) > 1 else 1
 
-    elec_price, supply_prices = _extract_prices(resolved.imports)
-
     naming = _build_naming_context(resolved, heat_commodity_base)
     sel_list = _resolve_tech_list(resolved, selected_techs)
     constraints = _parse_constraints(
@@ -729,15 +728,15 @@ def _write_cesm_inputs(
     )
     annual_heat_by_d = _extract_annual_heat(resolved, naming, start_year)
 
-    commodity_list, cp_list, extra_supply_rows = _build_techmap_lists(
-        naming, sel_list, resolved.pipe_connections, supply_prices, scenario_name
+    commodity_list, cp_list, supply_candidates = _build_techmap_lists(
+        naming, sel_list, resolved.pipe_connections, scenario_name
     )
     cs_rows = _build_cs_rows(
-        naming, district_ctx, constraints, sel_list, extra_supply_rows, resolved.pipe_connections,
+        naming, district_ctx, constraints, sel_list, resolved.imports, supply_candidates,
+        resolved.pipe_connections,
         scenario_name=scenario_name,
         scenario_years=scenario_years,
         annual_heat_by_d=annual_heat_by_d,
-        elec_price_eur_per_mwh=elec_price,
         retain_existing_output_years_factor=retain_existing_output_years_factor,
         lockout_until_year=resolved.lockout_until_year,
     )

@@ -13,6 +13,10 @@ class Imports:
     co2_emissions_ton_per_mwh: float = 0.0
     max_capacity_mw: float | None = None
 
+    @property
+    def name(self) -> str:
+        return  f"{self.commodity_out.capitalize()}Supply"
+
 
 def load_imports_from_yaml(path: str | Path) -> list[Imports]:
     with open(path, encoding="utf-8") as f:

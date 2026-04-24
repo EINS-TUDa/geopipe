@@ -117,7 +117,7 @@ def main():
     from compare_techmaps import compare_techmaps
     compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison.html")
 
-    # --- 1) Street topology plot ---
+    # # --- 1) Street topology plot ---
     # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
     #     energy_system=energy_system,
     #     demand_name=config.demand_name,
@@ -131,10 +131,10 @@ def main():
     #     title=f"District topology: {config.model_name}",
     # )
     # print(f"Saved topology plot: {topology_plot_path}")
-
-    # --- 2) Technology mix plot ---
+    #
+    # # --- 2) Technology mix plot ---
     # plotter = EnergySystemPlotter(energy_system)
-    # years = scenario.years()
+    # years = scenario.years
     # mix_plot_paths = plotter.save_default_mix_plots(
     #     results_obj.raw,
     #     years=years,
@@ -142,8 +142,8 @@ def main():
     #     demand_name=config.demand_name,
     # )
     # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
-
-    # --- 3) Sankey diagrams via CESM plot module ---
+    #
+    # # --- 3) Sankey diagrams via CESM plot module ---
     # db_path = Path(results_obj.raw["db"])
     # conn = sqlite3.connect(str(db_path))
     # try:

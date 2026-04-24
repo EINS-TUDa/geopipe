@@ -88,18 +88,6 @@ heat_grid:
   cap_max: .nan
   max_units: 1
 
-grid_electricity:
-  commodity_out: electricity
-  commodity_in: dummy
-  cap_max: .nan
-  max_units: 1
-
-grid_hydrogen:
-  commodity_out: hydrogen
-  commodity_in: dummy
-  cap_max: .nan
-  max_units: 1
-
 
 #############################
 # hidden from region builder
