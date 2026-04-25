@@ -25,6 +25,14 @@ class Technology(ABC):
             raise ValueError(f"Type of {name} does not exist.")
         return cls._registered_types[name]
 
+    @classmethod
+    def has_type(cls, name: str) -> bool:
+        return name in cls._registered_types
+
+    @classmethod
+    def registered_type_names(cls) -> list[str]:
+        return list(cls._registered_types.keys())
+
 
 class DecentralTechnology(Technology):
 

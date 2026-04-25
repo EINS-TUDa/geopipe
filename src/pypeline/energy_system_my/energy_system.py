@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 import networkx as nx
+import numpy as np
 import pandas as pd
 from shapely.geometry import MultiPoint
 
@@ -39,7 +40,7 @@ from pypeline.energy_system_my.imports import Imports, load_imports_from_yaml
 from pypeline.units import Unit, UnitEnum
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.topology_builder.topology import Topology
-
+from pypeline.energy_technology.technology import DecentralTechnology
 import logging
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,15 @@ class EnergySystem:
     pipes: list[Pipe] = field(default_factory=list)
 
 
+@dataclass
+class EnergySystemBuilderConfig:
+
+    #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
+    minimum_decentral_technology_share: dict[str, float] = field(default_factory=dict)
+    #: Key: demand commodity name, Value: decentral technology name as default
+    default_decentral_technology_per_demand_commodity: dict[str, str] = field(default_factory=dict)
+
+
 class EnergySystemBuilder:
 
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
@@ -69,7 +79,7 @@ class EnergySystemBuilder:
         self._data_registry: DataRegistry | None = None
         self._technology_registry: TechnologyRegistry | None = None
         self._unit: Unit = UnitEnum.GW.unit
-        # self.region_builder_config: dict[str, Any] | None = None
+        self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
         # self.imports: list[Imports] | None = None
         # self.pipe_technology_name: str = "heat_pipe"
@@ -115,19 +125,22 @@ class EnergySystemBuilder:
     #     self.demands = demands
     #     return self
 
-    def set_region_builder_config(self, config: dict[str, Any] | None, *, merge: bool = True):
-        if config is None:
-            return self
-        if not isinstance(config, dict):
-            raise TypeError("region_builder_config must be a mapping")
-
-        if self.region_builder_config is None or not merge:
-            self.region_builder_config = dict(config)
-        else:
-            merged = dict(self.region_builder_config)
-            merged.update(config)
-            self.region_builder_config = merged
+    def set_config(self, config: EnergySystemBuilderConfig):
+        self._config = config
         return self
+    # def set_region_builder_config(self, config: dict[str, Any] | None, *, merge: bool = True):
+    #     if config is None:
+    #         return self
+    #     if not isinstance(config, dict):
+    #         raise TypeError("region_builder_config must be a mapping")
+    #
+    #     if self.region_builder_config is None or not merge:
+    #         self.region_builder_config = dict(config)
+    #     else:
+    #         merged = dict(self.region_builder_config)
+    #         merged.update(config)
+    #         self.region_builder_config = merged
+    #     return self
 
     @property
     def _region_topologies(self):
@@ -135,7 +148,7 @@ class EnergySystemBuilder:
             self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
         return self.__region_topologies
 
-    def _build_demands(self, topology: nx.Graph) -> list[Demand]:
+    def _build_demands(self, topology: Topology) -> list[Demand]:
         collection = []
         for demand_type in self._demand_types:
             # base_query = {"region": topology, "base_crs": self.base_crs}
@@ -143,7 +156,7 @@ class EnergySystemBuilder:
             if profile is None or profile.empty:
                 raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
 
-            value = sum(self._system_topology.property_from_edges(demand_type.demand_column_name))
+            value = sum(topology.property_from_edges(demand_type.demand_column_name))
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
 
@@ -320,87 +333,133 @@ class EnergySystemBuilder:
     #     self._dhn_central_seed_cache[district_id_i] = selected
     #     return selected
 
-    def _build_decentralized(self):
-        ...
+    def _process_technology_shares(self, technology_shares_data: dict[str, float], demand: Demand, topology: Topology) \
+            -> dict[str, float]:
+        # If technology_shares_data is empty
+        if np.isclose(sum(technology_shares_data.values()), 0.0):
+            default_tech_name = (self._config.default_decentral_technology_per_demand_commodity.
+                                 get(demand.demand_type.commodity_in))
+            if default_tech_name is None:
+                raise ValueError(
+                    f"No default technology configured for demand commodity {demand.demand_type.commodity_in}")
+            if not DecentralTechnology.has_type(default_tech_name):
+                raise ValueError(f"Default technology {default_tech_name} for demand commodity "
+                                 f"{demand.demand_type.commodity_in} is not a valid DecentralTechnology")
+            return {default_tech_name: 1.0}
 
-    def build(self) -> EnergySystem:
+        # Apply minimum share thresholds from config
+        for name, share in technology_shares_data.items():
+            if share < self._config.minimum_decentral_technology_share.get(name, -1):
+                logger.info("Share of technology %s for demand %s in region with topology %s is below "
+                            "the minimum threshold. Skipping.", name, demand.demand_type.name, topology)
+                technology_shares_data[name] = 0
+
+        # Normalize shares to sum to 1 if they don't already
+        total_share = sum(technology_shares_data.values())
+        if not np.isclose(total_share, 1.0):
+            technology_shares_data = {name: share / total_share for name, share in technology_shares_data.items()}
+
+        return technology_shares_data
+
+    def _build_decentral_technologies(self, topology: Topology, demands: list[Demand]) -> list[DecentralTechnology]:
+        decentral_technologies = []
+        base_query = {"region": topology.graph, "base_crs": self.base_crs}
+        for demand in demands:
+            technology_shares_data: dict[str, float] = self._data_registry.query(demand.demand_type.technology_shares_query_params | base_query)
+
+            technology_shares_data = self._process_technology_shares(technology_shares_data, demand, topology)
+
+            for name in DecentralTechnology.registered_type_names():
+                share = technology_shares_data.get(name, 0.0)
+                decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=share))
+
+        return decentral_technologies
+
+    def _pre_build(self):
         if not self._demand_types:
             logger.info("No demand types given. Using the default values.")
             self.add_demand_types(*self._default_demand_types())
 
+        if self._config is None:
+            logger.info("No config given. Using the default values.")
+            self.set_config(EnergySystemBuilderConfig())
+
         self.verify()
+
+    def build(self) -> EnergySystem:
+        self._pre_build()
 
         demands: dict[int, list[Demand]] = {}
         decentralized = {}
-        for region_id, topology in self._region_subgraphs().items():
+        for region_id, topology in self._region_topologies.items():
             demands[region_id] = self._build_demands(topology)
-            decentralized[region_id] = self._build_decentralized()
+            decentralized[region_id] = self._build_decentral_technologies(topology, demands[region_id])
 
 
 
 
-
-
-
-        self._dhn_central_seed_cache = {}
-
-        rb = RegionBuilder(
-            base_crs=self.base_crs,
-            data_registry=self.data_registry,
-            technology_registry=self.technology_registry,
-        )
-        rb.set_demands(self.demands)
-        if not self.region_builder_config:
-            self.set_default_region_builder_config()
-        rb.set_config(self.region_builder_config)
-        rb.set_dhn_central_seed_base_resolver(self._infer_dhn_central_seed_base)
-
-        self._ensure_heat_grid_rules()
-        if self.region_rule_book:
-            rb.set_rule_book(self.region_rule_book)
-
-        regions: list[Region] = []
-        for region_id, topology in self._region_subgraphs():
-            regions.append(rb.build(topology=topology, region_id=region_id))
-
-        pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
-        for region in regions:
-            cost = build_district_heat_grid_from_topology(
-                topology=region.topology,
-                pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
-            )
-            region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
-
-        pipes = []
-        if len(regions) > 1:
-            distance_threshold_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
-            pipe_eff = max(0.0, min(1.0, float(pipe_tech.efficiency)))
-            pipes = build_inter_dhn_pipes_from_topologies(
-                regions=regions,
-                full_network=self.street_network,
-                pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
-                below_distance_threshold_m=(None if distance_threshold_m is None else float(distance_threshold_m)),
-                pipe_loss_fraction=max(0.0, 1.0 - pipe_eff),
-                pipe_capex_eur_per_mw=float(pipe_tech.capex_cost_power),
-                pipe_opex_eur_per_mwh=float(pipe_tech.opex_cost_energy),
-                pipe_cap_max_mw=float(pipe_tech.cap_max),
-                pipe_lifetime_years=int(pipe_tech.technical_lifetime),
-            )
-
-        es = EnergySystem(
-            name=self.energy_system_name,
-            regions=regions,
-            street_network=self.street_network,
-            units=self.unit,
-            technology_registry=self.technology_registry,
-            imports=self.imports,
-            pipes=pipes,
-        )
-
-        if self.rule_book:
-            es = self.rule_book.apply(es)
-
-        return es
+        #
+        #
+        #
+        # self._dhn_central_seed_cache = {}
+        #
+        # rb = RegionBuilder(
+        #     base_crs=self.base_crs,
+        #     data_registry=self.data_registry,
+        #     technology_registry=self.technology_registry,
+        # )
+        # rb.set_demands(self.demands)
+        # if not self.region_builder_config:
+        #     self.set_default_region_builder_config()
+        # rb.set_config(self.region_builder_config)
+        # rb.set_dhn_central_seed_base_resolver(self._infer_dhn_central_seed_base)
+        #
+        # self._ensure_heat_grid_rules()
+        # if self.region_rule_book:
+        #     rb.set_rule_book(self.region_rule_book)
+        #
+        # regions: list[Region] = []
+        # for region_id, topology in self._region_subgraphs():
+        #     regions.append(rb.build(topology=topology, region_id=region_id))
+        #
+        # pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
+        # for region in regions:
+        #     cost = build_district_heat_grid_from_topology(
+        #         topology=region.topology,
+        #         pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
+        #     )
+        #     region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
+        #
+        # pipes = []
+        # if len(regions) > 1:
+        #     distance_threshold_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
+        #     pipe_eff = max(0.0, min(1.0, float(pipe_tech.efficiency)))
+        #     pipes = build_inter_dhn_pipes_from_topologies(
+        #         regions=regions,
+        #         full_network=self.street_network,
+        #         pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
+        #         below_distance_threshold_m=(None if distance_threshold_m is None else float(distance_threshold_m)),
+        #         pipe_loss_fraction=max(0.0, 1.0 - pipe_eff),
+        #         pipe_capex_eur_per_mw=float(pipe_tech.capex_cost_power),
+        #         pipe_opex_eur_per_mwh=float(pipe_tech.opex_cost_energy),
+        #         pipe_cap_max_mw=float(pipe_tech.cap_max),
+        #         pipe_lifetime_years=int(pipe_tech.technical_lifetime),
+        #     )
+        #
+        # es = EnergySystem(
+        #     name=self.energy_system_name,
+        #     regions=regions,
+        #     street_network=self.street_network,
+        #     units=self.unit,
+        #     technology_registry=self.technology_registry,
+        #     imports=self.imports,
+        #     pipes=pipes,
+        # )
+        #
+        # if self.rule_book:
+        #     es = self.rule_book.apply(es)
+        #
+        # return es
 
     def verify(self):
         if not isinstance(self.base_crs, str):
