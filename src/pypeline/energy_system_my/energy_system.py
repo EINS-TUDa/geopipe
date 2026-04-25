@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import networkx as nx
 import pandas as pd
 from shapely.geometry import MultiPoint
@@ -38,6 +38,7 @@ from pypeline.energy_system_my.imports import Imports, load_imports_from_yaml
 # )
 from pypeline.units import Unit, UnitEnum
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
+from pypeline.topology_builder.topology import Topology
 
 import logging
 
@@ -62,7 +63,7 @@ class EnergySystemBuilder:
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
         self.energy_system_name = energy_system_name
         self.base_crs = base_crs
-        self._system_topology: nx.Graph | None = None
+        self._system_topology: Optional[Topology] = None
         # self.rule_book: EnergySystemRuleBook | None = None
         # self.region_rule_book: RegionRuleBook | None = None
         self._data_registry: DataRegistry | None = None
@@ -73,9 +74,12 @@ class EnergySystemBuilder:
         # self.imports: list[Imports] | None = None
         # self.pipe_technology_name: str = "heat_pipe"
         # self._dhn_central_seed_cache: dict[int, str] = {}
+        self.__region_topologies = None
 
-    def set_street_topology(self, topology: nx.Graph):
-        self._system_topology = topology
+    def set_system_topology(self, system_topology: nx.Graph | Topology):
+        if isinstance(system_topology, nx.Graph):
+            system_topology = Topology(system_topology)
+        self._system_topology = system_topology
         return self
 
     def set_data_registry(self, data_registry: DataRegistry):
@@ -125,16 +129,21 @@ class EnergySystemBuilder:
             self.region_builder_config = merged
         return self
 
+    @property
+    def _region_topologies(self):
+        if self.__region_topologies is None:
+            self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
+        return self.__region_topologies
+
     def _build_demands(self, topology: nx.Graph) -> list[Demand]:
         collection = []
         for demand_type in self._demand_types:
-            base_query = {"region": topology, "base_crs": self.base_crs}
-
-            profile = self._data_registry.query(demand_type.profile_query_params | base_query)
+            # base_query = {"region": topology, "base_crs": self.base_crs}
+            profile = pd.read_csv(demand_type.profile_path)
             if profile is None or profile.empty:
                 raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
 
-            value = self._data_registry.query(demand_type.demand_query_params | base_query)
+            value = sum(self._system_topology.property_from_edges(demand_type.demand_column_name))
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
 
@@ -149,8 +158,8 @@ class EnergySystemBuilder:
             DemandType(name="residential_heat",
                        commodity_in="residential_heat",
                        cooperation_of_technologies=False,
-                       demand_query_params={"key": "residential_heat_demand"},
-                       profile_query_params={"key": "residential_heat_demand_profile"},
+                       profile_path=Path(__file__).parent / "HeatDemandProfile.txt",
+                       demand_column_name="residential_heat_demand",
                        technology_shares_query_params={
                            "key": "heating_shares",
                            "name_mapping": {
@@ -166,14 +175,6 @@ class EnergySystemBuilder:
                            },
                        },
                        default_supply_technology="ind_oil_boiler",
-                       decrease_percent_per_year=0),
-            DemandType(name="residential_electricity",
-                       commodity_in="electricity",
-                       cooperation_of_technologies=True,
-                       demand_query_params={"key": "residential_electricity_demand"},
-                       profile_query_params={"key": "residential_electricity_demand_profile"},
-                       technology_shares_query_params={},
-                       default_supply_technology=None,
                        decrease_percent_per_year=0),]
 
     #
@@ -320,6 +321,7 @@ class EnergySystemBuilder:
     #     return selected
 
     def _build_decentralized(self):
+        ...
 
     def build(self) -> EnergySystem:
         if not self._demand_types:
@@ -399,29 +401,6 @@ class EnergySystemBuilder:
             es = self.rule_book.apply(es)
 
         return es
-
-    def _region_subgraphs(self) -> dict[int, nx.Graph]:
-        """Extract one subgraph per region from street_network using the 'id' edge attribute."""
-        buckets: dict[int, list[tuple]] = {}
-        for u, v, data in self._system_topology.edges(data=True):
-            raw = data.get("id")
-            if raw is None:
-                continue
-            try:
-                region_id = int(float(raw))
-            except (TypeError, ValueError):
-                continue
-            buckets.setdefault(region_id, []).append((u, v, data))
-
-        result = {}
-        for region_id in sorted(buckets):
-            sub = nx.Graph()
-            sub.graph.update(self._system_topology.graph)
-            sub.graph["id"] = region_id
-            for u, v, data in buckets[region_id]:
-                sub.add_edge(u, v, **data)
-            result[region_id] = sub
-        return result
 
     def verify(self):
         if not isinstance(self.base_crs, str):
