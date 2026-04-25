@@ -271,7 +271,7 @@ def register(path: str | Path) -> None:
 
 if __name__ == '__main__':
     yml_path = Path(
-        r"<path-to-repo>/src\pypeline\energy_technology\configs\technologies_new.yaml")
+        r"\src\pypeline\energy_technology\configs\technologies_new.yaml")
     register(yml_path)
 
     ind_heat_pump = DecentralTechnology(name="ind_heat_pump", existing_capacity=0)
