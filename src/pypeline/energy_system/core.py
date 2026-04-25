@@ -92,6 +92,7 @@ class RegionDemand:
     def annual_value(self) -> float:
         return float(self.value) if self.value is not None else 0.0
 
+
 @dataclass
 class Scenario:
     name: str
@@ -119,11 +120,13 @@ class Scenario:
 
 
 class Region:
-    def __init__(self, id_: int, topology: nx.Graph | None = None, region_demands: list["RegionDemand"] | None = None, region_technologies: list[Any] | None = None, local_dhn_capex_base_eur: float | None = None):
+    def __init__(self, id_: int, topology: nx.Graph, region_demands: list["RegionDemand"],
+                 region_technologies: list[Any],
+                 local_dhn_capex_base_eur: float):
         self.id = id_
-        self.topology = topology if topology is not None else nx.Graph()
-        self.region_demands = region_demands if region_demands is not None else []
-        self.region_technologies = region_technologies if region_technologies is not None else []
+        self.topology = topology
+        self.region_demands = region_demands
+        self.region_technologies = region_technologies
         self.local_dhn_capex_base_eur = local_dhn_capex_base_eur
 
     @property
@@ -138,11 +141,12 @@ class Region:
     def crs(self):
         return self.topology.graph.get("crs")
 
-    def get_demand(self, name: str) -> "RegionDemand | None":
+    def get_demand(self, name: str) -> RegionDemand | None:
         for demand in self.region_demands:
             if demand.demand.demand_type == name:
                 return demand
         return None
+
 
 __all__ = [
     "Region",

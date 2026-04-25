@@ -272,6 +272,28 @@ class EnergySystemBuilder:
 
     def build(self) -> EnergySystem:
         self.verify()
+
+        region_id_topology = self._region_subgraphs() # should return dict region_id -> topology
+        demands={}
+        decentralized={}
+        for region_id, topoly in region_id_topology:
+            demands[region_id] = build_demands()
+            decentralized[region_id] = build_decentralized()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         self._dhn_central_seed_cache = {}
 
         rb = RegionBuilder(
