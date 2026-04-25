@@ -140,9 +140,3 @@ class RegionTechnology:
     initial_capacity: float = 0
     output_profile: pd.Series | None = None
 
-
-@dataclass
-class TechnologyRequirement:
-    technology_name: str
-    capacity_factor: float = 1.0  # Capacity of this technology = capacity_factor * capacity of the demand
-    share: float = 1.0  # share of capacity of dependency technology that is covered by this technology

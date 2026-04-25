@@ -1,0 +1,122 @@
+# New categorized technology catalog (migration step a).
+#
+# Sections map technology names to their Type-class fields. The section
+# determines which *Type* class is built. Fields that don't belong to the
+# chosen Type are rejected. No naming-heuristic magic — commodity_in /
+# commodity_out must be declared explicitly.
+#
+# Sections: decentralized, central, chp, grids, pipes
+
+decentralized:
+
+  ind_heat_pump:
+    commodity_in: electricity
+    commodity_out: residential_heat
+    efficiency: 3.9
+    technical_lifetime: 18
+    opex_cost_energy: 0
+    opex_cost_power: 13000       # EUR/MW
+    capex_cost_power: 10100      # EUR/MWh
+
+  ind_gas_boiler:
+    commodity_in: gas
+    commodity_out: residential_heat
+    efficiency: 0.94
+    technical_lifetime: 20
+    opex_cost_energy: 0
+    opex_cost_power: 5000
+    capex_cost_power: 1620
+
+  ind_oil_boiler:
+    commodity_in: oil
+    commodity_out: residential_heat
+    efficiency: 0.925
+    technical_lifetime: 20
+    opex_cost_energy: 0
+    opex_cost_power: 6000
+    capex_cost_power: 700
+
+  ind_hydrogen_boiler:
+    commodity_in: hydrogen
+    commodity_out: residential_heat
+    efficiency: 0.95
+    technical_lifetime: 20
+    opex_cost_energy: 0
+    opex_cost_power: 177000
+    capex_cost_power: 5000
+
+  heat_exchanger:
+    commodity_in: district_heat_out
+    commodity_out: residential_heat
+    efficiency: 0.99
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 1000
+    capex_cost_power: 193000
+
+
+central:
+
+  cen_heat_pump:
+    commodity_in: electricity
+    commodity_out: district_heat_in
+    efficiency: 3.1
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 15000
+    capex_cost_power: 586000
+    capex_cost_base: 125000
+
+  cen_gas_boiler:
+    commodity_in: gas
+    commodity_out: district_heat_in
+    efficiency: 0.99
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 2000
+    capex_cost_power: 107000
+    capex_cost_base: 5400
+
+  cen_oil_boiler:
+    commodity_in: oil
+    commodity_out: district_heat_in
+    efficiency: 0.93
+    technical_lifetime: 20
+    opex_cost_energy: 0
+    opex_cost_power: 1500
+    capex_cost_power: 149000
+    capex_cost_base: 5400
+
+  cen_biomass_woodpellets:
+    commodity_in: biomass
+    commodity_out: district_heat_in
+    efficiency: 0.5
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 100
+    capex_cost_power: 440000
+    capex_cost_base: 260000
+    cap_max: 450       # MW per unit
+    max_units: 1       # at most one unit per region
+
+
+chp: {}
+
+
+grids:
+
+  heat_grid:
+    commodity_in: district_heat_in
+    commodity_out: district_heat_out
+    efficiency: 0.86
+    technical_lifetime: 40
+
+
+pipes:
+
+  heat_pipe:
+    commodity_in: district_heat_out
+    commodity_out: district_heat_in
+    loss_percent: 0.04
+    technical_lifetime: 40
+    capex_per_km: 1000000        # EUR/km
