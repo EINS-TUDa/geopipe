@@ -28,7 +28,7 @@ class Techmap:
                 df.to_excel(writer, sheet_name=field.name, index=False)
 
 
-def _units_df() -> pd.DataFrame:
+def _df_units() -> pd.DataFrame:
     return pd.DataFrame(
         [
             {"quantity": "energy",      "scale_factor": 1.0, "input": "MWh",      "output": "MWh"},
@@ -41,10 +41,10 @@ def _units_df() -> pd.DataFrame:
     )
 
 
-def _tss_df(tss_name: str, dt_hours: int) -> pd.DataFrame:
+def _df_tss(tss_name: str, dt_hours: int) -> pd.DataFrame:
     return pd.DataFrame([{"TSS_name": tss_name, "dt": int(dt_hours)}], columns=["TSS_name", "dt"])
 
-def _scenario_df(resolved: ResolvedSystem) -> pd.DataFrame:
+def _df_scenario(resolved: ResolvedSystem) -> pd.DataFrame:
     s = resolved.scenario
     return pd.DataFrame(
         [{
@@ -184,10 +184,10 @@ def create_techmap(resolved: ResolvedSystem) -> Techmap:
     df_cp = _conversion_process_df(set(df_cs["conversion_process_name"]))
 
     return Techmap(
-        Units=_units_df(),
-        Scenario=_scenario_df(resolved),
+        Units=_df_units(),
+        Scenario=_df_scenario(resolved),
         Commodity=df_co,
         ConversionProcess=df_cp,
         ConversionSubProcess=df_cs,
-        TSS=_tss_df(resolved.scenario.tss, resolved.scenario.dt_hours),
+        TSS=_df_tss(resolved.scenario.tss, resolved.scenario.dt_hours),
     )
