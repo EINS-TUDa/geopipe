@@ -7,131 +7,57 @@ backend-specific code free of domain-derivation logic.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from pypeline.energy_system.core import RegionDemand, Scenario
+from pypeline.energy_system.core import Scenario
 from pypeline.energy_system.imports import Imports
-from pypeline.energy_system.pipe import Pipe
-from pypeline.optimization.cesm.io_utils import resolve_retain_schedule
+from pypeline.energy_system_my.region import Demand
 
 if TYPE_CHECKING:
-    from pypeline.energy_system.core import EnergySystem
-    from pypeline.energy_technology.technology import Technology
+    from pypeline.energy_system_my.energy_system import EnergySystem
+    from pypeline.energy_technology.technology import PipeTechnology, DecentralTechnology, GridTechnology, \
+    CentralTechnology, CHPTechnology
 
 
 @dataclass
 class ResolvedSystem:
-    # Scenario (flat config — stored directly, no derivation needed)
+    name: str
     scenario: Scenario
-
-    # Regions
-    region_ids: list[int]
-    region_demands: dict[int, list[RegionDemand]]
-
-    # Primary demand commodity and its normalized 8760-hour profile
-    demand_commodity: str
-    demand_profile: list[float]
-
-    # Annual demand per region per year: rid -> year -> MWh
-    annual_demand: dict[int, dict[int, float]]
-
-    # Per-region technology metrics: rid -> tech_name -> {initial_capacity, initial_energy_output}
-    region_metrics: dict[int, dict[str, dict[str, float]]]
-
-    # All technologies referenced by region_technologies
-    technologies: dict[str, "Technology"]
-
-    # Commodity imports (electricity buy price + fuel supply prices)
     imports: list[Imports]
+    pipe_connections: list[PipeTechnology]
+    decentralized_technologies: dict[int, tuple[DecentralTechnology, ...]]  # region id → decentral technologies
+    grid_technologies: dict[int, tuple[GridTechnology, ...]]  # region id → grid technologies
+    central_technologies: dict[int, tuple[CentralTechnology, ...]] # region id → central technologies
+    chp_technologies: dict[int, tuple[CHPTechnology, ...]] # region id → chp
+    demands: dict[int, tuple[Demand]] # region id → demand
 
-    # Retention schedule (None = no retention constraint)
-    retain_schedule: list[float] | None
-
-    # Domain constraints (raw from EnergySystem.constraints)
-    constraints: dict[str, Any]
-
-    # Local DHN capex per region: rid -> {local_grid_capex_base_eur: float}
-    local_dhn_costs: dict[int, dict[str, float]]
-
-    # Inter-district pipe connections
-    pipe_connections: list[Pipe] = field(default_factory=list)
-
-
-def resolve_system(
-    energy_system: "EnergySystem",
-    scenario: Scenario,
-    *,
-    retain_existing_output_schedule: list[float] | None = None,
-) -> ResolvedSystem:
+def resolve_system(energy_system: EnergySystem, scenario: Scenario) -> ResolvedSystem:
     """Build a ``ResolvedSystem`` from an ``EnergySystem`` and a ``Scenario``."""
-
-    retain_schedule = resolve_retain_schedule(
-        explicit_schedule=retain_existing_output_schedule,
-        scenario=scenario,
-    )
-
-    demand_commodity: str | None = None
-    demand_profile: list[float] | None = None
-    annual_demand: dict[int, dict[int, float]] = {}
-    region_metrics: dict[int, dict[str, dict[str, float]]] = {}
-    technologies: dict[str, Any] = {}
-    region_ids: list[int] = []
-    region_demands: dict[int, list[RegionDemand]] = {}
+    decentralized_technologies: dict[int, tuple[DecentralTechnology, ...]] = {}
+    grid_technologies: dict[int, tuple[GridTechnology, ...]] = {}
+    central_technologies: dict[int, tuple[CentralTechnology, ...]] = {}
+    chp_technologies: dict[int, tuple[CHPTechnology, ...]] = {}
+    demands: dict[int, tuple[Demand]] = defaultdict(tuple)
 
     for region in energy_system.regions:
-        rid = region.id
-        region_ids.append(rid)
-        region_demands[rid] = region.region_demands
-        total_ann = 0.0
-
-        for rd in region.region_demands:
-            if demand_commodity is None:
-                demand_commodity = rd.demand.commodity_in
-            if demand_profile is None and rd.profile is not None:
-                try:
-                    prof = [float(x) for x in rd.profile]
-                    if len(prof) == 8760:
-                        demand_profile = prof
-                except (TypeError, ValueError):
-                    pass
-            if rd.demand.commodity_in == demand_commodity:
-                total_ann += float(rd.value or 0.0)
-
-        annual_demand[rid] = {year: total_ann for year in scenario.years}
-
-        metrics: dict[str, dict[str, float]] = {}
-        for rt in region.region_technologies:
-            tech = rt.technology
-            technologies.setdefault(tech.name, tech)
-            metrics[tech.name] = {
-                "initial_capacity": float(rt.initial_capacity),
-                "initial_energy_output": float(rt.initial_energy_output),
-            }
-        region_metrics[rid] = metrics
-
-    if demand_profile is None:
-        raise ValueError("No 8760-hour demand profile found in any region demand")
-
-    local_dhn_costs = {
-        region.id: {"local_grid_capex_base_eur": region.local_dhn_capex_base_eur}
-        for region in energy_system.regions
-        if region.local_dhn_capex_base_eur is not None
-    }
-    constraints = dict(energy_system.constraints or {})
+        decentralized_technologies[region.id] = region.decentral_techs
+        grid_technologies[region.id] = region.grids
+        central_technologies[region.id] = region.central_techs
+        chp_technologies[region.id] = region.chps
+        for demand in region.demands:
+            demands[region.id] += (demand,)
 
     return ResolvedSystem(
-        scenario=scenario,
-        region_ids=region_ids,
-        region_demands=region_demands,
-        demand_commodity=demand_commodity or "residential_heat",
-        demand_profile=demand_profile,
-        annual_demand=annual_demand,
-        region_metrics=region_metrics,
-        technologies=technologies,
+        name=energy_system.name,
+        scenario = scenario,
         imports=energy_system.imports,
-        retain_schedule=retain_schedule,
-        constraints=constraints,
-        local_dhn_costs=local_dhn_costs,
-        pipe_connections=list(energy_system.pipes or []),
+        pipe_connections=energy_system.pipes,
+        decentralized_technologies=decentralized_technologies,
+        grid_technologies=grid_technologies,
+        central_technologies=central_technologies,
+        chp_technologies=chp_technologies,
+        demands = demands,
     )
+

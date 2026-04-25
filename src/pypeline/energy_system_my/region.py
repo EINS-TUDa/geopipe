@@ -63,6 +63,11 @@ class Demand:
         """The value of the year after the start"""
         return self._value * (1 - self.demand_type.decrease_percent_per_year) ** year_period
 
+    def values_per_year(self, years: Iterable[int]) -> dict[int, float]:
+        """The value of the demand for each year in years"""
+        return {year: self.value(year - min(years)) for year in years}
+
+
 
 class Region:
     def __init__(self, id_: int, topology: Topology, demands: Iterable[Demand],
@@ -100,21 +105,21 @@ class Region:
         return self._demands.get(name, None)
 
     @property
-    def demands(self) -> list[Demand]:
-        return list(self._demands.values())
+    def demands(self) -> tuple[Demand, ...]:
+        return tuple(self._demands.values())
 
     @property
-    def decentral_techs(self) -> tuple[DecentralTechnology]:
-        return self._technologies["decentral"]
+    def decentral_techs(self) -> tuple[DecentralTechnology, ...]:
+        return tuple(self._technologies["decentral"])
 
     @property
-    def central_techs(self) -> tuple[CentralTechnology]:
-        return self._technologies["central"]
+    def central_techs(self) -> tuple[CentralTechnology, ...]:
+        return tuple(self._technologies["central"])
 
     @property
-    def chps(self) -> tuple[CHPTechnology]:
-        return self._technologies["chp"]
+    def chps(self) -> tuple[CHPTechnology, ...]:
+        return tuple(self._technologies["chp"])
 
     @property
-    def grids(self) -> tuple[GridTechnology]:
-        return self._technologies["grid"]
+    def grids(self) -> tuple[GridTechnology, ...]:
+        return tuple(self._technologies["grid"])

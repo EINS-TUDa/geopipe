@@ -2,8 +2,10 @@ from dataclasses import asdict, dataclass, fields
 
 import pandas as pd
 
-from pypeline.energy_system.core import RegionDemand
-from pypeline.energy_system.imports import Imports
+from pypeline.energy_system_my.region import Demand
+from pypeline.energy_system_my.imports import Imports
+from pypeline.energy_technology.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
+    DecentralTechnology
 from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
 from pypeline.optimization.cesm.io_utils_new import year_dep_value_to_cesm_string
 from pypeline.optimization.resolved_system import ResolvedSystem
@@ -57,21 +59,6 @@ def _scenario_df(resolved: ResolvedSystem) -> pd.DataFrame:
         }]
     )
 
-def _demand_to_conversion_sub_process(
-    rd: RegionDemand,
-    region_id: int,
-    scenario_name: str,
-) -> ConversionSubProcess:
-    return ConversionSubProcess(
-        conversion_process_name=f"{rd.name}_{region_id}",
-        commodity_in=rd.demand.commodity_in,
-        commodity_out="Dummy",
-        scenario=scenario_name,
-        min_eout=year_dep_value_to_cesm_string(rd.value),
-        output_profile=rd.profile_name,
-    )
-
-
 def _import_to_conversion_sub_process(imp: Imports, scenario_name: str) -> ConversionSubProcess:
     return ConversionSubProcess(
         conversion_process_name=imp.name,
@@ -83,32 +70,124 @@ def _import_to_conversion_sub_process(imp: Imports, scenario_name: str) -> Conve
         cap_max=year_dep_value_to_cesm_string(imp.max_capacity_mw),
     )
 
+def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str) -> ConversionSubProcess:
+    return ...
+
+def _demand_to_conversion_sub_process(
+    demand: Demand,
+    region_id: int,
+    scenario_name: str,
+    scenario_years: list[int]) -> ConversionSubProcess:
+    return ConversionSubProcess(
+        conversion_process_name=f"{demand.name}_{region_id}",
+        commodity_in=demand.demand_type.commodity_in,
+        commodity_out="Dummy",
+        scenario=scenario_name,
+        min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years)),
+        output_profile=demand.profile_name,
+    )
+
+def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
+    return ConversionSubProcess(
+        conversion_process_name=f"{tech.name}_{region_id}",
+        commodity_in=tech.commodity_in,
+        commodity_out=tech.commodity_out,
+        scenario=scenario_name,
+        capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
+        opex_cost_energy=year_dep_value_to_cesm_string(tech.opex_cost_energy),
+        opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
+        efficiency=year_dep_value_to_cesm_string(tech.efficiency),
+        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_mw),
+    )
+
+def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_name: str) -> ConversionSubProcess:
+    return ...
+
+def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
+    return ...
+
+def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
+    return ...
 
 def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     cs_list: list[ConversionSubProcess] = []
     scenario_name = resolved.scenario.name
+    scenario_years = resolved.scenario.years
 
-    for region_id, demands in resolved.region_demands.items():
-        for rd in demands:
-            cs_list.append(_demand_to_conversion_sub_process(rd, region_id, scenario_name))
-
+    # imports
     for imp in resolved.imports:
         cs_list.append(_import_to_conversion_sub_process(imp, scenario_name))
 
-    # heat grids
+    # pipes
+    for pipe in resolved.pipe_connections:
+        cs_list.append(_pipe_to_conversion_sub_process(pipe, scenario_name))
+
+    # demands
+    for region_id, demands in resolved.demands.items():
+        for demand in demands:
+            cs_list.append(_demand_to_conversion_sub_process(demand, region_id, scenario_name, scenario_years))
+
+    # decentralized techs
+    for region_id, techs in resolved.decentralized_technologies.items():
+        for tech in techs:
+            cs_list.append(_decentralized_tech_to_conversion_sub_process(tech, region_id, scenario_name))
+
+    # grids
+    for region_id, grids in resolved.grid_technologies.items():
+        for grid in grids:
+            cs_list.append(_grid_to_conversion_sub_process(grid, region_id, scenario_name))
+
+    # central techs
+    for region_id, techs in resolved.central_technologies.items():
+        for tech in techs:
+            cs_list.append(_central_tech_to_conversion_sub_process(tech, region_id, scenario_name))
+
+    # chp
+    for region_id, chps in resolved.chp_technologies.items():
+        for chp in chps:
+            cs_list.append(_chp_to_conversion_sub_process(chp, region_id, scenario_name))
 
     return pd.DataFrame([asdict(cs) for cs in cs_list])
 
 
+def _color_from_name(name: str) -> str:
+    # simple deterministic color assignment based on name
+    colors = [
+        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+        "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+        "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
+        "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5",
+    ]
+    return colors[hash(name) % len(colors)]
 
+def _commodity_df(commodity_names: set[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"commodity_name": name, "order": i, "color": _color_from_name(name)}
+            for i, name in enumerate(sorted(commodity_names))
+        ],
+        columns=["commodity_name", "order", "color"],
+    )
 
+def _conversion_process_df(conversion_process_names: set[str]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"conversion_process_name": name, "order": i, "color": _color_from_name(name)}
+            for i, name in enumerate(sorted(conversion_process_names))
+        ],
+        columns=["conversion_process_name", "order", "color"],
+    )
 
 def create_techmap(resolved: ResolvedSystem) -> Techmap:
+    df_cs = _conversion_sub_process_df(resolved)
+    df_co = _commodity_df(set(df_cs["commodity_in"]))
+    df_cp = _conversion_process_df(set(df_cs["conversion_process_name"]))
+
     return Techmap(
         Units=_units_df(),
         Scenario=_scenario_df(resolved),
-        Commodity=pd.DataFrame(),
-        ConversionProcess=pd.DataFrame(),
-        ConversionSubProcess=_conversion_sub_process_df(resolved),
+        Commodity=df_co,
+        ConversionProcess=df_cp,
+        ConversionSubProcess=df_cs,
         TSS=_tss_df(resolved.scenario.tss, resolved.scenario.dt_hours),
     )
