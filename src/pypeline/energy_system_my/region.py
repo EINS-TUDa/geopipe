@@ -9,6 +9,8 @@ from shapely.geometry import MultiPoint
 from pypeline import DataRegistry
 from pypeline.energy_technology import Technology
 from pypeline.energy_technology.technology_new import DecentralTech, CentralTech, CHP, Grid, Pipe
+
+from pypeline.energy_technology.technology import DecentralTechnology, CentralTechnology, CHPTechnology, GridTechnology
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.energy_system.imports import Imports
 from pypeline.energy_system.pipe import Pipe
@@ -68,13 +70,18 @@ class Demand:
         """The value of the year after the start"""
         return self._value * (1 - self.demand_type.decrease_percent_per_year) ** year_period
 
+    def values_per_year(self, years: Iterable[int]) -> dict[int, float]:
+        """The value of the demand for each year in years"""
+        return {year: self.value(year - min(years)) for year in years}
+
+
 
 class Region:
     def __init__(self, id_: int, topology: nx.Graph, demands: Iterable[Demand],
                  technologies: Iterable[DecentralTech | CentralTech | CHP | Grid]):
         self._id = id_
         self._topology = topology
-        self._demands = {demand.name: demand for demand in demands}
+        self._demands: dict[str, Demand] = {demand.name: demand for demand in demands}
         self._technologies = {"decentral": [], "central": [], "chp": [], "grid": []}
         class_to_key = {DecentralTech: "decentral", CentralTech: "central", CHP: "chp", Grid: "grid"}
         for technology in technologies:
@@ -104,20 +111,24 @@ class Region:
         return self._demands.get(name, None)
 
     @property
-    def decentral_techs(self) -> tuple[DecentralTech]:
-        return self._technologies["decentral"]
+    def demands(self) -> tuple[Demand, ...]:
+        return tuple(self._demands.values())
 
     @property
-    def central_techs(self) -> tuple[CentralTech]:
-        return self._technologies["central"]
+    def decentral_techs(self) -> tuple[DecentralTechnology, ...]:
+        return tuple(self._technologies["decentral"])
 
     @property
-    def chps(self) -> tuple[CHP]:
-        return self._technologies["chp"]
+    def central_techs(self) -> tuple[CentralTechnology, ...]:
+        return tuple(self._technologies["central"])
 
     @property
-    def grids(self) -> tuple[Grid]:
-        return self._technologies["grid"]
+    def chps(self) -> tuple[CHPTechnology, ...]:
+        return tuple(self._technologies["chp"])
+
+    @property
+    def grids(self) -> tuple[GridTechnology, ...]:
+        return tuple(self._technologies["grid"])
 
 
 class RegionBuilder:

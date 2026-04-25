@@ -8,7 +8,7 @@ from shapely.geometry import MultiPoint
 
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.energy_system_my.imports import Imports
-from pypeline.energy_system_my.pipe import Pipe
+from pypeline.energy_technology.technology import PipeTechnology
 from pypeline.energy_system_my.region import Region, DemandType
 from pypeline.units import Unit
 
@@ -54,7 +54,7 @@ class EnergySystem:
     imports: list[Imports] = field(default_factory=list)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
-    pipes: list[Pipe] = field(default_factory=list)
+    pipes: list[PipeTechnology] = field(default_factory=list)
 
 
 class EnergySystemBuilder:
