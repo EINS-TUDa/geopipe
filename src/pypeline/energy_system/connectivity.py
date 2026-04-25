@@ -39,7 +39,9 @@ import networkx as nx
 
 from pypeline.energy_technology.technology_new import (
     CentralTech,
+    CentralTechType,
     CHP,
+    CHPType,
     DecentralTech,
     Grid,
     GridType,
@@ -378,25 +380,46 @@ def _emit_central(
     registry: TechnologyRegistry,
     result: ConnectivityResult,
 ) -> None:
-    """Instantiate the central tech at ``central_id`` and append to result.
+    """Instantiate the central tech at ``central_id``.
 
-    Existing capacity = total energy entering central / chain efficiency
-    from any group region to central. Specifically:
+    Central output (district_heat_in MW) = own grid_input + flow leaving
+    central via outgoing pipes. Equivalently:
+    ``sum(grid_input_mw[r] / pipe_eff^hops[r] for r in group)``. Both
+    forms agree by edge-flow conservation (verified in tests).
 
-        total_demand_MWh = sum(records[r].demand_at_region for r in group)
-        chain_loss = product over path edges (pipe_eff)  [worst-case path used]
-        central_energy = total_demand_MWh / (grid_eff * chain_loss)
-        central_capacity_MW = central_energy / hours_per_year * (1 + headroom)
-
-    For now, peak vs annual: the old code uses ``peak * energy *
-    cap_factor``. With ``cap_factor`` removed we go straight to peak.
+    Headroom is *not* applied to central capacity — headroom is reserved
+    for grid+pipes expansion; growing supply requires new central capex.
     """
     if grid_cfg.default_central_technology is None:
         raise ValueError(
             f"grid '{grid_type.name}' has eligible regions but no "
             f"default_central_technology in user config"
         )
-    raise NotImplementedError("Central capacity derivation — see docstring.")
+
+    central_output_mw = flows.records[central_id].grid_input_mw
+    for (upstream, _), flow_mw in flows.edge_flows.items():
+        if upstream == central_id:
+            central_output_mw += flow_mw
+
+    central_type = registry[grid_cfg.default_central_technology]
+    if isinstance(central_type, CentralTechType) and central_type.cap_max is not None:
+        max_total = central_type.cap_max * (central_type.max_units or 1)
+        if central_output_mw > max_total + 1e-9:
+            raise ValueError(
+                f"Computed existing central capacity {central_output_mw:.4f} MW for "
+                f"'{central_type.name}' at region {central_id} exceeds "
+                f"cap_max ({central_type.cap_max}) * max_units "
+                f"({central_type.max_units or 1}) = {max_total}"
+            )
+    if not isinstance(central_type, (CentralTechType, CHPType)):
+        raise TypeError(
+            f"default_central_technology '{central_type.name}' must be a CentralTechType "
+            f"or CHPType (got {type(central_type).__name__}) — should have been caught by "
+            f"UserConfig.validate_against_registry"
+        )
+
+    instance = central_type.instantiate(existing_capacity=central_output_mw)
+    result.central_by_region.setdefault(central_id, []).append(instance)
 
 
 def _emit_grids(
@@ -409,12 +432,19 @@ def _emit_grids(
 ) -> None:
     """Instantiate one ``Grid`` per region in ``group``.
 
-    Per-region grid capacity sized to the *outgoing* flow at that region
-    (max of decentral demand at the region and pass-through flow to
-    downstream group members). Multiplied by
-    ``(1 + grid_expansion_headroom_pct)``.
+    Throughput at region r (district_heat_in MW) = own grid_input + sum of
+    outgoing edge flows (pass-through to downstream regions). By edge-flow
+    conservation this equals the inflow from upstream pipes after pipe
+    loss, so it sizes the grid to the actual MW it must handle.
     """
-    raise NotImplementedError("Grid capacity derivation — see docstring.")
+    headroom = 1.0 + grid_cfg.grid_expansion_headroom_pct
+    for rid in group:
+        throughput_mw = flows.records[rid].grid_input_mw
+        for (upstream, _), flow_mw in flows.edge_flows.items():
+            if upstream == rid:
+                throughput_mw += flow_mw
+        instance = grid_type.instantiate(existing_capacity=throughput_mw * headroom)
+        result.grids_by_region.setdefault(rid, []).append(instance)
 
 
 def _emit_pipes(
@@ -427,16 +457,32 @@ def _emit_pipes(
     region_network: nx.Graph,
     result: ConnectivityResult,
 ) -> None:
-    """Instantiate one ``Pipe`` per edge in the group's spanning tree.
+    """Instantiate one ``Pipe`` per edge in the group's shortest-path tree.
 
-    Spanning tree = union of shortest paths from each non-central region
-    to central. Pipe capacity per edge derived from
-    ``flows.edge_flows`` with chained-loss inflation and headroom.
-    Direction follows convention: ``commodity_out`` of upstream region
-    → ``commodity_in`` of downstream region (so pipe.region_id_in is
-    the *upstream* region; that matches existing heat_pipe semantics).
+    Pipe existing capacity (MW) = ``flows.edge_flows[edge]`` × headroom.
+    Direction: ``region_id_in`` is the upstream (closer-to-central) node,
+    matching the ``district_heat_out → district_heat_in`` convention.
+    ``below_distance_threshold`` is set when ``length_m`` is at or below
+    ``considered_connected_distance_m`` — those pipes are treated as
+    pre-existing and pay no capex (per ``Pipe.__post_init__``).
     """
-    raise NotImplementedError("Pipe capacity derivation — see docstring.")
+    headroom = 1.0 + grid_cfg.grid_expansion_headroom_pct
+    threshold_m = grid_cfg.considered_connected_distance_m
+    pipe_type = registry.pipes[pipe_technology_name]
+
+    for (upstream, downstream), flow_mw in flows.edge_flows.items():
+        length_m = flows.edge_lengths_m[(upstream, downstream)]
+        below = threshold_m > 0 and length_m <= threshold_m
+        length_km = length_m / 1000.0
+        pipe = pipe_type.instantiate(
+            region_id_in=upstream,
+            region_id_out=downstream,
+            pipe_length_km=length_km,
+            existing_capacity=flow_mw * headroom,
+            below_distance_threshold=below,
+            costs_eur=pipe_type.capex_per_km * length_km,
+        )
+        result.pipes.append(pipe)
 
 
 __all__ = [
