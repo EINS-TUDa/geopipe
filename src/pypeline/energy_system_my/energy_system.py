@@ -7,13 +7,12 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import MultiPoint
 
-from pypeline.energy_technology.technology_registry import TechnologyRegistry
+from pypeline.energy_technology import register_technologies
 from pypeline.energy_system_my.imports import Imports
 from pypeline.energy_technology.technology import PipeTechnology
 from pypeline.energy_system_my.region import Region, DemandType
 from pypeline.units import Unit
 
-from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import networkx as nx
@@ -22,10 +21,7 @@ import yaml
 from pypeline.data.data_registry import DataRegistry
 from pypeline.data.dataset import CensusTechnology
 from pypeline.energy_system_my.region import Demand, Region
-from pypeline.energy_system.dhn import (
-    build_district_heat_grid_from_topology,
-    build_inter_dhn_pipes_from_topologies,
-)
+
 from pypeline.energy_system_my.imports import Imports, load_imports_from_yaml
 # from pypeline.energy_system.region import RegionBuilder
 # from pypeline.energy_system.rule_book import (
@@ -38,7 +34,6 @@ from pypeline.energy_system_my.imports import Imports, load_imports_from_yaml
 #     RegionRuleBook,
 # )
 from pypeline.units import Unit, UnitEnum
-from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.topology_builder.topology import Topology
 from pypeline.energy_technology.technology import DecentralTechnology
 import logging
@@ -52,7 +47,6 @@ class EnergySystem:
     regions: list[Region]
     units: Unit
     street_network: nx.Graph | None = None
-    technology_registry: TechnologyRegistry | None = None
     imports: list[Imports] = field(default_factory=list)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
@@ -83,7 +77,6 @@ class EnergySystemBuilder:
         # self.rule_book: EnergySystemRuleBook | None = None
         # self.region_rule_book: RegionRuleBook | None = None
         self._data_registry: DataRegistry | None = None
-        self._technology_registry: TechnologyRegistry | None = None
         self._unit: Unit = UnitEnum.GW.unit
         self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
@@ -100,10 +93,6 @@ class EnergySystemBuilder:
 
     def set_data_registry(self, data_registry: DataRegistry):
         self._data_registry = data_registry
-        return self
-
-    def set_technology_registry(self, technology_registry: TechnologyRegistry):
-        self._technology_registry = technology_registry
         return self
 
     def set_unit(self, input_unit: UnitEnum):

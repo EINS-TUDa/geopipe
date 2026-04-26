@@ -6,20 +6,10 @@ from pypeline.energy_system.builder import EnergySystemBuilder
 from pypeline.energy_system.core import Scenario
 from pypeline.injection import apply_injected_techs
 from pypeline.energy_system.rule_book import (CommodityActivationYearRule,EnergySystemRuleBook,TechnologyActivationYearRule)
-from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.optimization.cesm import CESMOptimizationBackend
 
 
-def create_local_data_registry(
-    heating_shares_file: Path,
-):
-    if not heating_shares_file.exists():
-        raise FileNotFoundError(f"Missing heating shares file: {heating_shares_file}")
 
-    return get_default_data_registry(
-        mode="local",
-        local_heating_shares_file=heating_shares_file,
-    )
 
 def create_cesm_backend(
     *,
@@ -45,13 +35,11 @@ def build_energy_system(
     commodity_activation_year_by_name: dict[str, int] | None = None,
     technology_activation_year_by_name: dict[str, int] | None = None,
 ):
-    tech_registry = TechnologyRegistry()
-    tech_registry.load_from_default()
+
 
     builder = EnergySystemBuilder(energy_system_name=model_name)
     builder.set_street_network(street_network)
     builder.set_demands(default=True)
-    builder.set_technology_registry(tech_registry)
     builder.set_data_registry(
         create_local_data_registry(
             heating_shares_file=heating_shares_file,

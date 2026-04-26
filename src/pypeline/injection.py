@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 import geopandas as gpd
 import pandas as pd
-from pypeline.energy_system.core import EnergySystem
+# from pypeline.energy_system.core import EnergySystem
 
 
 def resolve_region_technology(region: Any, technology_name: str) -> Any:
@@ -28,53 +28,53 @@ def resolve_region_technology(region: Any, technology_name: str) -> Any:
     raise ValueError(f"Could not resolve technology '{technology_name}' for region {region.id}")
 
 
-def apply_injected_techs(energy_system: EnergySystem, injected_techs: list[dict[str, Any]]) -> None:
-    if not injected_techs:
-        return
-
-    region_by_id = {int(region.id): region for region in energy_system.regions}
-
-    for idx, spec in enumerate(injected_techs):
-        if not isinstance(spec, dict):
-            raise ValueError(f"injected_techs[{idx}] must be a mapping")
-
-        region_id_raw = spec.get("region_id")
-        if region_id_raw is None:
-            raise ValueError(f"injected_techs[{idx}] missing 'region_id'")
-
-        region = region_by_id.get(int(region_id_raw))
-        if region is None:
-            raise ValueError(f"Region {region_id_raw} has supply injection but was not built")
-
-        tech_name = str(spec.get("technology", "")).strip()
-        if not tech_name:
-            raise ValueError(f"injected_techs[{idx}] missing 'technology'")
-
-        target = resolve_region_technology(region, tech_name)
-
-        initial_capacity_raw = spec.get("initial_capacity_mw")
-        initial_capacity = float(initial_capacity_raw) if initial_capacity_raw is not None else None
-        if initial_capacity is not None and initial_capacity < 0.0:
-            raise ValueError(f"injected_techs[{idx}].initial_capacity_mw must be >= 0")
-
-        initial_output_raw = spec.get("initial_output_mw")
-        if initial_output_raw is None:
-            initial_output_raw = spec.get("initial_output_mwh")
-
-        initial_output = float(initial_output_raw) if initial_output_raw is not None else None
-        if initial_output is None and initial_capacity is not None:
-            initial_output = initial_capacity
-        if initial_output is not None and initial_output < 0.0:
-            raise ValueError(f"injected_techs[{idx}].initial_output_mw must be >= 0")
-        if initial_output is not None and initial_capacity is not None and initial_output > initial_capacity + 1e-9:
-            raise ValueError(
-                f"injected_techs[{idx}].initial_output_mw ({initial_output}) must be <= initial_capacity_mw ({initial_capacity})"
-            )
-
-        if initial_capacity is not None:
-            target.initial_capacity = initial_capacity
-        if initial_output is not None:
-            target.initial_energy_output = initial_output
+# def apply_injected_techs(energy_system: EnergySystem, injected_techs: list[dict[str, Any]]) -> None:
+#     if not injected_techs:
+#         return
+#
+#     region_by_id = {int(region.id): region for region in energy_system.regions}
+#
+#     for idx, spec in enumerate(injected_techs):
+#         if not isinstance(spec, dict):
+#             raise ValueError(f"injected_techs[{idx}] must be a mapping")
+#
+#         region_id_raw = spec.get("region_id")
+#         if region_id_raw is None:
+#             raise ValueError(f"injected_techs[{idx}] missing 'region_id'")
+#
+#         region = region_by_id.get(int(region_id_raw))
+#         if region is None:
+#             raise ValueError(f"Region {region_id_raw} has supply injection but was not built")
+#
+#         tech_name = str(spec.get("technology", "")).strip()
+#         if not tech_name:
+#             raise ValueError(f"injected_techs[{idx}] missing 'technology'")
+#
+#         target = resolve_region_technology(region, tech_name)
+#
+#         initial_capacity_raw = spec.get("initial_capacity_mw")
+#         initial_capacity = float(initial_capacity_raw) if initial_capacity_raw is not None else None
+#         if initial_capacity is not None and initial_capacity < 0.0:
+#             raise ValueError(f"injected_techs[{idx}].initial_capacity_mw must be >= 0")
+#
+#         initial_output_raw = spec.get("initial_output_mw")
+#         if initial_output_raw is None:
+#             initial_output_raw = spec.get("initial_output_mwh")
+#
+#         initial_output = float(initial_output_raw) if initial_output_raw is not None else None
+#         if initial_output is None and initial_capacity is not None:
+#             initial_output = initial_capacity
+#         if initial_output is not None and initial_output < 0.0:
+#             raise ValueError(f"injected_techs[{idx}].initial_output_mw must be >= 0")
+#         if initial_output is not None and initial_capacity is not None and initial_output > initial_capacity + 1e-9:
+#             raise ValueError(
+#                 f"injected_techs[{idx}].initial_output_mw ({initial_output}) must be <= initial_capacity_mw ({initial_capacity})"
+#             )
+#
+#         if initial_capacity is not None:
+#             target.initial_capacity = initial_capacity
+#         if initial_output is not None:
+#             target.initial_energy_output = initial_output
 
 
 def find_segment_indices(streets: gpd.GeoDataFrame, *, street_id_column: str, segment_id: Any) -> list[int]:
@@ -232,7 +232,6 @@ def apply_injections(
 
 __all__ = [
     "resolve_region_technology",
-    "apply_injected_techs",
     "find_segment_indices",
     "apply_injections",
 ]

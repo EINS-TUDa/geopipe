@@ -36,16 +36,11 @@ from pypeline.optimization.cesm.io_utils import (
     _value_for_year,
     _write_techmap_workbook,
     _units_df,
-    _scenario_df,
     _tss_df,
 )
 from pypeline.energy_system.imports import Imports
 from pypeline.energy_technology.technology import (
-    Technology,
-    is_central_heat_supply as _is_central_heat_supply,
-    split_base_and_district as _split_base_and_district,
-)
-from pypeline.energy_technology.technology_registry import TechnologyRegistry
+    Technology)
 from pypeline.optimization.cesm.conversion_rows import _ConversionRowsBuilder
 from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
 from pypeline.optimization.resolved_system import ResolvedSystem

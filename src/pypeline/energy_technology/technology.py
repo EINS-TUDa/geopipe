@@ -252,7 +252,7 @@ _SECTION_TO_CLASS: dict[str, type["Technology"]] = {
 }
 
 
-def register(path: str | Path, clear_registry: bool = True) -> None:
+def register_technologies(path: str | Path, clear_registry: bool = True) -> None:
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"Technology catalog not found: {file_path}")
@@ -287,7 +287,7 @@ def register(path: str | Path, clear_registry: bool = True) -> None:
 if __name__ == '__main__':
     yml_path = Path(
         "src/pypeline/energy_technology/configs/technologies_new.yaml")
-    register(yml_path)
+    register_technologies(yml_path)
 
     ind_heat_pump = DecentralTechnology(name="ind_heat_pump", existing_capacity=0)
     CentralTechnology(name="cen_heat_pump", existing_capacity=0)

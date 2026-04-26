@@ -1,49 +1,49 @@
 import sqlite3
 from pathlib import Path
 
-from examples.example_runner import ScenarioCaseConfig, _validate_case_regions, _case_plots_dir, write_results_report
+from pypeline.data.default_registry import get_default_data_registry
+# from examples.example_runner import ScenarioCaseConfig, #_validate_case_regions, _case_plots_dir, write_results_report
 from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
-from pypeline.energy_system import Scenario
-from pypeline.energy_technology.tech_loader_new import load_default_technology_registry
-from pypeline.factory import create_local_data_registry
-from pypeline.injection import apply_injected_techs
-from pypeline.optimization import CESMOptimizationBackend
-from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.core import edge_metrics_from_topology_result, streets_for_topology_plot
+from pypeline.energy_system_my import Scenario
+from pypeline.energy_technology import register_technologies
+# from pypeline.injection import apply_injected_techs
+# from pypeline.optimization import CESMOptimizationBackend
+# from pypeline.plot.plotter import EnergySystemPlotter
+# from pypeline.topology_builder.core import edge_metrics_from_topology_result, streets_for_topology_plot
 from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
-from cesm.core.plotter import Plotter as CesmPlotter, PlotType
-from cesm.core.data_access import DAO
+# from cesm.core.plotter import Plotter as CesmPlotter, PlotType
+# from cesm.core.data_access import DAO
 
 CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
 
 def main():
-    config = ScenarioCaseConfig(
-        project_root=project_root,
-        scenario_file=CASE_DIR / "case_1.yaml",
-        streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
-        heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson",
-        model_name="Case1",
-        scenario_name="BaseCase1",
-        tss_name="4ThinWeeks",
-        dt_hours=3,
-        demand_name="residential_heat",
-        start_year=2020,
-        end_year=2030,
-        year_gap=5,
-        retain_existing_output_drop_per_year=0.05,
-        lockout_years=2,
-        apply_injections=True,
-        region_builder_config_overrides={
-            "min_heat_grid_share": 0.1,
-            "heat_grid_names": ("heat_exchanger",),
-        },
-        expected_region_ids=(0, 1, 2),
-    )
+    # config = ScenarioCaseConfig(
+    #     project_root=project_root,
+    #     scenario_file=CASE_DIR / "case_1.yaml",
+    #     streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
+    #     heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson",
+    #     model_name="Case1",
+    #     scenario_name="BaseCase1",
+    #     tss_name="4ThinWeeks",
+    #     dt_hours=3,
+    #     demand_name="residential_heat",
+    #     start_year=2020,
+    #     end_year=2030,
+    #     year_gap=5,
+    #     retain_existing_output_drop_per_year=0.05,
+    #     lockout_years=2,
+    #     apply_injections=True,
+    #     region_builder_config_overrides={
+    #         "min_heat_grid_share": 0.1,
+    #         "heat_grid_names": ("heat_exchanger",),
+    #     },
+    #     expected_region_ids=(0, 1, 2),
+    # )
 
     cfg = SimpleTopologyBuilderConfig(
-        streets_file=config.streets_file,
-        scenario_file=config.scenario_file,
+        streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
+        scenario_file=CASE_DIR / "case_1.yaml",
         region_id_column="id",
         street_id_column="street_id",
         demand_column="total_heat_demand",
@@ -52,7 +52,7 @@ def main():
     )
     topology_result = SimpleTopologyBuilder.from_config(cfg).build()
 
-    tech_registry = load_default_technology_registry()
+    register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml")
 
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},
@@ -60,67 +60,68 @@ def main():
         considered_connected_region_distance_m= 50,
         default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
-
-
     )
 
-    builder = EnergySystemBuilder(energy_system_name=config.model_name)
+
+
+    data_reg = get_default_data_registry(
+            mode="local",
+            local_heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson")
+
+
+    builder = EnergySystemBuilder(energy_system_name="Case1")
     builder.set_system_topology(topology_result.network)
-    builder.set_data_registry(create_local_data_registry(config.heating_shares_file))
-    builder.set_technology_registry(tech_registry)
+    builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
 
 
     energy_system = builder.build()
-    apply_injected_techs(energy_system, topology_result.injected_techs or []) # TODO: HOW TO DEAL WITH INJECTIONS? -> config
     energy_system.data_dir = project_root / "data"
 
     scenario = Scenario(
-        name=f"{config.scenario_name}",
-        start_year=config.start_year,
-        end_year=config.end_year,
-        year_gap=config.year_gap,
-        dt_hours=config.dt_hours,
-        tss=config.tss_name,
-        retain_existing_output_drop_per_year=config.retain_existing_output_drop_per_year,
-        lockout_years=config.lockout_years,
+        name=f"BaseCase1",
+        start_year=2020,
+        end_year=2030,
+        year_gap=5,
+        dt_hours=3,
+        tss="4ThinWeeks"
     )
 
-    _validate_case_regions(config, topology_result.region_topologies)
-    _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
-    streets_for_plot = streets_for_topology_plot(topology_result, region_id_column="id")
-
-    plots_dir = _case_plots_dir(config)
-    plots_dir.mkdir(parents=True, exist_ok=True)
-
-    backend = CESMOptimizationBackend(
-        timeseries_dir=CASE_DIR / "input_data",
-        output_dir=CASE_DIR / "output_data",
-        results_db_name="db.sqlite",
-        demand_name=config.demand_name,
-    )
-
-    solution = backend.solve(energy_system, scenario=scenario)
-    results_obj = solution.results
-    write_results_report(
-        output_dir=CASE_DIR / "output_data",
-        model_name=config.model_name,
-        scenario_name=config.scenario_name,
-        results_obj=results_obj,
-        metadata={
-            "model_name": config.model_name,
-            "scenario_name": config.scenario_name,
-            "tss_name": config.tss_name,
-            "demand_name": config.demand_name,
-            "start_year": config.start_year,
-            "end_year": config.end_year,
-            "year_gap": config.year_gap,
-            "apply_injections": config.apply_injections,
-        },
-    )
-
-    from compare_techmaps import compare_techmaps
-    compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison.html")
+    # _validate_case_regions(config, topology_result.region_topologies)
+    # _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
+    # streets_for_plot = streets_for_topology_plot(topology_result, region_id_column="id")
+    #
+    # plots_dir = _case_plots_dir(config)
+    # plots_dir.mkdir(parents=True, exist_ok=True)
+    #
+    # backend = CESMOptimizationBackend(
+    #     timeseries_dir=CASE_DIR / "input_data",
+    #     output_dir=CASE_DIR / "output_data",
+    #     results_db_name="db.sqlite",
+    #     demand_name=config.demand_name,
+    # )
+    #
+    # solution = backend.solve(energy_system, scenario=scenario)
+    # results_obj = solution.results
+    # write_results_report(
+    #     output_dir=CASE_DIR / "output_data",
+    #     model_name=config.model_name,
+    #     scenario_name=config.scenario_name,
+    #     results_obj=results_obj,
+    #     metadata={
+    #         "model_name": config.model_name,
+    #         "scenario_name": config.scenario_name,
+    #         "tss_name": config.tss_name,
+    #         "demand_name": config.demand_name,
+    #         "start_year": config.start_year,
+    #         "end_year": config.end_year,
+    #         "year_gap": config.year_gap,
+    #         "apply_injections": config.apply_injections,
+    #     },
+    # )
+    #
+    # from compare_techmaps import compare_techmaps
+    # compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison.html")
 
     # # --- 1) Street topology plot ---
     # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(

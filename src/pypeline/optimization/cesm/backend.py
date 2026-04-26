@@ -29,7 +29,7 @@ from gurobipy import GRB
 from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 
-from pypeline.energy_system.core import EnergySystem, Scenario
+from pypeline.energy_system_my import EnergySystem, Scenario
 from pypeline.optimization.cesm.result_parser import (
     backfill_missing_commodity_timeseries,
     parse_cesm_outputs,
