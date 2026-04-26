@@ -49,6 +49,8 @@ dependencies = [
     "contextily>=1.7.0",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.5",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
 ]
 
 [project.optional-dependencies]

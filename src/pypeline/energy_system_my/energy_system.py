@@ -1,4 +1,4 @@
-from __future__ import annotations
+# from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -13,7 +13,7 @@ from pypeline.energy_technology.technology import PipeTechnology
 from pypeline.energy_system_my.region import Region, DemandType
 from pypeline.units import Unit
 
-from __future__ import annotations
+# from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import networkx as nx
@@ -43,6 +43,14 @@ from pypeline.topology_builder.topology import Topology
 from pypeline.energy_technology.technology import DecentralTechnology
 import logging
 
+
+from pydantic import Field
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    YamlConfigSettingsSource,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,19 +67,29 @@ class EnergySystem:
     pipes: list[PipeTechnology] = field(default_factory=list)
 
 
-@dataclass
-class EnergySystemBuilderConfig:
+class EnergySystemBuilderConfig(BaseSettings):
 
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
-    minimum_decentral_technology_share: dict[str, float] = field(default_factory=dict)
+    minimum_decentral_technology_share: dict[str, float] = Field(default_factory=dict)
     #: Key: demand commodity name, Value: decentral technology name as default
-    default_decentral_technology_per_demand_commodity: dict[str, str] = field(default_factory=dict)
+    default_decentral_technology_per_demand_commodity: dict[str, str] = Field(default_factory=dict)
     #: Threshold to consider regions connected. Only one region of all regions considered connected holds the central technology
     considered_connected_region_distance_m: Optional[float] = None
     #: Key: commodity_out central technologies, Value: central technology name as default
-    default_central_technology_per_commodity: dict[str, str] = field(default_factory=dict)
+    default_central_technology_per_commodity: dict[str, str] = Field(default_factory=dict)
     #: Key: commodity_out central technologies, Value: list of region ids to prioritize
-    preferred_central_technologies_location_per_commodity: dict[str, list[int]] = field(default_factory=dict)
+    preferred_central_technologies_location_per_commodity: dict[str, list[int]] = Field(default_factory=dict)
+
+    @classmethod
+    def settings_customise_sources(
+            cls,
+            settings_cls: type[BaseSettings],
+            init_settings: PydanticBaseSettingsSource,
+            env_settings: PydanticBaseSettingsSource,
+            dotenv_settings: PydanticBaseSettingsSource,
+            file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return YamlConfigSettingsSource(settings_cls), init_settings
 
 
 class EnergySystemBuilder:
