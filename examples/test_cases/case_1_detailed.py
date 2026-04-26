@@ -2,8 +2,9 @@ import sqlite3
 from pathlib import Path
 
 from examples.example_runner import ScenarioCaseConfig, _validate_case_regions, _case_plots_dir, write_results_report
-from pypeline import TechnologyRegistry, EnergySystemBuilder, EnergySystemRuleBook
+from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
 from pypeline.energy_system import Scenario
+from pypeline.energy_technology.tech_loader_new import load_default_technology_registry
 from pypeline.factory import create_local_data_registry
 from pypeline.injection import apply_injected_techs
 from pypeline.optimization import CESMOptimizationBackend
@@ -51,23 +52,27 @@ def main():
     )
     topology_result = SimpleTopologyBuilder.from_config(cfg).build()
 
-    tech_registry = TechnologyRegistry()
-    tech_registry.load_from_default()
+    tech_registry = load_default_technology_registry()
+
+    esb_cfg = EnergySystemBuilderConfig(
+        minimum_decentral_technology_share={"heat_exchanger": 0.1},
+        default_decentral_technology_per_demand_commodity={"residential_heat": "ind_heat_pump"},
+        considered_connected_region_distance_m= 50,
+        default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
+        preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
+
+
+    )
 
     builder = EnergySystemBuilder(energy_system_name=config.model_name)
-    builder.set_street_network(topology_result.network)
-    builder.set_demands(default=True)
-    builder.set_technology_registry(tech_registry)
+    builder.set_system_topology(topology_result.network)
     builder.set_data_registry(create_local_data_registry(config.heating_shares_file))
-    builder.set_imports(import_yaml=CASE_DIR / "input_data" / "imports.yaml")
-    builder.set_energy_system_rule_book(EnergySystemRuleBook())
+    builder.set_technology_registry(tech_registry)
+    builder.set_config(esb_cfg)
 
-    builder.set_default_region_builder_config()
-    if config.region_builder_config_overrides:
-        builder.set_region_builder_config(config.region_builder_config_overrides, merge=True)
 
     energy_system = builder.build()
-    apply_injected_techs(energy_system, topology_result.injected_techs or [])
+    apply_injected_techs(energy_system, topology_result.injected_techs or []) # TODO: HOW TO DEAL WITH INJECTIONS? -> config
     energy_system.data_dir = project_root / "data"
 
     scenario = Scenario(

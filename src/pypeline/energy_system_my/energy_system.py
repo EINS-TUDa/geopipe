@@ -66,6 +66,12 @@ class EnergySystemBuilderConfig:
     minimum_decentral_technology_share: dict[str, float] = field(default_factory=dict)
     #: Key: demand commodity name, Value: decentral technology name as default
     default_decentral_technology_per_demand_commodity: dict[str, str] = field(default_factory=dict)
+    #: Threshold to consider regions connected. Only one region of all regions considered connected holds the central technology
+    considered_connected_region_distance_m: Optional[float] = None
+    #: Key: commodity_out central technologies, Value: central technology name as default
+    default_central_technology_per_commodity: dict[str, str] = field(default_factory=dict)
+    #: Key: commodity_out central technologies, Value: list of region ids to prioritize
+    preferred_central_technologies_location_per_commodity: dict[str, list[int]] = field(default_factory=dict)
 
 
 class EnergySystemBuilder:
@@ -394,6 +400,29 @@ class EnergySystemBuilder:
         for region_id, topology in self._region_topologies.items():
             demands[region_id] = self._build_demands(topology)
             decentralized[region_id] = self._build_decentral_technologies(topology, demands[region_id])
+
+        # 1. identify groups of connected regions with a demand for commodities which have to be supplied via grids.
+        # Use self._config.considered_connected_region_distance_m
+
+        # 2. Identify central technology location within the connected groups:
+        # Take the first match for self._config.preferred_central_technology_location_per_commodity, if no match,
+        # take Region with the highest demand for the commodity supplied by the central technology.
+
+
+        # 3. Instantiate grids in all regions.
+        # For existing capacities in connected regions: Calculate flow within connected regions to derive existing capacity of grid
+
+
+        # 4. ?How to best allow the user to indicate:
+        # Central Technology X only exists in Reigon Y (nowhere else) with existing capacity Z)?
+        # This will influence step 5
+
+        # 5. Instantiate central technologies in identified regions of step 2. Don't add central technologies at all
+        # to other regions in connected groups (not even without existing capacity). Build
+        # central technologies in all other regions of preferred_central_technology_location_per_commodity
+        # If preferred_central_technology_location_per_commodity is None, built everywhere (except connected groups)
+
+
 
 
 
