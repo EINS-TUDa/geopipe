@@ -14,10 +14,14 @@ class Technology(ABC):
         ...  # prevent direct instantiation of Technology
 
     @classmethod
-    def register(cls, name: str, **kwargs):
+    def register(cls, name: str,  **kwargs):
         if name in cls._registered_types:
             raise ValueError(f"Type {name} already exists")
         cls._registered_types[name] = kwargs
+
+    @classmethod
+    def clear_registered_types(cls):
+        cls._registered_types.clear()
 
     @classmethod
     def _get_registered_type(cls, name: str):
@@ -248,10 +252,13 @@ _SECTION_TO_CLASS: dict[str, type["Technology"]] = {
 }
 
 
-def register(path: str | Path) -> None:
+def register(path: str | Path, clear_registry: bool = True) -> None:
     file_path = Path(path)
     if not file_path.exists():
         raise FileNotFoundError(f"Technology catalog not found: {file_path}")
+
+    if clear_registry:
+        Technology.clear_registered_types()
 
     raw = yaml.safe_load(file_path.read_text(encoding="utf-8"))
     if raw is None:
@@ -279,7 +286,7 @@ def register(path: str | Path) -> None:
 
 if __name__ == '__main__':
     yml_path = Path(
-        r"\src\pypeline\energy_technology\configs\technologies_new.yaml")
+        "src/pypeline/energy_technology/configs/technologies_new.yaml")
     register(yml_path)
 
     ind_heat_pump = DecentralTechnology(name="ind_heat_pump", existing_capacity=0)
