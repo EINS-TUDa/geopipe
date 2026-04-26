@@ -1,3 +1,4 @@
+# coding=utf-8
 # from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,10 +8,11 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import MultiPoint
 
+from pypeline.energy_technology.technology_historical import GridType
 from pypeline.energy_technology.technology_registry import TechnologyRegistry
 from pypeline.energy_system_my.imports import Imports
-from pypeline.energy_technology.technology import PipeTechnology
-from pypeline.energy_system_my.region import Region, DemandType
+from pypeline.energy_technology.technology import PipeTechnology, GridTechnology, CentralTechnology
+from pypeline.energy_system_my.region import Region, DemandType, compute_region_connections, RegionConnections
 from pypeline.units import Unit
 
 # from __future__ import annotations
@@ -73,12 +75,16 @@ class EnergySystemBuilderConfig(BaseSettings):
     minimum_decentral_technology_share: dict[str, float] = Field(default_factory=dict)
     #: Key: demand commodity name, Value: decentral technology name as default
     default_decentral_technology_per_demand_commodity: dict[str, str] = Field(default_factory=dict)
-    #: Threshold to consider regions connected. Only one region of all regions considered connected holds the central technology
-    considered_connected_region_distance_m: Optional[float] = None
+    #: Threshold to consider regions connected. Only one region of all connected regions holds the central technology
+    considered_connected_region_distance_m: float = np.inf
     #: Key: commodity_out central technologies, Value: central technology name as default
-    default_central_technology_per_commodity: dict[str, str] = Field(default_factory=dict)
+    default_central_technology_per_commodity: dict[str, str]
     #: Key: commodity_out central technologies, Value: list of region ids to prioritize
     preferred_central_technologies_location_per_commodity: dict[str, list[int]] = Field(default_factory=dict)
+    #: Name of the ID property on the edges of the topology Graph
+    region_id_name: str = "id"
+    #: Factor added to the grid capacity. Dict of grid name to factor. 10 % corresponds to 1.1
+    additional_grid_capacity_factor: dict[str, float]
 
     @classmethod
     def settings_customise_sources(
@@ -95,20 +101,28 @@ class EnergySystemBuilderConfig(BaseSettings):
 class EnergySystemBuilder:
 
     def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
-        self.energy_system_name = energy_system_name
-        self.base_crs = base_crs
+        self._energy_system_name = energy_system_name
+        self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
         # self.rule_book: EnergySystemRuleBook | None = None
         # self.region_rule_book: RegionRuleBook | None = None
         self._data_registry: DataRegistry | None = None
         self._technology_registry: TechnologyRegistry | None = None
         self._unit: Unit = UnitEnum.GW.unit
-        self._config: Optional[EnergySystemBuilderConfig] = None
+        self._config: EnergySystemBuilderConfig
         self._demand_types: list[DemandType] = []
         # self.imports: list[Imports] | None = None
         # self.pipe_technology_name: str = "heat_pipe"
         # self._dhn_central_seed_cache: dict[int, str] = {}
         self.__region_topologies = None
+
+    @property
+    def energy_system_name(self) -> str:
+        return self._energy_system_name
+
+    @property
+    def base_crs(self) -> str:
+        return self._base_crs
 
     def set_system_topology(self, system_topology: nx.Graph | Topology):
         if isinstance(system_topology, nx.Graph):
@@ -410,17 +424,129 @@ class EnergySystemBuilder:
 
         self.verify()
 
+    def _find_grid_type_from_pipe_type(self, pipe_type_name: str) -> Optional[GridType]:
+        """Find the name of the grid type that uses the same commodities as the pipe type."""
+        pipe_tech_commodity_in = PipeTechnology.get_type_defaults(pipe_type_name).get("commodity_in")
+        pipe_tech_commodity_out = PipeTechnology.get_type_defaults(pipe_type_name).get("commodity_out")
+
+        for grid_type_name in GridTechnology.registered_type_names():
+            type_defaults = GridTechnology.get_type_defaults(grid_type_name)
+            commodity_in = type_defaults.get("commodity_in")
+            commodity_out = type_defaults.get("commodity_out")
+            if not commodity_in or not commodity_out:
+                continue
+            if commodity_in == pipe_tech_commodity_out and commodity_out == pipe_tech_commodity_in:
+                return grid_type_name
+
+    def _determine_region_for_central_technology(self, commodity: str, region_group: list[int]):
+        preferred_region = self._config.preferred_central_technologies_location_per_commodity.get(commodity)
+        if preferred_region is None or preferred_region not in region_group:
+            return None
+        return preferred_region
+
     def build(self) -> EnergySystem:
         self._pre_build()
 
-        demands: dict[int, list[Demand]] = {}
-        decentralized = {}
+        region_ids = tuple(self._region_topologies.keys())
+        demands_per_region: dict[int, list[Demand]] = {}
+        decentralized_tech_per_region: dict[int, list[DecentralTechnology]] = {}
         for region_id, topology in self._region_topologies.items():
-            demands[region_id] = self._build_demands(topology)
-            decentralized[region_id] = self._build_decentral_technologies(topology, demands[region_id])
+            demands_per_region[region_id] = self._build_demands(topology)
+            decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology,
+                                                                                          demands_per_region[region_id])
 
-        # 1. identify groups of connected regions with a demand for commodities which have to be supplied via grids.
-        # Use self._config.considered_connected_region_distance_m
+        # Create grids per region. Each registered grid type exists on every region.
+        grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
+        for region_id, decentralized_technologies in decentralized_tech_per_region.items():
+            grids = {grid_type_name: GridTechnology(name=grid_type_name)
+                     for grid_type_name in GridTechnology.registered_type_names()}
+
+            for decentralized_technology in decentralized_technologies:
+                decentralized_technology: DecentralTechnology
+                grid = grids.get(decentralized_technology.commodity_in)
+                if not grid:
+                    continue
+                grid.existing_capacity += decentralized_technology.existing_capacity
+            grid_tech_per_region[region_id] = grids
+
+        # All connections between regions
+        region_connections = compute_region_connections(self._region_topologies, self._system_topology,
+                                                        self._config.region_id_name)
+
+        for pipe_type_name in PipeTechnology.registered_type_names():
+            # The grid type name that works with the same commodities as the current pipe technology
+            grid_type_name = self._find_grid_type_from_pipe_type(pipe_type_name)
+
+            # A graph that contains regions as node and connections as edges.
+            # Only those regions are included that have an existing capacity in their grid as the current pipe type
+            # Only those connections are included that are below the maximum distance threshold
+            region_graph = nx.Graph()
+            nodes_in_graph = [region_id for region_id in region_ids
+                                if grid_tech_per_region[region_id][grid_type_name].existing_capacity > 0]
+            edges_in_graph = [(region_1, region_2, {"len": length}) for region_1, region_2, length in region_connections
+                              if length <= self._config.considered_connected_region_distance_m
+                              if region_1 in nodes_in_graph and region_2 in nodes_in_graph]
+            region_graph.add_nodes_from(nodes_in_graph)
+            region_graph.add_edges_from(edges_in_graph)
+
+            # List with sets of connected regions. Each set contains the region ids of connected regions.
+            region_groups: list[set] = list(nx.connected_components(region_graph))
+
+            # For each region group, plan the pipes and modify the grids.
+            commodity = PipeTechnology.get_type_defaults(pipe_type_name).get("commodity_in")
+            for region_group in region_groups:
+                # Determine the region in the group where the central technology is built
+                central_tech_region = self._determine_region_for_central_technology(commodity=commodity,
+                                                                                    region_group=region_group)
+                if central_tech_region is None:
+                    # Find the region in the group with the largest grid capacity
+                    central_tech_region = max(region_ids, key=lambda region_id: grid_tech_per_region[region_id][grid_type_name].existing_capacity)
+
+                # From this region, find the minimum spanning tree in this group.
+                sub_graph_in_region_group = region_graph.subgraph(region_group)
+                pipes = {}
+                for edge, data in sub_graph_in_region_group.edges(data=True):
+                    length = data["len"]
+                    pipes[(edge[0], edge[1])] = PipeTechnology(pipe_type_name, region_id_in=edge[0],
+                                                               region_id_out=edge[1], pipe_length_km=length)
+                    pipes[(edge[1], edge[0])] = PipeTechnology(pipe_type_name, region_id_in=edge[1],
+                                                               region_id_out=edge[0], pipe_length_km=length)
+
+                tree = nx.minimum_spanning_tree(sub_graph_in_region_group)
+
+                successors = nx.dfs_successors(tree, source=central_tech_region)
+
+                def update_existing_capacities(start: int) -> float:
+                    """
+                    Start at the region with given index.
+                    For each node, get the existing capacities of the children.
+                    Update the existing capacities of the pipes (start, child) according to the capacity of the child.
+                    Update the own capacity with the factor and the sum of the capacities from the pipes to children.
+                    Return the grid capacity of the start node.
+                    """
+                    capacity_from_children = 0
+                    for child in successors[start]:
+                        # on edge = (start,child)
+                        existing_capacity_of_child_grid = update_existing_capacities(child)
+                        child_pipe: PipeTechnology = pipes[(start, child)]
+                        child_pipe.existing_capacity += existing_capacity_of_child_grid
+                        capacity_from_children += child_pipe.existing_capacity
+
+                    grid_on_region: GridTechnology = grid_tech_per_region[start][grid_type_name]
+                    grid_on_region.existing_capacity *= self._config.additional_grid_capacity_factor
+                    grid_on_region.existing_capacity += capacity_from_children
+                    return grid_on_region.existing_capacity
+
+                total_capacity = update_existing_capacities(central_tech_region)
+                commodity_in = GridTechnology.get_type_defaults(grid_type_name).get("commodity_in")
+                central_type_name = self._config.default_central_technology_per_commodity[commodity_in]
+                CentralTechnology(name=central_type_name, existing_capacity=total_capacity)
+
+
+                    # Add pipes on this tree with nonzero existing capacity. Other pipes have zero existing capacity
+
+
+        # Determine for each decentral tech if it needs a grid
 
         # 2. Identify central technology location within the connected groups:
         # Take the first match for self._config.preferred_central_technology_location_per_commodity, if no match,
@@ -509,31 +635,33 @@ class EnergySystemBuilder:
         # return es
 
     def verify(self):
-        if not isinstance(self.base_crs, str):
-            raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
-        if not isinstance(self.street_network, nx.Graph):
-            raise ValueError("street_network must be set as a NetworkX graph before building")
-        region_ids = set()
-        for _, _, d in self.street_network.edges(data=True):
-            raw = d.get("id")
-            try:
-                region_ids.add(int(float(raw)))
-            except (TypeError, ValueError):
-                pass
-        if not region_ids:
-            raise ValueError(
-                "street_network has no edges with a valid 'id' attribute. "
-                "Every edge must carry an integer 'id' indicating its region. "
-                "Use set_street_network() with a graph produced by gdf_to_nx() after "
-                "assigning region ids to the street GeoDataFrame."
-            )
-        if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
-            raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
-        if not isinstance(self.data_registry, DataRegistry):
-            raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
-        if not isinstance(self.technology_registry, TechnologyRegistry):
-            raise ValueError(
-                f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
-            )
-        if not self.imports:
-            raise ValueError("Imports must be set using set_imports() with a non-empty imports.yaml")
+        if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
+            raise ValueError(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
+        if not isinstance(self.base_crs, str) or not self.base_crs:
+            raise ValueError(f"Base crs must be a non-empty string and not {type(self.base_crs)}")
+        if not isinstance(self._system_topology, Topology):
+            raise ValueError("System topology must be set")
+        # region_ids = set()
+        # for _, _, d in self.street_network.edges(data=True):
+        #     raw = d.get("id")
+        #     try:
+        #         region_ids.add(int(float(raw)))
+        #     except (TypeError, ValueError):
+        #         pass
+        # if not region_ids:
+        #     raise ValueError(
+        #         "street_network has no edges with a valid 'id' attribute. "
+        #         "Every edge must carry an integer 'id' indicating its region. "
+        #         "Use set_street_network() with a graph produced by gdf_to_nx() after "
+        #         "assigning region ids to the street GeoDataFrame."
+        #     )
+        # if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
+        #     raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
+        # if not isinstance(self.data_registry, DataRegistry):
+        #     raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
+        # if not isinstance(self.technology_registry, TechnologyRegistry):
+        #     raise ValueError(
+        #         f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
+        #     )
+        # if not self.imports:
+        #     raise ValueError("Imports must be set using set_imports() with a non-empty imports.yaml")

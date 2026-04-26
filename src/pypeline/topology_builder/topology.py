@@ -1,5 +1,5 @@
 # coding=utf-8
-from typing import Optional
+from typing import Optional, Any
 
 import networkx as nx
 
@@ -34,7 +34,7 @@ class Topology:
                                      if data.get(property_name) == property_value]
         return Topology(self.graph.subgraph(nodes_with_property_value))
 
-    def sub_topologies_by_edge_property(self, property_name: str) -> dict[Optional[str], 'Topology']:
+    def sub_topologies_by_edge_property(self, property_name: str) -> dict[Any, 'Topology']:
         property_value_to_edges = {}
         for u, v, data in self.graph.edges(data=True):
             property_value_to_edges.get(data.get(property_name), []).append((u, v))

@@ -1,17 +1,21 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 import pandas as pd
 import yaml
 
 
 class Technology(ABC):
-    _registered_types = {}
+    _registered_types: dict[str, dict[str, Any]] = {}
 
     @abstractmethod
-    def __init__(self):
-        ...  # prevent direct instantiation of Technology
+    def __init__(self, name: str):
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     @classmethod
     def register(cls, name: str, **kwargs):
@@ -33,6 +37,10 @@ class Technology(ABC):
     def registered_type_names(cls) -> list[str]:
         return list(cls._registered_types.keys())
 
+    @classmethod
+    def get_type_defaults(cls, name: str) -> dict[str, Any]:
+        return cls._get_registered_type(name).copy()
+
 
 class DecentralTechnology(Technology):
 
@@ -41,7 +49,7 @@ class DecentralTechnology(Technology):
                  capacity_restriction: Optional[float | dict[int, float]] = None,
                  output_profile_name: Optional[str] = None,
                  output_profile: Optional[pd.Series] = None):
-        super().__init__()
+        super().__init__(name)
         registered_type = type(self)._get_registered_type(name)
 
         try:
@@ -89,7 +97,7 @@ class CentralTechnology(Technology):
                  output_profile: Optional[pd.Series] = None,
                  availability_profile_name: Optional[str] = None,
                  availability_profile: Optional[pd.Series] = None):
-        super().__init__()
+        super().__init__(name)
         registered_type = type(self)._get_registered_type(name)
 
         try:
@@ -135,7 +143,7 @@ class CHPTechnology(Technology):
                  output_profile: Optional[pd.Series] = None,
                  availability_profile_name: Optional[str] = None,
                  availability_profile: Optional[pd.Series] = None):
-        super().__init__()
+        super().__init__(name)
         registered_type = type(self)._get_registered_type(name)
 
         try:
@@ -170,7 +178,7 @@ class GridTechnology(Technology):
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
                  capacity_restriction: Optional[float | dict[int, float]] = None):
-        super().__init__()
+        super().__init__(name)
         registered_type = type(self)._get_registered_type(name)
 
         try:
@@ -205,21 +213,12 @@ class PipeTechnology(Technology):
     considered already connected pay no pipe capex.
     """
 
-    region_id_in: int
-    region_id_out: int
-    pipe_length_km: float
-    existing_capacity: float = 0.0
-    below_distance_threshold: bool = False
-    costs_eur: float = 0.0
-
     def __init__(self, name: str,
                  region_id_in: int,
                  region_id_out: int,
                  pipe_length_km: float,
-                 existing_capacity: float = 0.0,
-                 below_distance_threshold: bool = False,
-                 costs_eur: float = 0.0):
-        super().__init__()
+                 existing_capacity: float = 0.0):
+        super().__init__(name)
         registered_type = type(self)._get_registered_type(name)
 
         try:
@@ -228,6 +227,7 @@ class PipeTechnology(Technology):
             self.loss_percent: float = registered_type["loss_percent"]
             self.technical_lifetime: int = registered_type["technical_lifetime"]
             self.capex_per_km: float = registered_type["capex_per_km"]
+            self.distance_threshold_m: float = registered_type["distance_threshold_m"]
         except KeyError:
             raise KeyError(f"The registered type '{name}' does not provide all the data for")
 
@@ -235,8 +235,16 @@ class PipeTechnology(Technology):
         self.region_id_out = region_id_out
         self.pipe_length_km = pipe_length_km
         self.existing_capacity = existing_capacity
-        self.below_distance_threshold = below_distance_threshold
-        self.costs_eur = costs_eur
+
+    @property
+    def below_distance_threshold(self):
+        return self.pipe_length_km * 1000 < self.distance_threshold_m
+
+    @property
+    def costs_eur(self):
+        if self.below_distance_threshold:
+            return 0
+        return self.capex_per_km * self.pipe_length_km
 
 
 _SECTION_TO_CLASS: dict[str, type["Technology"]] = {
