@@ -13,6 +13,10 @@ class Technology(ABC):
     def __init__(self):
         ...  # prevent direct instantiation of Technology
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        cls._registered_types = {}
+
     @classmethod
     def register(cls, name: str,  **kwargs):
         if name in cls._registered_types:
@@ -257,9 +261,6 @@ def register_technologies(path: str | Path, clear_registry: bool = True) -> None
     if not file_path.exists():
         raise FileNotFoundError(f"Technology catalog not found: {file_path}")
 
-    if clear_registry:
-        Technology.clear_registered_types()
-
     raw = yaml.safe_load(file_path.read_text(encoding="utf-8"))
     if raw is None:
         return
@@ -273,6 +274,9 @@ def register_technologies(path: str | Path, clear_registry: bool = True) -> None
                          f"Valid sections: {sorted(_SECTION_TO_CLASS)}")
 
     for section_name, section_cls in _SECTION_TO_CLASS.items():
+        if clear_registry:
+            section_cls.clear_registered_types()
+
         entries = raw.get(section_name)
         if entries is None:
             continue

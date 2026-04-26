@@ -1,12 +1,11 @@
 import osm2geojson
 import geopandas as gpd
-import json
+import requests
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+HEADERS = {"User-Agent": "pypeline/1.0 (your@email.com)"}
 
 def get_gdf_from_ags(ags_list: [str]):
-    """
-    Given a list of AGS (amtlicher Gemeindeschlüssel) codes, return a GeoDataFrame with the corresponding geometries. Uses Overpass API.
-    """
-    # remove whitespaces from ags_list
     ags_list = [ags.strip().replace(" ", "") for ags in ags_list]
     ags_query = "|".join(ags_list)
 
@@ -17,12 +16,14 @@ def get_gdf_from_ags(ags_list: [str]):
     out body geom;
     """
 
-    overpass_json = osm2geojson.overpass_call(query)
-    overpass_json = json.loads(overpass_json)
+    response = requests.post(OVERPASS_URL, data={"data": query}, headers=HEADERS)
+    response.raise_for_status()
+
+    overpass_json = response.json()
     geojson = osm2geojson.json2geojson(overpass_json)
     gdf = gpd.GeoDataFrame.from_features(geojson["features"], crs="EPSG:4326")
     gdf = gdf[["geometry"]]
-    gdf = gdf.dissolve() # dissolve to a single geometry
+    gdf = gdf.dissolve()
     return gdf
 
 

@@ -15,7 +15,7 @@ class DemandType:
     name: str
     commodity_in: str
     cooperation_of_technologies: bool
-    default_supply_technology: str
+    default_decentral_supply_technology: str
     technology_shares_query_params: dict[str, Any]
     decrease_percent_per_year: float
     demand_column_name: str
@@ -67,6 +67,8 @@ class Demand:
         """The value of the demand for each year in years"""
         return {year: self.value(year - min(years)) for year in years}
 
+    def peak(self, year_period) -> float:
+        return self.value(year_period) * self.profile.max()
 
 
 class Region:

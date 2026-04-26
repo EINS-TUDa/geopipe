@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+from examples.test_cases.input_data.data_reg import case1_data_registry
 from pypeline.data.default_registry import get_default_data_registry
 # from examples.example_runner import ScenarioCaseConfig, #_validate_case_regions, _case_plots_dir, write_results_report
 from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
@@ -56,18 +57,12 @@ def main():
 
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},
-        default_decentral_technology_per_demand_commodity={"residential_heat": "ind_heat_pump"},
         considered_connected_region_distance_m= 50,
         default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
     )
 
-
-
-    data_reg = get_default_data_registry(
-            mode="local",
-            local_heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson")
-
+    data_reg = case1_data_registry()
 
     builder = EnergySystemBuilder(energy_system_name="Case1")
     builder.set_system_topology(topology_result.network)
@@ -76,7 +71,6 @@ def main():
 
 
     energy_system = builder.build()
-    energy_system.data_dir = project_root / "data"
 
     scenario = Scenario(
         name=f"BaseCase1",

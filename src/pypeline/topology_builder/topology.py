@@ -1,7 +1,9 @@
 # coding=utf-8
-from typing import Optional
+from typing import Optional, Any
 
 import networkx as nx
+import pandas as pd
+from rasterio.crs import defaultdict
 
 
 class Topology:
@@ -34,11 +36,11 @@ class Topology:
                                      if data.get(property_name) == property_value]
         return Topology(self.graph.subgraph(nodes_with_property_value))
 
-    def sub_topologies_by_edge_property(self, property_name: str) -> dict[Optional[str], 'Topology']:
-        property_value_to_edges = {}
+    def sub_topologies_by_edge_property(self, property_name: str) -> dict[Any, 'Topology']:
+        property_value_to_edges = defaultdict(list)
         for u, v, data in self.graph.edges(data=True):
-            property_value_to_edges.get(data.get(property_name), []).append((u, v))
-
+            if not pd.isna(data.get(property_name)):
+                property_value_to_edges[data.get(property_name)].append((u, v))
         return {property_value: Topology(self.graph.edge_subgraph(edges)) for property_value, edges in
                 property_value_to_edges.items()}
 

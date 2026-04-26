@@ -58,8 +58,6 @@ class EnergySystemBuilderConfig:
 
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
     minimum_decentral_technology_share: dict[str, float] = field(default_factory=dict)
-    #: Key: demand commodity name, Value: decentral technology name as default
-    default_decentral_technology_per_demand_commodity: dict[str, str] = field(default_factory=dict)
     #: Threshold to consider regions connected. Only one region of all regions considered connected holds the central technology
     considered_connected_region_distance_m: Optional[float] = None
     #: Key: commodity_out central technologies, Value: central technology name as default
@@ -137,7 +135,6 @@ class EnergySystemBuilder:
     #         self.region_builder_config = merged
     #     return self
 
-    @property
     def _region_topologies(self):
         if self.__region_topologies is None:
             self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
@@ -147,9 +144,10 @@ class EnergySystemBuilder:
         collection = []
         for demand_type in self._demand_types:
             # base_query = {"region": topology, "base_crs": self.base_crs}
-            profile = pd.read_csv(demand_type.profile_path)
+            profile = pd.read_csv(demand_type.profile_path, sep= "\s+", decimal= ".", header= None)
             if profile is None or profile.empty:
                 raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
+            profile = pd.Series(profile.values.ravel())
 
             value = sum(topology.property_from_edges(demand_type.demand_column_name))
             if not isinstance(value, (int, float)):
@@ -167,7 +165,7 @@ class EnergySystemBuilder:
                        commodity_in="residential_heat",
                        cooperation_of_technologies=False,
                        profile_path=Path(__file__).parent / "HeatDemandProfile.txt",
-                       demand_column_name="residential_heat_demand",
+                       demand_column_name="linear_heat_density",
                        technology_shares_query_params={
                            "key": "heating_shares",
                            "name_mapping": {
@@ -182,7 +180,7 @@ class EnergySystemBuilder:
                                CensusTechnology.NoEnergyCarrier: None,
                            },
                        },
-                       default_supply_technology="ind_oil_boiler",
+                       default_decentral_supply_technology="ind_oil_boiler",
                        decrease_percent_per_year=0),]
 
     #
@@ -332,8 +330,7 @@ class EnergySystemBuilder:
             -> dict[str, float]:
         # If technology_shares_data is empty
         if np.isclose(sum(technology_shares_data.values()), 0.0):
-            default_tech_name = (self._config.default_decentral_technology_per_demand_commodity.
-                                 get(demand.demand_type.commodity_in))
+            default_tech_name = demand.demand_type.default_decentral_supply_technology
             if default_tech_name is None:
                 raise ValueError(
                     f"No default technology configured for demand commodity {demand.demand_type.commodity_in}")
@@ -366,7 +363,8 @@ class EnergySystemBuilder:
 
             for name in DecentralTechnology.registered_type_names():
                 share = technology_shares_data.get(name, 0.0)
-                decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=share))
+                existing_capacity = share * demand.peak(year_period=0)
+                decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity))
 
         return decentral_technologies
 
@@ -386,7 +384,7 @@ class EnergySystemBuilder:
 
         demands: dict[int, list[Demand]] = {}
         decentralized = {}
-        for region_id, topology in self._region_topologies.items():
+        for region_id, topology in self._region_topologies().items():
             demands[region_id] = self._build_demands(topology)
             decentralized[region_id] = self._build_decentral_technologies(topology, demands[region_id])
 
@@ -482,29 +480,29 @@ class EnergySystemBuilder:
     def verify(self):
         if not isinstance(self.base_crs, str):
             raise ValueError(f"Base CRS must be set and a string and not {type(self.base_crs)}")
-        if not isinstance(self.street_network, nx.Graph):
-            raise ValueError("street_network must be set as a NetworkX graph before building")
-        region_ids = set()
-        for _, _, d in self.street_network.edges(data=True):
-            raw = d.get("id")
-            try:
-                region_ids.add(int(float(raw)))
-            except (TypeError, ValueError):
-                pass
-        if not region_ids:
-            raise ValueError(
-                "street_network has no edges with a valid 'id' attribute. "
-                "Every edge must carry an integer 'id' indicating its region. "
-                "Use set_street_network() with a graph produced by gdf_to_nx() after "
-                "assigning region ids to the street GeoDataFrame."
-            )
-        if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
-            raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
-        if not isinstance(self.data_registry, DataRegistry):
-            raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
-        if not isinstance(self.technology_registry, TechnologyRegistry):
-            raise ValueError(
-                f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
-            )
-        if not self.imports:
-            raise ValueError("Imports must be set using set_imports() with a non-empty imports.yaml")
+        # if not isinstance(self.street_network, nx.Graph):
+        #     raise ValueError("street_network must be set as a NetworkX graph before building")
+        # region_ids = set()
+        # for _, _, d in self.street_network.edges(data=True):
+        #     raw = d.get("id")
+        #     try:
+        #         region_ids.add(int(float(raw)))
+        #     except (TypeError, ValueError):
+        #         pass
+        # if not region_ids:
+        #     raise ValueError(
+        #         "street_network has no edges with a valid 'id' attribute. "
+        #         "Every edge must carry an integer 'id' indicating its region. "
+        #         "Use set_street_network() with a graph produced by gdf_to_nx() after "
+        #         "assigning region ids to the street GeoDataFrame."
+        #     )
+        # if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
+        #     raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
+        # if not isinstance(self.data_registry, DataRegistry):
+        #     raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
+        # if not isinstance(self.technology_registry, TechnologyRegistry):
+        #     raise ValueError(
+        #         f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
+        #     )
+        # if not self.imports:
+        #     raise ValueError("Imports must be set using set_imports() with a non-empty imports.yaml")
