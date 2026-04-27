@@ -79,13 +79,13 @@ class Dataset(ABC):
 
         self._registration_order: int = 0  # Set by registry
 
-    def query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+    def query(self, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Default query implementation that uses custom query function if provided,
         otherwise calls _default_query method.
         """
         if self._custom_query_function is not None:
-            return self._custom_query_function(self, query)
+            return self._custom_query_function(self, region, query)
         return self._default_query(query)
 
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:

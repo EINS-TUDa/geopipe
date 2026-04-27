@@ -9,8 +9,11 @@ from collections import defaultdict
 from enum import Enum
 from typing import Optional
 import geopandas as gpd
+import networkx as nx
 import yaml
 import importlib
+
+from shapely.geometry.multipoint import MultiPoint
 
 from pypeline.data.dataset import Dataset
 
@@ -112,15 +115,21 @@ class DataRegistry:
         if not key:
             raise ValueError("'key' must be specified in the query.")
 
-        region = query.get("region")
-        datasets = self.get_datasets(key, region)
+        region = query.pop("region")
+        if isinstance(region, nx.Graph):
+            boundary_gdf = gpd.GeoDataFrame(
+                geometry=[MultiPoint(list(region.nodes)).convex_hull],
+                crs=region.graph.get("crs"))
+        else:
+            raise TypeError("query expects region as nx.Graph")
+
+        datasets = self.get_datasets(key, boundary_gdf)
 
         if not datasets:
             region_info = f" in region '{region}'" if region is not None else ""
             raise LookupError(f"No datasets found for key '{key}'{region_info}.")
 
         # The first dataset has the highest priority
-        return datasets[0].query(query)
-
+        return datasets[0].query(query=query, region = boundary_gdf)
 
 

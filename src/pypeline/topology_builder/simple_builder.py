@@ -69,7 +69,7 @@ def _resolve_region_anchor_indices(
     return sorted(set(int(i) for i in indices))
 
 
-def _first_geometry_node(geometry) -> tuple[float, float]:
+def _all_geometry_nodes(geometry) -> list[tuple[float, float]]:
     if geometry is None:
         raise ValueError("Street segment geometry is missing")
 
@@ -80,14 +80,19 @@ def _first_geometry_node(geometry) -> tuple[float, float]:
     else:
         raise ValueError(f"Unsupported street geometry type '{geometry.geom_type}'")
 
-    if not lines:
-        raise ValueError("Street segment has no line parts")
+    nodes: list[tuple[float, float]] = []
+    seen: set[tuple[float, float]] = set()
+    for line in lines:
+        for coord in line.coords:
+            node = (float(coord[0]), float(coord[1]))
+            if node not in seen:
+                seen.add(node)
+                nodes.append(node)
 
-    coords = list(lines[0].coords)
-    if not coords:
+    if not nodes:
         raise ValueError("Street segment has no coordinates")
 
-    return (float(coords[0][0]), float(coords[0][1]))
+    return nodes
 
 
 def _expand_region_with_shortest_paths(
@@ -102,17 +107,26 @@ def _expand_region_with_shortest_paths(
 
     selected = set(int(i) for i in seed_indices)
     anchor_idx = int(seed_indices[0])
-    anchor_node = _first_geometry_node(streets.at[anchor_idx, "geometry"])
+    anchor_nodes = _all_geometry_nodes(streets.at[anchor_idx, "geometry"])
+
+    try:
+        lengths, paths = nx.multi_source_dijkstra(
+            full_network, sources=anchor_nodes, weight="length"
+        )
+    except nx.NodeNotFound as exc:
+        src_sid = streets.at[anchor_idx, street_id_column]
+        raise ValueError(f"Anchor street segment '{src_sid}' is not present in the network") from exc
 
     for row_idx in seed_indices[1:]:
         target_idx = int(row_idx)
-        target_node = _first_geometry_node(streets.at[target_idx, "geometry"])
-        try:
-            path = nx.shortest_path(full_network, source=anchor_node, target=target_node, weight="length")
-        except nx.NetworkXNoPath as exc:
+        target_nodes = _all_geometry_nodes(streets.at[target_idx, "geometry"])
+        reachable = [(lengths[n], n) for n in target_nodes if n in lengths]
+        if not reachable:
             src_sid = streets.at[anchor_idx, street_id_column]
             dst_sid = streets.at[target_idx, street_id_column]
-            raise ValueError(f"No path found to connect street segments '{src_sid}' and '{dst_sid}'") from exc
+            raise ValueError(f"No path found to connect street segments '{src_sid}' and '{dst_sid}'")
+        _, best_target = min(reachable)
+        path = paths[best_target]
 
         for u, v in zip(path[:-1], path[1:]):
             edge_data = full_network.get_edge_data(u, v) or {}

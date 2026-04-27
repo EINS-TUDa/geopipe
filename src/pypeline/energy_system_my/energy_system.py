@@ -149,7 +149,7 @@ class EnergySystemBuilder:
                        commodity_in="residential_heat",
                        cooperation_of_technologies=False,
                        profile_path=Path(__file__).parent / "HeatDemandProfile.txt",
-                       demand_column_name="linear_heat_density",
+                       demand_column_name="waerme_mwh",
                        technology_shares_query_params={
                            "key": "heating_shares",
                            "name_mapping": {
@@ -266,7 +266,7 @@ class EnergySystemBuilder:
         region_ids = tuple(self._region_topologies().keys())
         demands_per_region: dict[int, list[Demand]] = {}
         decentralized_tech_per_region: dict[int, list[DecentralTechnology]] = {}
-        for region_id, topology in self._region_topologies.items():
+        for region_id, topology in self._region_topologies().items():
             demands_per_region[region_id] = self._build_demands(topology)
             decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology,
                                                                                           demands_per_region[region_id])

@@ -1,8 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from examples.test_cases.input_data.data_reg import case1_data_registry
-from pypeline.data.default_registry import get_default_data_registry
+from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
 # from examples.example_runner import ScenarioCaseConfig, #_validate_case_regions, _case_plots_dir, write_results_report
 from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
 from pypeline.energy_system_my import Scenario
@@ -20,12 +19,12 @@ project_root = CASE_DIR.parents[1]
 
 def main():
     cfg = SimpleTopologyBuilderConfig(
-        streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
+        streets_file=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
         scenario_file=CASE_DIR / "case_1.yaml",
         region_id_column="id",
         street_id_column="street_id",
-        demand_column="total_heat_demand",
-        street_length_column="street_length",
+        demand_column="waerme_mwh",
+        street_length_column="laenge_segment",
         apply_injections=True,
     )
     topology_result = SimpleTopologyBuilder.from_config(cfg).build()

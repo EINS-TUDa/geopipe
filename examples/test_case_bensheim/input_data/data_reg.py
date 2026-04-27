@@ -2,6 +2,7 @@ import pathlib
 
 import networkx as nx
 import pandas as pd
+import geopandas as gpd
 from shapely.geometry.multipoint import MultiPoint
 
 from pypeline import DataRegistry
@@ -10,7 +11,7 @@ from pypeline.data.data_utils import get_gdf_from_ags
 from pypeline.data.dataset import FileDataset, CensusTechnology
 
 
-def census_neuburg_query(dataset: FileDataset, query: dict, gpd=None) -> dict[CensusTechnology, float]:
+def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query: dict) -> dict[CensusTechnology, float]:
     if query["key"] != "heating_shares":
         raise ValueError("census_neuburg_query only supports 'heating_shares' key")
 
@@ -24,13 +25,13 @@ def census_neuburg_query(dataset: FileDataset, query: dict, gpd=None) -> dict[Ce
                        "Fernwaerme": CensusTechnology.District_Heating,
                        "kein_Energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    region = query["region"]
-    if isinstance(region, nx.Graph):
-        region_crs = region.graph.get("crs")
+    if isinstance(region, gpd.GeoDataFrame):
         boundary_gdf = gpd.GeoDataFrame(
-            geometry=[MultiPoint(list(region.nodes)).convex_hull], crs=region_crs)
+            geometry=[region.geometry.union_all()],
+            crs=region.crs)
+        region_crs = boundary_gdf.crs
     else:
-        raise TypeError("query expects region as nx.Graph ")
+        raise TypeError("query expects region as geodataframe ")
 
     gdf = dataset.get_data()
     if region_crs is not None and gdf.crs != region_crs:
@@ -74,10 +75,13 @@ def census_neuburg_query(dataset: FileDataset, query: dict, gpd=None) -> dict[Ce
 def case1_data_registry() -> DataRegistry:
     neuburg_heating_shares = FileDataset(
         keys=[DataKeys.HEATING_SHARES],
-        file_path= str(pathlib.Path(__file__).parent / "heating_shares_neuburg.geojson"),
-        query_function=census_neuburg_query,
-        priority=6,
-        regional_validity=get_gdf_from_ags(["09185149"]))
+        file_path= str(pathlib.Path(__file__).parent / "Census2022HeatingType100mGrid_Polygons_southhessen.geojson"),
+        query_function=census_bensheim_query,
+        priority=10,
+        regional_validity=None
+        # get_gdf_from_ags(["09185149"]
+        )
+
 
     data_reg = DataRegistry()
     data_reg.register(neuburg_heating_shares)
