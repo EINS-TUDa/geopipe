@@ -431,6 +431,26 @@ class EnergySystemBuilder:
         return preferred_region
 
     def build(self) -> EnergySystem:
+        # Determine for each decentral tech if it needs a grid
+
+        # 2. Identify central technology location within the connected groups:
+        # Take the first match for self._config.preferred_central_technology_location_per_commodity, if no match,
+        # take Region with the highest demand for the commodity supplied by the central technology.
+
+
+        # 3. Instantiate grids in all regions.
+        # For existing capacities in connected regions: Calculate flow within connected regions to derive existing capacity of grid
+
+
+        # 4. ?How to best allow the user to indicate:
+        # Central Technology X only exists in Reigon Y (nowhere else) with existing capacity Z)?
+        # This will influence step 5
+
+        # 5. Instantiate central technologies in identified regions of step 2. Don't add central technologies at all
+        # to other regions in connected groups (not even without existing capacity). Build
+        # central technologies in all other regions of preferred_central_technology_location_per_commodity
+        # If preferred_central_technology_location_per_commodity is None, built everywhere (except connected groups)
+
         self._pre_build()
 
         region_ids = tuple(self._region_topologies.keys())
@@ -527,83 +547,10 @@ class EnergySystemBuilder:
                 commodity_in = GridTechnology.get_type_defaults(grid_type_name).get("commodity_in")
                 central_type_name = self._config.default_central_technology_per_commodity[commodity_in]
                 CentralTechnology(name=central_type_name, existing_capacity=total_capacity)
-
-
-                    # Add pipes on this tree with nonzero existing capacity. Other pipes have zero existing capacity
-
-
-        # Determine for each decentral tech if it needs a grid
-
-        # 2. Identify central technology location within the connected groups:
-        # Take the first match for self._config.preferred_central_technology_location_per_commodity, if no match,
-        # take Region with the highest demand for the commodity supplied by the central technology.
-
-
-        # 3. Instantiate grids in all regions.
-        # For existing capacities in connected regions: Calculate flow within connected regions to derive existing capacity of grid
-
-
-        # 4. ?How to best allow the user to indicate:
-        # Central Technology X only exists in Reigon Y (nowhere else) with existing capacity Z)?
-        # This will influence step 5
-
-        # 5. Instantiate central technologies in identified regions of step 2. Don't add central technologies at all
-        # to other regions in connected groups (not even without existing capacity). Build
-        # central technologies in all other regions of preferred_central_technology_location_per_commodity
-        # If preferred_central_technology_location_per_commodity is None, built everywhere (except connected groups)
+                # Add pipes on this tree with nonzero existing capacity. Other pipes have zero existing capacity
 
 
 
-
-
-
-        #
-        #
-        #
-        # self._dhn_central_seed_cache = {}
-        #
-        # rb = RegionBuilder(
-        #     base_crs=self.base_crs,
-        #     data_registry=self.data_registry,
-        #     technology_registry=self.technology_registry,
-        # )
-        # rb.set_demands(self.demands)
-        # if not self.region_builder_config:
-        #     self.set_default_region_builder_config()
-        # rb.set_config(self.region_builder_config)
-        # rb.set_dhn_central_seed_base_resolver(self._infer_dhn_central_seed_base)
-        #
-        # self._ensure_heat_grid_rules()
-        # if self.region_rule_book:
-        #     rb.set_rule_book(self.region_rule_book)
-        #
-        # regions: list[Region] = []
-        # for region_id, topology in self._region_subgraphs():
-        #     regions.append(rb.build(topology=topology, region_id=region_id))
-        #
-        # pipe_tech = self.technology_registry.get_by_name(self.pipe_technology_name)
-        # for region in regions:
-        #     cost = build_district_heat_grid_from_topology(
-        #         topology=region.topology,
-        #         pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
-        #     )
-        #     region.local_dhn_capex_base_eur = float(cost["local_grid_capex_base_eur"])
-        #
-        # pipes = []
-        # if len(regions) > 1:
-        #     distance_threshold_m = (self.region_builder_config or {}).get("interdistrict_free_pipe_max_length_m")
-        #     pipe_eff = max(0.0, min(1.0, float(pipe_tech.efficiency)))
-        #     pipes = build_inter_dhn_pipes_from_topologies(
-        #         regions=regions,
-        #         full_network=self.street_network,
-        #         pipe_capex_eur_per_km=float(pipe_tech.pipe_capex_eur_per_km),
-        #         below_distance_threshold_m=(None if distance_threshold_m is None else float(distance_threshold_m)),
-        #         pipe_loss_fraction=max(0.0, 1.0 - pipe_eff),
-        #         pipe_capex_eur_per_mw=float(pipe_tech.capex_cost_power),
-        #         pipe_opex_eur_per_mwh=float(pipe_tech.opex_cost_energy),
-        #         pipe_cap_max_mw=float(pipe_tech.cap_max),
-        #         pipe_lifetime_years=int(pipe_tech.technical_lifetime),
-        #     )
         #
         # es = EnergySystem(
         #     name=self.energy_system_name,
@@ -615,8 +562,7 @@ class EnergySystemBuilder:
         #     pipes=pipes,
         # )
         #
-        # if self.rule_book:
-        #     es = self.rule_book.apply(es)
+
         #
         # return es
 
