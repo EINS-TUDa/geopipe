@@ -120,3 +120,4 @@ pipes:
     loss_percent: 0.04
     technical_lifetime: 40
     capex_per_km: 1000000        # EUR/km
+    distance_threshold_m: 50

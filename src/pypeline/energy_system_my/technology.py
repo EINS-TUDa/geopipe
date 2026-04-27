@@ -235,7 +235,7 @@ class PipeTechnology(Technology):
             self.loss_percent: float = registered_type["loss_percent"]
             self.technical_lifetime: int = registered_type["technical_lifetime"]
             self.capex_per_km: float = registered_type["capex_per_km"]
-            self.distance_threshold_m: float = registered_type["distance_threshold_m"]
+            self.distance_threshold_m: float = registered_type["distance_threshold_m"] # costs are 0 if length is below this threshold to reduce binary variables
         except KeyError:
             raise KeyError(f"The registered type '{name}' does not provide all the data for")
 

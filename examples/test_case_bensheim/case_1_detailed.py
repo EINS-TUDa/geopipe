@@ -32,8 +32,8 @@ def main():
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},
         considered_connected_region_distance_m= 50,
-        default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
-        preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
+        default_central_technology_per_commodity={"district_heat_out": "cen_gas_boiler"},
+        preferred_central_technologies_location_per_commodity={"district_heat_out": [1]},
         additional_grid_capacity_factor={"heat_grid" : 1}
     )
 

@@ -11,7 +11,7 @@ authors = [
     {name = "Alexander Christ", email = "alexchrist@outlook.com"},
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "cesm",
     "certifi>=2025.4.26",
