@@ -6,7 +6,7 @@ from pypeline.data.default_registry import get_default_data_registry
 # from examples.example_runner import ScenarioCaseConfig, #_validate_case_regions, _case_plots_dir, write_results_report
 from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
 from pypeline.energy_system_my import Scenario
-from pypeline.energy_technology import register_technologies
+from pypeline.energy_system_my import register_technologies
 # from pypeline.injection import apply_injected_techs
 # from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.plot.plotter import EnergySystemPlotter
@@ -19,29 +19,6 @@ CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
 
 def main():
-    # config = ScenarioCaseConfig(
-    #     project_root=project_root,
-    #     scenario_file=CASE_DIR / "case_1.yaml",
-    #     streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
-    #     heating_shares_file=CASE_DIR / "input_data" / "heating_shares_neuburg.geojson",
-    #     model_name="Case1",
-    #     scenario_name="BaseCase1",
-    #     tss_name="4ThinWeeks",
-    #     dt_hours=3,
-    #     demand_name="residential_heat",
-    #     start_year=2020,
-    #     end_year=2030,
-    #     year_gap=5,
-    #     retain_existing_output_drop_per_year=0.05,
-    #     lockout_years=2,
-    #     apply_injections=True,
-    #     region_builder_config_overrides={
-    #         "min_heat_grid_share": 0.1,
-    #         "heat_grid_names": ("heat_exchanger",),
-    #     },
-    #     expected_region_ids=(0, 1, 2),
-    # )
-
     cfg = SimpleTopologyBuilderConfig(
         streets_file=CASE_DIR / "input_data" / "linear_heat_density.geojson",
         scenario_file=CASE_DIR / "case_1.yaml",
@@ -53,21 +30,22 @@ def main():
     )
     topology_result = SimpleTopologyBuilder.from_config(cfg).build()
 
-    register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml")
-
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},
         considered_connected_region_distance_m= 50,
         default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
+        additional_grid_capacity_factor={"heat_grid" : 1}
     )
 
     data_reg = case1_data_registry()
+    register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml")
 
     builder = EnergySystemBuilder(energy_system_name="Case1")
     builder.set_system_topology(topology_result.network)
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
+    builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
 
 
     energy_system = builder.build()

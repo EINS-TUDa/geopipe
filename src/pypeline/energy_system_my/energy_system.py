@@ -1,45 +1,10 @@
 # coding=utf-8
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Optional
-import networkx as nx
+from typing import Optional
 import numpy as np
 import pandas as pd
-from shapely.geometry import MultiPoint
-
-from pypeline.energy_technology.technology_historical import GridType
-from pypeline.energy_technology import register_technologies
-from pypeline.energy_system_my.imports import Imports
-from pypeline.energy_technology.technology import PipeTechnology, GridTechnology, CentralTechnology
-from pypeline.energy_system_my.region import Region, DemandType, compute_region_connections, RegionConnections
-from pypeline.units import Unit
-
 from pathlib import Path
-from typing import Any
 import networkx as nx
-import yaml
-
-from pypeline.data.data_registry import DataRegistry
-from pypeline.data.dataset import CensusTechnology
-from pypeline.energy_system_my.region import Demand, Region
-
-from pypeline.energy_system_my.imports import Imports, load_imports_from_yaml
-# from pypeline.energy_system.region import RegionBuilder
-# from pypeline.energy_system.rule_book import (
-#     DEFAULT_HEAT_GRID_COST_DATASET,
-#     DEFAULT_HEAT_GRID_DEMAND_NAME,
-#     EnergySystemRuleBook,
-#     HeatExchangerCostAdjustmentRule,
-#     MinimumHeatGridConstraintRule,
-#     MinimumHeatGridOutputRule,
-#     RegionRuleBook,
-# )
-from pypeline.units import Unit, UnitEnum
-from pypeline.topology_builder.topology import Topology
-from pypeline.energy_technology.technology import DecentralTechnology
-import logging
-
-
 from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
@@ -47,6 +12,16 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from pypeline.energy_system_my.imports import Imports, load_imports_from_yaml
+from pypeline.energy_system_my.technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
+from pypeline.energy_system_my.region import Region, DemandType, compute_region_connections, RegionConnections
+from pypeline.data.data_registry import DataRegistry
+from pypeline.data.dataset import CensusTechnology
+from pypeline.energy_system_my.region import Demand, Region
+from pypeline.units import Unit, UnitEnum
+from pypeline.topology_builder.topology import Topology
+
+import logging
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +30,7 @@ class EnergySystem:
     name: str
     regions: list[Region]
     units: Unit
-    street_network: nx.Graph | None = None
+    system_topology: nx.Graph | None = None
     imports: list[Imports] = field(default_factory=list)
     constraints: dict[str, dict[int, float]] = field(default_factory=dict)
     data_dir: str | Path | None = None
@@ -95,16 +70,12 @@ class EnergySystemBuilder:
         self._energy_system_name = energy_system_name
         self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
-        # self.rule_book: EnergySystemRuleBook | None = None
-        # self.region_rule_book: RegionRuleBook | None = None
-        self._data_registry: DataRegistry | None = None
+        self._data_registry: Optional[DataRegistry] = None
         self._unit: Unit = UnitEnum.GW.unit
-        self._config: EnergySystemBuilderConfig
+        self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
-        # self.imports: list[Imports] | None = None
-        # self.pipe_technology_name: str = "heat_pipe"
-        # self._dhn_central_seed_cache: dict[int, str] = {}
-        self.__region_topologies = None
+        self.imports: Optional[list[Imports]] = None
+        self.__region_topologies: Optional[dict[int, Topology]] = None
 
     @property
     def energy_system_name(self) -> str:
@@ -132,39 +103,21 @@ class EnergySystemBuilder:
         self._demand_types.extend(demand_types)
         return self
 
-    # def set_region_rule_book(self, rule_book: RegionRuleBook):
-    #     self.region_rule_book = rule_book
-    #     return self
-    #
-    # def set_energy_system_rule_book(self, rule_book: EnergySystemRuleBook):
-    #     self.rule_book = rule_book
-    #     return self
+    def set_demand_types(self, demand_types: list[DemandType]):
+        if not isinstance(demand_types, list) and not all(isinstance(d, DemandType) for d in demand_types):
+            raise TypeError("demands must be a list of Demand instances.")
+        self._demand_types = demand_types
+        return self
 
-    # def set_demands(self, demands: list[Demand] | None = None, default: bool = False):
-    #     if default:
-    #         self._set_default_demands()
-    #         return self
-    #     if not isinstance(demands, list) or not all(isinstance(d, Demand) for d in demands):
-    #         raise TypeError("demands must be a list of Demand instances.")
-    #     self.demands = demands
-    #     return self
+    def set_imports(self, import_yaml: str | Path):
+        self.imports = load_imports_from_yaml(import_yaml)
+        return self
 
     def set_config(self, config: EnergySystemBuilderConfig):
+        if not isinstance(config, EnergySystemBuilderConfig):
+            raise TypeError(f"config must be an instance of EnergySystemBuilderConfig and not {type(config)}")
         self._config = config
         return self
-    # def set_region_builder_config(self, config: dict[str, Any] | None, *, merge: bool = True):
-    #     if config is None:
-    #         return self
-    #     if not isinstance(config, dict):
-    #         raise TypeError("region_builder_config must be a mapping")
-    #
-    #     if self.region_builder_config is None or not merge:
-    #         self.region_builder_config = dict(config)
-    #     else:
-    #         merged = dict(self.region_builder_config)
-    #         merged.update(config)
-    #         self.region_builder_config = merged
-    #     return self
 
     def _region_topologies(self):
         if self.__region_topologies is None:
@@ -213,149 +166,6 @@ class EnergySystemBuilder:
                        },
                        default_decentral_supply_technology="ind_oil_boiler",
                        decrease_percent_per_year=0),]
-
-    #
-    # def set_imports(self, import_yaml: str | Path):
-    #     self.imports = load_imports_from_yaml(import_yaml)
-    #     return self
-    #
-    # def set_default_region_builder_config(self):
-    #     self.region_builder_config = {
-    #         "cap_factor_ind_technologies": 1.1,
-    #         "min_heat_grid_output_mwh": 0.0,
-    #         "min_heat_grid_share": None,
-    #         "heat_grid_demand_name": DEFAULT_HEAT_GRID_DEMAND_NAME,
-    #         "heat_grid_names": ("heat_exchanger",),
-    #         "interdistrict_free_pipe_max_length_m": None,
-    #         "heat_grid_cost_dataset": DEFAULT_HEAT_GRID_COST_DATASET,
-    #         "heat_grid_cost_scaling": 1.0,
-    #         "heat_grid_cost_min_factor": 1.0,
-    #         "heat_grid_decentralized_keys": tuple(
-    #             ct.value for ct in CensusTechnology if ct is not CensusTechnology.District_Heating
-    #         ),
-    #     }
-    #     return self
-    #
-    # def _heat_grid_rule_settings(self) -> tuple[float, float | None, str, tuple[str, ...]] | None:
-    #     config = self.region_builder_config or {}
-    #     min_output = float(config.get("min_heat_grid_output_mwh", 0.0) or 0.0)
-    #     min_share_raw = config.get("min_heat_grid_share")
-    #     demand_name = config.get("heat_grid_demand_name", DEFAULT_HEAT_GRID_DEMAND_NAME)
-    #     heat_grid_names = config.get("heat_grid_names", ("heat_exchanger",))
-    #
-    #     min_share = None
-    #     if min_share_raw is not None:
-    #         min_share = float(min_share_raw)
-    #
-    #     if min_output <= 0.0 and not (min_share is not None and min_share > 0.0):
-    #         return None
-    #
-    #     return min_output, min_share, demand_name, tuple(heat_grid_names)
-    #
-    # def _heat_grid_cost_settings(self) -> tuple[str, float, float, tuple[str, ...]]:
-    #     config = self.region_builder_config or {}
-    #     dataset = config.get("heat_grid_cost_dataset", DEFAULT_HEAT_GRID_COST_DATASET)
-    #     scale = float(config.get("heat_grid_cost_scaling", 1.0))
-    #     min_factor = float(config.get("heat_grid_cost_min_factor", 1.0))
-    #     raw_keys = config.get("heat_grid_decentralized_keys")
-    #     if raw_keys:
-    #         decentralized = tuple(str(key) for key in raw_keys)
-    #     else:
-    #         decentralized = tuple(
-    #             ct.value for ct in CensusTechnology if ct is not CensusTechnology.District_Heating
-    #         )
-    #     return dataset, scale, min_factor, decentralized
-    #
-    # def _ensure_heat_grid_rules(self) -> None:
-    #     settings = self._heat_grid_rule_settings()
-    #     if not settings:
-    #         return
-    #
-    #     min_output, min_share, demand_name, heat_grid_names = settings
-    #
-    #     if self.region_rule_book is None:
-    #         self.region_rule_book = RegionRuleBook()
-    #     if not any(isinstance(rule, MinimumHeatGridOutputRule) for rule in getattr(self.region_rule_book, "rules", [])):
-    #         self.region_rule_book.add_rule(
-    #             MinimumHeatGridOutputRule(
-    #                 demand_name=demand_name,
-    #                 min_output_mwh=min_output,
-    #                 min_share=min_share,
-    #                 heat_grid_names=heat_grid_names,
-    #             )
-    #         )
-    #
-    #     if self.rule_book is None:
-    #         self.rule_book = EnergySystemRuleBook()
-    #     if not any(isinstance(rule, MinimumHeatGridConstraintRule) for rule in getattr(self.rule_book, "rules", [])):
-    #         self.rule_book.add_rule(
-    #             MinimumHeatGridConstraintRule(
-    #                 demand_name=demand_name,
-    #                 min_output_mwh=min_output,
-    #                 min_share=min_share,
-    #                 heat_grid_names=heat_grid_names,
-    #             )
-    #         )
-    #
-    #     dataset, scale, min_factor, decentralized_keys = self._heat_grid_cost_settings()
-    #     if (
-    #         self.data_registry
-    #         and not any(isinstance(rule, HeatExchangerCostAdjustmentRule) for rule in getattr(self.region_rule_book, "rules", []))
-    #     ):
-    #         self.region_rule_book.add_rule(
-    #             HeatExchangerCostAdjustmentRule(
-    #                 data_registry=self.data_registry,
-    #                 dataset_type=dataset,
-    #                 heat_exchanger_names=heat_grid_names,
-    #                 decentralized_keys=decentralized_keys,
-    #                 scale_factor=scale,
-    #                 min_factor=min_factor,
-    #             )
-    #         )
-    #
-    # def _infer_dhn_central_seed_base(self, topology: nx.Graph, district_id: int) -> str:
-    #     district_id_i = int(district_id)
-    #     cached = self._dhn_central_seed_cache.get(district_id_i)
-    #     if cached:
-    #         return cached
-    #
-    #     base_query = {
-    #         "key": "heating_shares",
-    #         "region": topology,
-    #         "base_crs": self.base_crs,
-    #         "name_mapping": {},
-    #     }
-    #     raw_shares = self.data_registry.query(base_query)
-    #     if not isinstance(raw_shares, dict):
-    #         raise TypeError(
-    #             f"Heating share query must return a mapping, got {type(raw_shares)} for district {district_id_i}"
-    #         )
-    #
-    #     candidates: list[tuple[str, float]] = [
-    #         ("cen_gas_boiler", float(raw_shares.get(CensusTechnology.Gas, 0.0) or 0.0)),
-    #         ("cen_oil_boiler", float(raw_shares.get(CensusTechnology.Oil, 0.0) or 0.0)),
-    #         (
-    #             "cen_biomass_woodpellets",
-    #             float(raw_shares.get(CensusTechnology.Wood, 0.0) or 0.0)
-    #             + float(raw_shares.get(CensusTechnology.Biomass, 0.0) or 0.0),
-    #         ),
-    #     ]
-    #     candidates.sort(key=lambda entry: (entry[1], entry[0]), reverse=True)
-    #
-    #     viable = [
-    #         (name, score)
-    #         for name, score in candidates
-    #         if score > 0.0 and self.technology_registry.has_technology(name)
-    #     ]
-    #     if not viable:
-    #         raise ValueError(
-    #             "Unable to infer district-heating central technology from local fuel shares "
-    #             f"for district {district_id_i}. Expected positive Gas/Heizoel/Wood/Biomass shares."
-    #         )
-    #
-    #     selected = viable[0][0]
-    #     self._dhn_central_seed_cache[district_id_i] = selected
-    #     return selected
 
     def _process_technology_shares(self, technology_shares_data: dict[str, float], demand: Demand, topology: Topology) \
             -> dict[str, float]:
@@ -410,7 +220,7 @@ class EnergySystemBuilder:
 
         self.verify()
 
-    def _find_grid_type_from_pipe_type(self, pipe_type_name: str) -> Optional[GridType]:
+    def _find_grid_type_from_pipe_type(self, pipe_type_name: str) -> str:
         """Find the name of the grid type that uses the same commodities as the pipe type."""
         pipe_tech_commodity_in = PipeTechnology.get_type_defaults(pipe_type_name).get("commodity_in")
         pipe_tech_commodity_out = PipeTechnology.get_type_defaults(pipe_type_name).get("commodity_out")
@@ -453,7 +263,7 @@ class EnergySystemBuilder:
 
         self._pre_build()
 
-        region_ids = tuple(self._region_topologies.keys())
+        region_ids = tuple(self._region_topologies().keys())
         demands_per_region: dict[int, list[Demand]] = {}
         decentralized_tech_per_region: dict[int, list[DecentralTechnology]] = {}
         for region_id, topology in self._region_topologies.items():
@@ -550,21 +360,23 @@ class EnergySystemBuilder:
                 # Add pipes on this tree with nonzero existing capacity. Other pipes have zero existing capacity
 
 
+        regions = []
+        for region_id, topology in self._region_topologies.items():
+            region = Region(id_=region_id,
+                            topology=topology,
+                            demands=demands_per_region[region_id],
+                            technologies={"decentral": decentralized_tech_per_region[region_id],
+                                        "grid": list(grid_tech_per_region[region_id].values())})
+            regions.append(region)
 
-        #
-        # es = EnergySystem(
-        #     name=self.energy_system_name,
-        #     regions=regions,
-        #     street_network=self.street_network,
-        #     units=self.unit,
-        #     technology_registry=self.technology_registry,
-        #     imports=self.imports,
-        #     pipes=pipes,
-        # )
-        #
+        es = EnergySystem(name=self.energy_system_name,
+                          regions=regions,
+                          units=self._unit,
+                          system_topology=self._system_topology,
+                          imports=self.imports,
+                          pipes=list(pipes.values()))
 
-        #
-        # return es
+        return es
 
     def verify(self):
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:

@@ -7,7 +7,7 @@ import pandas as pd
 from shapely.geometry import MultiPoint
 import networkx as nx
 
-from pypeline.energy_technology.technology import (Technology, CentralTechnology, DecentralTechnology,
+from pypeline.energy_system_my.technology import (Technology, CentralTechnology, DecentralTechnology,
                                                    CHPTechnology, GridTechnology)
 from pypeline.topology_builder.topology import Topology
 
