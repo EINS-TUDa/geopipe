@@ -49,6 +49,11 @@ class Technology(ABC):
     def get_type_defaults(cls, name: str) -> dict[str, Any]:
         return cls._get_registered_type(name).copy()
 
+    @classmethod
+    def get_type_names_by_attribute(cls, attribute: str, value: Any) -> tuple[str, ...]:
+        """Return the names of registered types whose default ``attribute`` equals ``value``."""
+        return tuple(name for name, data in cls._registered_types.items() if data.get(attribute) == value)
+
 
 class DecentralTechnology(Technology):
 

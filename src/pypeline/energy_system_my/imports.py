@@ -7,7 +7,7 @@ import yaml
 
 
 @dataclass
-class Imports:
+class Import:
     commodity_out: str
     price_eur_per_mwh: float | dict[int, float]
     co2_emissions_ton_per_mwh: float | dict[int, float] | None = None
@@ -18,13 +18,13 @@ class Imports:
         return  f"{self.commodity_out.capitalize()}Supply"
 
 
-def load_imports_from_yaml(path: str | Path) -> list[Imports]:
+def load_imports_from_yaml(path: str | Path) -> list[Import]:
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     entries = data.get("imports", [])
     if not isinstance(entries, list):
         raise ValueError(f"imports.yaml must have a top-level 'imports' list, got {type(entries).__name__}")
-    result: list[Imports] = []
+    result: list[Import] = []
     for i, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise ValueError(f"imports[{i}] must be a mapping, got {type(entry).__name__}")
@@ -38,7 +38,7 @@ def load_imports_from_yaml(path: str | Path) -> list[Imports]:
             price: float | dict[int, float] = {int(k): float(v) for k, v in price_raw.items()}
         else:
             price = float(price_raw)
-        result.append(Imports(
+        result.append(Import(
             commodity_out=str(commodity_out),
             price_eur_per_mwh=price,
             co2_emissions_ton_per_mwh=(
