@@ -207,7 +207,8 @@ class EnergySystemBuilder:
             for name in DecentralTechnology.registered_type_names():
                 share = technology_shares_data.get(name, 0.0)
                 existing_capacity = share * demand.peak(year_period=0)
-                decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity))
+                decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
+                                                                  output_profile_name=demand.profile_name))
 
         return decentral_technologies
 

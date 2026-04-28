@@ -6,6 +6,7 @@ from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
 from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
 from pypeline.energy_system_my import Scenario
 from pypeline.energy_system_my import register_technologies
+from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.injection import apply_injected_techs
 # from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.plot.plotter import EnergySystemPlotter
@@ -13,6 +14,13 @@ from pypeline.energy_system_my import register_technologies
 from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
 # from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 # from cesm.core.data_access import DAO
+
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
@@ -46,33 +54,14 @@ def main():
     builder.set_config(esb_cfg)
     builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
 
-
     energy_system = builder.build()
+    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
 
-    scenario = Scenario(
-        name=f"BaseCase1",
-        start_year=2020,
-        end_year=2030,
-        year_gap=5,
-        dt_hours=3,
-        tss="4ThinWeeks"
-    )
-
-    # _validate_case_regions(config, topology_result.region_topologies)
-    # _, assigned_edges = edge_metrics_from_topology_result(topology_result, region_id_column="id")
     # streets_for_plot = streets_for_topology_plot(topology_result, region_id_column="id")
-    #
-    # plots_dir = _case_plots_dir(config)
-    # plots_dir.mkdir(parents=True, exist_ok=True)
-    #
-    # backend = CESMOptimizationBackend(
-    #     timeseries_dir=CASE_DIR / "input_data",
-    #     output_dir=CASE_DIR / "output_data",
-    #     results_db_name="db.sqlite",
-    #     demand_name=config.demand_name,
-    # )
-    #
-    # solution = backend.solve(energy_system, scenario=scenario)
+
+    backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
+
+    solution = backend.solve(energy_system, scenario=scenario)
     # results_obj = solution.results
     # write_results_report(
     #     output_dir=CASE_DIR / "output_data",

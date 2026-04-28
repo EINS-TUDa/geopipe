@@ -19,24 +19,22 @@ interface by orchestrating the full solve pipeline::
         └─ result_parser.parse_cesm_outputs()
                 returns CESMResults → Solution
 """
-from __future__ import annotations
 import logging
 import sqlite3
 from pathlib import Path
-from typing import List, Optional
 from gurobipy import GRB
 
 from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 
 from pypeline.energy_system_my import EnergySystem, Scenario
+from pypeline.optimization.cesm.techmap import create_techmap
 from pypeline.optimization.cesm.result_parser import (
     backfill_missing_commodity_timeseries,
     parse_cesm_outputs,
 )
 from pypeline.optimization.solver import OptimizationBackend, Solution
 from pypeline.optimization.resolved_system import resolve_system
-from pypeline.optimization.cesm.input_writer import _write_cesm_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -63,59 +61,29 @@ class CESMOptimizationBackend(OptimizationBackend):
     def __init__(
         self,
         timeseries_dir: str | Path,
-        output_dir: str | Path,
-        results_db_name: str = "db.sqlite",
-        demand_name: str = "residential_heat",
-        retain_existing_output_factor: float | None = None,
-        retain_existing_output_years_factor: float | None = None,
-        retain_existing_output_schedule: Optional[List[float]] = None,
+        output_dir: str | Path
     ):
         self.timeseries_dir = Path(timeseries_dir)
         self.output_dir = Path(output_dir)
+
         self.timeseries_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        self.run_subdir = None
-        self.results_db_name = results_db_name
-
-        self.demand_name = demand_name
-        self.retain_existing_output_factor = retain_existing_output_factor
-        self.retain_existing_output_years_factor = retain_existing_output_years_factor
-        self.retain_existing_output_schedule = retain_existing_output_schedule
-
     # OptimizationBackend API ------------------------------------------------
     def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
-        self.run_subdir = f"{energy_system.name}-{scenario.name}"
-        self._materialize_inputs_from_energy_system(energy_system, scenario)
-        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name)
-        db_path = self.output_dir / self.run_subdir / self.results_db_name
-        backfill_missing_commodity_timeseries(db_path)
-        results = parse_cesm_outputs(db_path)
-        return Solution(energy_system=energy_system, scenario=scenario, results=results)
+        db_path = self.output_dir / "{energy_system.name}-{scenario.name}.sqlite"
 
-    def _materialize_inputs_from_energy_system(self, energy_system: EnergySystem, scenario: Scenario) -> None:
-        resolved = resolve_system(
-            energy_system,
-            scenario,
-            retain_existing_output_schedule=self.retain_existing_output_schedule,
-        )
-        _write_cesm_inputs(
-            resolved,
-            techmap_dir=self.output_dir,
-            timeseries_dir=self.timeseries_dir,
-            model_name=energy_system.name,
-            scenario_name=scenario.name,
-            tss_name=scenario.tss,
-            dt_hours=scenario.dt_hours,
-            retain_existing_output_factor=self.retain_existing_output_factor,
-            retain_existing_output_years_factor=self.retain_existing_output_years_factor,
-        )
+        resolved = resolve_system(energy_system,scenario)
+        techmap = create_techmap(resolved)
+        techmap.to_excel(self.output_dir / f"{energy_system.name}.xlsx")
 
-    def _run_cesm(self, energy_system_name: str, scenario_name: str) -> None:
-        db_dir = self.output_dir / self.run_subdir
-        db_path = db_dir / self.results_db_name
-        db_dir.mkdir(parents=True, exist_ok=True)
+        # self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path)
+        # # backfill_missing_commodity_timeseries(db_path)
+        # results = parse_cesm_outputs(db_path)
+        # return Solution(energy_system=energy_system, scenario=scenario, results=results)
 
+
+    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path) -> None:
         conn = sqlite3.connect(":memory:")
         parser = Parser(energy_system_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
         parser.parse()
@@ -129,7 +97,7 @@ class CESMOptimizationBackend(OptimizationBackend):
             if status == GRB.INFEASIBLE:
                 try:
                     grb_model.computeIIS()
-                    iis_path = db_dir / "model_iis.ilp"
+                    iis_path = self.output_dir / "model_iis.ilp"
                     grb_model.write(str(iis_path))
                     logger.error("Wrote IIS file: %s", iis_path)
                 except Exception as iis_exc:  # pragma: no cover

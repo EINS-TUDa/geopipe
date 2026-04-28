@@ -26,6 +26,7 @@ decentralized:
     opex_cost_energy: 0
     opex_cost_power: 5000
     capex_cost_power: 1620
+    existing_capacity_phase_out_years: 10 # Years from model start by which existing_capacity has decreased linearly to 0.
 
   ind_oil_boiler:
     commodity_in: oil
@@ -53,6 +54,7 @@ decentralized:
     opex_cost_energy: 0
     opex_cost_power: 1000
     capex_cost_power: 193000
+    existing_capacity_phase_out_years: 15
 
 
 central:
@@ -110,6 +112,9 @@ grids:
     commodity_out: district_heat_out
     efficiency: 0.86
     technical_lifetime: 40
+    capex_per_km: 1000000        # EUR/km
+    existing_capacity_retirement_years: 30 # Years from model start at which existing_capacity drops abruptly to 0
+
 
 
 pipes:

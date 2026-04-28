@@ -1,15 +1,18 @@
 from dataclasses import asdict, dataclass, fields
+from pathlib import Path
 
 import pandas as pd
 
 from pypeline.energy_system_my.region import Demand
-from pypeline.energy_system_my.imports import Imports
-from pypeline.energy_technology.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
+from pypeline.energy_system_my.imports import Import
+from pypeline.energy_system_my.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
     DecentralTechnology
 from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
-from pypeline.optimization.cesm.io_utils_new import year_dep_value_to_cesm_string
 from pypeline.optimization.resolved_system import ResolvedSystem
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Techmap:
@@ -20,12 +23,31 @@ class Techmap:
     ConversionSubProcess: pd.DataFrame
     TSS: pd.DataFrame
 
-    def to_excel(self, path: str):
+    def to_excel(self, path: Path):
         # the attribute names are used as sheet names
+        logger.info(f"Writing techmap to {path}")
         with pd.ExcelWriter(path) as writer:
             for field in fields(self):
                 df = getattr(self, field.name)
                 df.to_excel(writer, sheet_name=field.name, index=False)
+
+def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None) -> float | str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        if all(v is None for v in value.values()): # if all values in dict are None, return None
+            return None
+        segments = []
+        for year, year_value in sorted(value.items()):
+            year_i = int(year)
+            if year_value is None:
+                segments.append(f"{year_i} NaN")
+            else:
+                segments.append(f"{year_i} {float(year_value):.5g}")
+        return "[" + ";".join(segments) + "]"
+    raise TypeError(f"Unsupported type for year-dependent value: {type(value).__name__}")
 
 
 def _df_units() -> pd.DataFrame:
@@ -59,7 +81,7 @@ def _df_scenario(resolved: ResolvedSystem) -> pd.DataFrame:
         }]
     )
 
-def _import_to_conversion_sub_process(imp: Imports, scenario_name: str) -> ConversionSubProcess:
+def _import_to_conversion_sub_process(imp: Import, scenario_name: str) -> ConversionSubProcess:
     return ConversionSubProcess(
         conversion_process_name=imp.name,
         commodity_in="Dummy",
@@ -79,7 +101,7 @@ def _demand_to_conversion_sub_process(
     scenario_name: str,
     scenario_years: list[int]) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=f"{demand.name}_{region_id}",
+        conversion_process_name=f"{demand.name}_D{region_id}",
         commodity_in=demand.demand_type.commodity_in,
         commodity_out="Dummy",
         scenario=scenario_name,
@@ -87,21 +109,37 @@ def _demand_to_conversion_sub_process(
         output_profile=demand.profile_name,
     )
 
-def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
+def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str,
+                                                  start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=f"{tech.name}_{region_id}",
+        conversion_process_name=f"{tech.name}_D{region_id}",
         commodity_in=tech.commodity_in,
         commodity_out=tech.commodity_out,
         scenario=scenario_name,
-        capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
+        efficiency=tech.efficiency,
+        technical_lifetime=tech.technical_lifetime,
         opex_cost_energy=year_dep_value_to_cesm_string(tech.opex_cost_energy),
         opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
-        efficiency=year_dep_value_to_cesm_string(tech.efficiency),
-        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_mw),
+        capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
+        cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
+        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
+        output_profile=tech.output_profile_name,
     )
 
-def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_name: str) -> ConversionSubProcess:
-    return ...
+def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_name: str, start_year: int) -> ConversionSubProcess:
+    return ConversionSubProcess(
+        conversion_process_name=f"{grid.name}_D{region_id}",
+        commodity_in=grid.commodity_in,
+        commodity_out=grid.commodity_out,
+        scenario=scenario_name,
+        efficiency=grid.efficiency,
+        technical_lifetime=grid.technical_lifetime,
+        capex_cost_base=grid.investment_costs,
+        cap_max=year_dep_value_to_cesm_string(grid.max_capacity_per_year(start_year)),
+        cap_res_min=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year)),
+    )
+
+
 
 def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
     return ...
@@ -113,6 +151,7 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     cs_list: list[ConversionSubProcess] = []
     scenario_name = resolved.scenario.name
     scenario_years = resolved.scenario.years
+    start_year = resolved.scenario.start_year
 
     # imports
     for imp in resolved.imports:
@@ -130,12 +169,12 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     # decentralized techs
     for region_id, techs in resolved.decentralized_technologies.items():
         for tech in techs:
-            cs_list.append(_decentralized_tech_to_conversion_sub_process(tech, region_id, scenario_name))
+            cs_list.append(_decentralized_tech_to_conversion_sub_process(tech, region_id, scenario_name, start_year))
 
     # grids
     for region_id, grids in resolved.grid_technologies.items():
         for grid in grids:
-            cs_list.append(_grid_to_conversion_sub_process(grid, region_id, scenario_name))
+            cs_list.append(_grid_to_conversion_sub_process(grid, region_id, scenario_name, start_year))
 
     # central techs
     for region_id, techs in resolved.central_technologies.items():
@@ -147,7 +186,13 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
         for chp in chps:
             cs_list.append(_chp_to_conversion_sub_process(chp, region_id, scenario_name))
 
-    return pd.DataFrame([asdict(cs) for cs in cs_list])
+    # create DataFrame with attributes of ConversionSubProcess as columns
+    columns = [f.name for f in fields(ConversionSubProcess)]
+    return pd.DataFrame(
+        [asdict(cs) for cs in cs_list
+         if isinstance(cs, ConversionSubProcess)], # TODO: Once all conversion sub-processes are implemented, this check can be removed
+        columns=columns,
+    )
 
 
 def _color_from_name(name: str) -> str:

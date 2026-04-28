@@ -9,7 +9,7 @@ import yaml
 @dataclass
 class Import:
     commodity_out: str
-    price_eur_per_mwh: float | dict[int, float]
+    price_eur_per_mwh: float | dict[int, float] | None = None
     co2_emissions_ton_per_mwh: float | dict[int, float] | None = None
     max_capacity_mw: float | dict[int, float] | None = None
 

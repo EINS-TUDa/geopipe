@@ -9,15 +9,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-from pypeline.energy_system.core import Scenario
-from pypeline.energy_system.imports import Imports
+from pypeline.energy_system_my.scenario import Scenario
+from pypeline.energy_system_my.imports import Import
 from pypeline.energy_system_my.region import Demand
-
-if TYPE_CHECKING:
-    from pypeline.energy_system_my.energy_system import EnergySystem
-    from pypeline.energy_technology.technology import PipeTechnology, DecentralTechnology, GridTechnology, \
+from pypeline.energy_system_my.energy_system import EnergySystem
+from pypeline.energy_system_my.technology import PipeTechnology, DecentralTechnology, GridTechnology, \
     CentralTechnology, CHPTechnology
 
 
@@ -25,7 +22,7 @@ if TYPE_CHECKING:
 class ResolvedSystem:
     name: str
     scenario: Scenario
-    imports: list[Imports]
+    imports: list[Import]
     pipe_connections: list[PipeTechnology]
     decentralized_technologies: dict[int, tuple[DecentralTechnology, ...]]  # region id → decentral technologies
     grid_technologies: dict[int, tuple[GridTechnology, ...]]  # region id → grid technologies
