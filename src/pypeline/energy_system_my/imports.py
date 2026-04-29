@@ -15,7 +15,7 @@ class Import:
 
     @property
     def name(self) -> str:
-        return  f"{self.commodity_out.capitalize()}Supply"
+        return  f"Import{self.commodity_out.capitalize()}"
 
 
 def load_imports_from_yaml(path: str | Path) -> list[Import]:

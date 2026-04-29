@@ -1,15 +1,13 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Any
 import pandas as pd
 import yaml
 
-from pypeline.energy_system_my.imports import Import
-
 
 class Technology(ABC):
     _registered_types: dict[str, dict[str, Any]] = {}
+    _region_scoped_commodities: set[str] = set() # Populated by GridTechnology.register; shared across all subclasses.
 
     @abstractmethod
     def __init__(self, name: str):
@@ -56,8 +54,18 @@ class Technology(ABC):
         """Return the names of registered types whose default ``attribute`` equals ``value``."""
         return tuple(name for name, data in cls._registered_types.items() if data.get(attribute) == value)
 
+    @classmethod
+    def is_grid_commodity(cls, commodity: str) -> bool:
+        return commodity in cls._region_scoped_commodities
+
+
 
 class DecentralTechnology(Technology):
+
+    @classmethod
+    def register(cls, name: str, **kwargs):
+        super().register(name, **kwargs)
+        if (c := kwargs.get("commodity_out")) is not None: Technology._region_scoped_commodities.add(c)
 
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
@@ -177,6 +185,12 @@ class CHPTechnology(Technology):
 
 class GridTechnology(Technology):
     """A GridType instantiated in a specific region."""
+
+    @classmethod
+    def register(cls, name: str, **kwargs):
+        super().register(name, **kwargs)
+        if (c := kwargs.get("commodity_in"))  is not None: Technology._region_scoped_commodities.add(c)
+        if (c := kwargs.get("commodity_out")) is not None: Technology._region_scoped_commodities.add(c)
 
     def __init__(self, name: str,
                  length_km: float,
@@ -308,6 +322,9 @@ def register_technologies(path: str | Path, clear_registry: bool = True) -> None
     if unknown_sections:
         raise ValueError(f"{file_path}: unknown section(s) {sorted(unknown_sections)}. "
                          f"Valid sections: {sorted(_SECTION_TO_CLASS)}")
+
+    if clear_registry:
+        Technology._region_scoped_commodities.clear()
 
     for section_name, section_cls in _SECTION_TO_CLASS.items():
         if clear_registry:

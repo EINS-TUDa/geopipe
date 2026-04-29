@@ -7,7 +7,7 @@ from numpy.ma.core import append
 from pypeline.energy_system_my.region import Demand
 from pypeline.energy_system_my.imports import Import
 from pypeline.energy_system_my.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
-    DecentralTechnology
+    DecentralTechnology, Technology
 from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
 from pypeline.optimization.resolved_system import ResolvedSystem
 
@@ -32,8 +32,11 @@ class Techmap:
                 df = getattr(self, field.name)
                 df.to_excel(writer, sheet_name=field.name, index=False)
 
-def append_region_suffix(name: str, region_id: int) -> str:
-    return f"{name}_D{region_id}"
+def commodity_name(name: str, region_id: int) -> str:
+    """Return the region-suffixed commodity name if it is transported via a grid; bare name otherwise."""
+    if Technology.is_grid_commodity(name):
+        return f"{name}_D{region_id}"
+    return name
 
 def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None) -> float | str | None:
     if value is None:
@@ -99,8 +102,8 @@ def _import_to_conversion_sub_process(imp: Import, scenario_name: str) -> Conver
 def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
         conversion_process_name=f"{pipe.name}_D{pipe.region_id_in}_D{pipe.region_id_out}",
-        commodity_in=append_region_suffix(pipe.commodity_in, pipe.region_id_in),
-        commodity_out=append_region_suffix(pipe.commodity_out, pipe.region_id_out),
+        commodity_in=commodity_name(pipe.commodity_in, pipe.region_id_in),
+        commodity_out=commodity_name(pipe.commodity_out, pipe.region_id_out),
         scenario=scenario_name,
         efficiency=pipe.efficiency,
         technical_lifetime=pipe.technical_lifetime,
@@ -115,8 +118,8 @@ def _demand_to_conversion_sub_process(
     scenario_name: str,
     scenario_years: list[int]) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=append_region_suffix(demand.name, region_id),
-        commodity_in=append_region_suffix(demand.demand_type.commodity_in, region_id),
+        conversion_process_name=f"{demand.name}_D{region_id}",
+        commodity_in=commodity_name(demand.demand_type.commodity_in, region_id),
         commodity_out="Dummy",
         scenario=scenario_name,
         min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years)),
@@ -126,9 +129,9 @@ def _demand_to_conversion_sub_process(
 def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str,
                                                   start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=append_region_suffix(tech.name, region_id),
-        commodity_in=append_region_suffix(tech.commodity_in, region_id),
-        commodity_out=append_region_suffix(tech.commodity_out, region_id),
+        conversion_process_name=f"{tech.name}_D{region_id}",
+        commodity_in=commodity_name(tech.commodity_in, region_id),
+        commodity_out=commodity_name(tech.commodity_out, region_id),
         scenario=scenario_name,
         efficiency=tech.efficiency,
         technical_lifetime=tech.technical_lifetime,
@@ -142,9 +145,9 @@ def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, reg
 
 def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_name: str, start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=append_region_suffix(grid.name, region_id),
-        commodity_in=append_region_suffix(grid.commodity_in, region_id),
-        commodity_out=append_region_suffix(grid.commodity_out, region_id),
+        conversion_process_name=f"{grid.name}_D{region_id}",
+        commodity_in=commodity_name(grid.commodity_in, region_id),
+        commodity_out=commodity_name(grid.commodity_out, region_id),
         scenario=scenario_name,
         efficiency=grid.efficiency,
         technical_lifetime=grid.technical_lifetime,
