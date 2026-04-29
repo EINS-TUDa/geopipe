@@ -30,7 +30,13 @@ class Techmap:
         with pd.ExcelWriter(path) as writer:
             for field in fields(self):
                 df = getattr(self, field.name)
-                df.to_excel(writer, sheet_name=field.name, index=False)
+                if field.name == "ConversionSubProcess":
+                    # Write 2 empty rows before the actual data
+                    empty_df = pd.DataFrame(index=range(2), columns=df.columns)
+                    empty_df.to_excel(writer, sheet_name=field.name, index=False, header=True)
+                    df.to_excel(writer, sheet_name=field.name, index=False, header=False, startrow=3)
+                else:
+                    df.to_excel(writer, sheet_name=field.name, index=False)
 
 def commodity_name(name: str, region_id: int) -> str:
     """Return the region-suffixed commodity name if it is transported via a grid; bare name otherwise."""

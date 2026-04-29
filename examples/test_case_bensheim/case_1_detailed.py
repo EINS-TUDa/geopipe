@@ -42,7 +42,7 @@ def main():
         considered_connected_region_distance_m= 50,
         default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
-        additional_grid_capacity_factor={"heat_grid" : 1}
+        additional_grid_capacity_factor={"heat_grid" : 1.5}
     )
 
     data_reg = case1_data_registry()
