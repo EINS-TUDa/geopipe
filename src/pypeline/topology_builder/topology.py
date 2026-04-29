@@ -15,6 +15,10 @@ class Topology:
     def name(self):
         return self.graph.name
 
+    @property
+    def total_edge_length(self) -> float:
+        return sum(self.property_from_edges("length"))
+
     def property_from_edges(self, property_name: str) -> list:
         """Return a list of the specified property from all edges in the graph."""
         return [edge[2][property_name] for edge in self.graph.edges(data=True)]

@@ -271,12 +271,13 @@ class EnergySystemBuilder:
 
         # Create grids per region. Each registered grid type exists on every region.
         grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
-        for region_id, decentralized_technologies in decentralized_tech_per_region.items():
-            grids = {grid_type_name: GridTechnology(name=grid_type_name)
+        for region_id, topology in self._region_topologies().items():
+            # Total network length of this region, shared by every grid serving the region.
+            region_length_km = topology.total_edge_length / 1000.0
+            grids = {grid_type_name: GridTechnology(name=grid_type_name, length_km=region_length_km)
                      for grid_type_name in GridTechnology.registered_type_names()}
 
-            for decentralized_technology in decentralized_technologies:
-                decentralized_technology: DecentralTechnology
+            for decentralized_technology in decentralized_tech_per_region[region_id]:
                 grid = grids.get(self._find_grid_type_from_decentralized_technology(decentralized_technology, grids))
                 if not grid:
                     continue

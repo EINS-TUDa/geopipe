@@ -122,7 +122,8 @@ pipes:
   heat_pipe:
     commodity_in: district_heat_out
     commodity_out: district_heat_in
-    loss_percent: 0.04
+    efficiency: 0.96
     technical_lifetime: 40
     capex_per_km: 1000000        # EUR/km
     distance_threshold_m: 50
+    existing_capacity_retirement_years: 30 # Years from model start at which existing_capacity drops abruptly to 0.

@@ -5,6 +5,8 @@ from typing import Optional, Any
 import pandas as pd
 import yaml
 
+from pypeline.energy_system_my.imports import Import
+
 
 class Technology(ABC):
     _registered_types: dict[str, dict[str, Any]] = {}
@@ -192,25 +194,25 @@ class GridTechnology(Technology):
             raise KeyError(f"The registered type '{name}' does not provide all the data for")
 
         self.existing_capacity = existing_capacity
-        self._length_km = length_km
+        self._grid_length_km = length_km
 
         # Years from model start at which existing_capacity drops abruptly to 0 (no linear decay).
         # Only required when existing_capacity is non-zero.
         self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
-        if existing_capacity and self.existing_capacity_retirement_years is None:
-            raise ValueError(
-                f"Technology '{name}' has existing_capacity={existing_capacity} but the "
-                f"registered type does not define 'existing_capacity_retirement_years'.")
 
     @property
-    def investment_costs(self) -> float:
-        return self._length_km * self.capex_per_km
+    def investment_costs_eur(self) -> float:
+        return self._grid_length_km * self.capex_per_km
 
     def max_capacity_per_year(self, start_year: int) -> dict[int, float]:
         return {start_year: self.existing_capacity,
                 start_year+1: None}
 
     def capacity_per_year(self, start_year: int) -> dict[int, float] | None:
+        if self.existing_capacity and self.existing_capacity_retirement_years is None:
+            raise ValueError(
+                f"Technology '{self.name}' has existing_capacity={self.existing_capacity} but the "
+                f"registered type does not define 'existing_capacity_retirement_years'.")
         if not self.existing_capacity:
             return None
         return {start_year: self.existing_capacity,
@@ -238,7 +240,7 @@ class PipeTechnology(Technology):
         try:
             self.commodity_in: str = registered_type["commodity_in"]
             self.commodity_out: str = registered_type["commodity_out"]
-            self.loss_percent: float = registered_type["loss_percent"]
+            self.efficiency: float = registered_type["efficiency"]
             self.technical_lifetime: int = registered_type["technical_lifetime"]
             self.capex_per_km: float = registered_type["capex_per_km"]
             self.distance_threshold_m: float = registered_type["distance_threshold_m"] # costs are 0 if length is below this threshold to reduce binary variables
@@ -250,15 +252,35 @@ class PipeTechnology(Technology):
         self.pipe_length_km = pipe_length_km
         self.existing_capacity = existing_capacity
 
+        # Years from model start at which existing_capacity drops abruptly to 0 (no linear decay).
+        # Only required when existing_capacity is non-zero.
+        self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
+
     @property
     def below_distance_threshold(self):
         return self.pipe_length_km * 1000 < self.distance_threshold_m
 
     @property
-    def costs_eur(self):
+    def investment_costs_eur(self):
         if self.below_distance_threshold:
             return 0
         return self.capex_per_km * self.pipe_length_km
+
+    def max_capacity_per_year(self, start_year: int) -> dict[int, float]:
+        return {start_year: self.existing_capacity,
+                start_year+1: None}
+
+    def capacity_per_year(self, start_year: int) -> dict[int, float] | None:
+        if self.existing_capacity and self.existing_capacity_retirement_years is None:
+            raise ValueError(
+                f"Pipe '{self.name}' has existing_capacity={self.existing_capacity} but the "
+                f"registered type does not define 'existing_capacity_retirement_years'.")
+        if not self.existing_capacity:
+            return None
+        return {start_year: self.existing_capacity,
+                start_year + self.existing_capacity_retirement_years -1: self.existing_capacity,
+                start_year + self.existing_capacity_retirement_years: 0.0}
+
 
 
 _SECTION_TO_CLASS: dict[str, type["Technology"]] = {
@@ -266,7 +288,7 @@ _SECTION_TO_CLASS: dict[str, type["Technology"]] = {
     "central": CentralTechnology,
     "chp": CHPTechnology,
     "grids": GridTechnology,
-    "pipes": PipeTechnology,
+    "pipes": PipeTechnology
 }
 
 

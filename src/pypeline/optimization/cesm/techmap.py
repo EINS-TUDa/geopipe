@@ -2,6 +2,7 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 import pandas as pd
+from numpy.ma.core import append
 
 from pypeline.energy_system_my.region import Demand
 from pypeline.energy_system_my.imports import Import
@@ -30,6 +31,9 @@ class Techmap:
             for field in fields(self):
                 df = getattr(self, field.name)
                 df.to_excel(writer, sheet_name=field.name, index=False)
+
+def append_region_suffix(name: str, region_id: int) -> str:
+    return f"{name}_D{region_id}"
 
 def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None) -> float | str | None:
     if value is None:
@@ -92,8 +96,18 @@ def _import_to_conversion_sub_process(imp: Import, scenario_name: str) -> Conver
         cap_max=year_dep_value_to_cesm_string(imp.max_capacity_mw),
     )
 
-def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str) -> ConversionSubProcess:
-    return ...
+def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, start_year: int) -> ConversionSubProcess:
+    return ConversionSubProcess(
+        conversion_process_name=f"{pipe.name}_D{pipe.region_id_in}_D{pipe.region_id_out}",
+        commodity_in=append_region_suffix(pipe.commodity_in, pipe.region_id_in),
+        commodity_out=append_region_suffix(pipe.commodity_out, pipe.region_id_out),
+        scenario=scenario_name,
+        efficiency=pipe.efficiency,
+        technical_lifetime=pipe.technical_lifetime,
+        capex_cost_base=pipe.investment_costs_eur,
+        cap_max=year_dep_value_to_cesm_string(pipe.max_capacity_per_year(start_year)),
+        cap_res_min=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year)),
+    )
 
 def _demand_to_conversion_sub_process(
     demand: Demand,
@@ -101,8 +115,8 @@ def _demand_to_conversion_sub_process(
     scenario_name: str,
     scenario_years: list[int]) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=f"{demand.name}_D{region_id}",
-        commodity_in=demand.demand_type.commodity_in,
+        conversion_process_name=append_region_suffix(demand.name, region_id),
+        commodity_in=append_region_suffix(demand.demand_type.commodity_in, region_id),
         commodity_out="Dummy",
         scenario=scenario_name,
         min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years)),
@@ -112,9 +126,9 @@ def _demand_to_conversion_sub_process(
 def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str,
                                                   start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=f"{tech.name}_D{region_id}",
-        commodity_in=tech.commodity_in,
-        commodity_out=tech.commodity_out,
+        conversion_process_name=append_region_suffix(tech.name, region_id),
+        commodity_in=append_region_suffix(tech.commodity_in, region_id),
+        commodity_out=append_region_suffix(tech.commodity_out, region_id),
         scenario=scenario_name,
         efficiency=tech.efficiency,
         technical_lifetime=tech.technical_lifetime,
@@ -128,13 +142,13 @@ def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, reg
 
 def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_name: str, start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
-        conversion_process_name=f"{grid.name}_D{region_id}",
-        commodity_in=grid.commodity_in,
-        commodity_out=grid.commodity_out,
+        conversion_process_name=append_region_suffix(grid.name, region_id),
+        commodity_in=append_region_suffix(grid.commodity_in, region_id),
+        commodity_out=append_region_suffix(grid.commodity_out, region_id),
         scenario=scenario_name,
         efficiency=grid.efficiency,
         technical_lifetime=grid.technical_lifetime,
-        capex_cost_base=grid.investment_costs,
+        capex_cost_base=grid.investment_costs_eur,
         cap_max=year_dep_value_to_cesm_string(grid.max_capacity_per_year(start_year)),
         cap_res_min=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year)),
     )
@@ -159,7 +173,7 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
 
     # pipes
     for pipe in resolved.pipe_connections:
-        cs_list.append(_pipe_to_conversion_sub_process(pipe, scenario_name))
+        cs_list.append(_pipe_to_conversion_sub_process(pipe, scenario_name, start_year))
 
     # demands
     for region_id, demands in resolved.demands.items():
