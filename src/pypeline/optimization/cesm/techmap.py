@@ -158,8 +158,23 @@ def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_na
 
 
 
-def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
-    return ...
+def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: int, scenario_name: str, start_year: int) -> ConversionSubProcess:
+    return ConversionSubProcess(
+        conversion_process_name=f"{tech.name}_D{region_id}",
+        commodity_in=commodity_name(tech.commodity_in, region_id),
+        commodity_out=commodity_name(tech.commodity_out, region_id),
+        scenario=scenario_name,
+        efficiency=tech.efficiency,
+        technical_lifetime=tech.technical_lifetime,
+        opex_cost_energy=year_dep_value_to_cesm_string(tech.opex_cost_energy),
+        opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
+        capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
+        capex_cost_base=year_dep_value_to_cesm_string(tech.capex_cost_base),
+        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
+        cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
+        output_profile=tech.output_profile_name,
+        availability_profile=tech.availability_profile_name,
+    )
 
 def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
     return ...
@@ -196,20 +211,16 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     # central techs
     for region_id, techs in resolved.central_technologies.items():
         for tech in techs:
-            cs_list.append(_central_tech_to_conversion_sub_process(tech, region_id, scenario_name))
+            cs_list.append(_central_tech_to_conversion_sub_process(tech, region_id, scenario_name, start_year))
 
-    # chp
-    for region_id, chps in resolved.chp_technologies.items():
-        for chp in chps:
-            cs_list.append(_chp_to_conversion_sub_process(chp, region_id, scenario_name))
+    # # chp
+    # for region_id, chps in resolved.chp_technologies.items():
+    #     for chp in chps:
+    #         cs_list.append(_chp_to_conversion_sub_process(chp, region_id, scenario_name))
 
     # create DataFrame with attributes of ConversionSubProcess as columns
     columns = [f.name for f in fields(ConversionSubProcess)]
-    return pd.DataFrame(
-        [asdict(cs) for cs in cs_list
-         if isinstance(cs, ConversionSubProcess)], # TODO: Once all conversion sub-processes are implemented, this check can be removed
-        columns=columns,
-    )
+    return pd.DataFrame([asdict(cs) for cs in cs_list], columns=columns)
 
 
 def _color_from_name(name: str) -> str:

@@ -116,7 +116,6 @@ class CentralTechnology(Technology):
 
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
-                 capacity_restriction: Optional[float | dict[int, float]] = None,
                  output_profile_name: Optional[str] = None,
                  output_profile: Optional[pd.Series] = None,
                  availability_profile_name: Optional[str] = None,
@@ -136,25 +135,44 @@ class CentralTechnology(Technology):
         except KeyError:
             raise KeyError(f"The registered type '{name}' does not provide all the data for")
 
-        self.existing_capacity = existing_capacity
-        self._capacity_restriction = capacity_restriction
+        self._existing_capacity = existing_capacity
+        self.existing_capacity = existing_capacity  # triggers setter
         self.output_profile_name = output_profile_name
         self.output_profile = output_profile
         self.availability_profile_name = availability_profile_name
         self.availability_profile = availability_profile
+        # TODO: How to limit maximal capacity of a technology (e.g. max power waste heat source)
+        # TODO: consolidate capacity setting logic. Transfer this setter logic to other technologies.
 
-    def set_capacity_restriction(self, capacity_restriction: float | dict[int, float]):
-        self._capacity_restriction = capacity_restriction
+        # Years from model start by which existing_capacity has decreased linearly to 0.
+        # Only required when existing_capacity is non-zero.
+        self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
 
-    def capacity_restriction(self, year_period: int):
-        if isinstance(self._capacity_restriction, dict):
-            return self._capacity_restriction[year_period]
-        return self._capacity_restriction
+    @property
+    def existing_capacity(self) -> float:
+        return self._existing_capacity
 
-    def capacity_restriction_per_year(self, start_year: int):
-        if isinstance(self._capacity_restriction, dict):
-            return {key + start_year: value for key, value in self._capacity_restriction.items()}
-        return self._capacity_restriction
+    @existing_capacity.setter
+    def existing_capacity(self, capacity: float):
+        if capacity and self.existing_capacity_retirement_years is None:
+            raise ValueError(
+                f"Technology '{self.name}' has existing_capacity={capacity} but "
+                f"'existing_capacity_retirement_years' is not defined."
+            )
+        self._existing_capacity = capacity
+
+    def max_capacity_per_year(self, start_year: int) -> dict[int, float]:
+        return {start_year: self.existing_capacity,
+                start_year+1: None}
+
+    def capacity_per_year(self, start_year: int) -> dict[int, float] | None:
+        if not self.existing_capacity:
+            return None
+        return {start_year: self.existing_capacity,
+                start_year + self.existing_capacity_retirement_years - 1: self.existing_capacity,
+                start_year + self.existing_capacity_retirement_years: 0.0}
+
+
 
 
 class CHPTechnology(Technology):

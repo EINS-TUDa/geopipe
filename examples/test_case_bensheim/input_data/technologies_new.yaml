@@ -78,6 +78,7 @@ central:
     opex_cost_power: 2000
     capex_cost_power: 107000
     capex_cost_base: 5400
+    existing_capacity_retirement_years: 20
 
   cen_oil_boiler:
     commodity_in: oil
