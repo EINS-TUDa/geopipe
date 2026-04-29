@@ -12,15 +12,15 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from pypeline.energy_system.imports import Import, load_imports_from_yaml
-from pypeline.energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
-from pypeline.energy_system.region import compute_region_connections, RegionConnections
-from pypeline.energy_system.demand import DemandType
-from pypeline.data.data_registry import DataRegistry
-from pypeline.data.dataset import CensusTechnology
-from pypeline.energy_system.region import Demand, Region
-from pypeline.units import Unit, UnitEnum
-from pypeline.topology_builder.topology import Topology
+from .imports import Import, load_imports_from_yaml
+from .technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
+from .region import compute_region_connections, RegionConnections
+from .demand import DemandType
+from ..data.data_registry import DataRegistry
+from ..data.dataset import CensusTechnology
+from .region import Demand, Region
+from .units import Unit, UnitEnum
+from ..topology_builder.topology import Topology
 
 import logging
 
@@ -72,7 +72,7 @@ class EnergySystemBuilder:
         self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
         self._data_registry: Optional[DataRegistry] = None
-        self._unit: Unit = UnitEnum.GW.unit
+        self._unit: Unit = UnitEnum.MW.unit
         self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
         self._imports: Optional[list[Import]] = None

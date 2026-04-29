@@ -2,14 +2,15 @@ from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
 import pandas as pd
-from numpy.ma.core import append
 
-from pypeline.energy_system.region import Demand
-from pypeline.energy_system.imports import Import
-from pypeline.energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
+from ...energy_system import Unit
+from ...energy_system.region import Demand
+from ...energy_system.imports import Import
+from ...energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
     DecentralTechnology, Technology
-from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
-from pypeline.optimization.resolved_system import ResolvedSystem
+from ...energy_system.units import UnitKW, UnitGW, UnitMW
+from ...optimization.cesm.conversion_sub_process import ConversionSubProcess
+from ...optimization.resolved_system import ResolvedSystem
 
 import logging
 
@@ -63,17 +64,47 @@ def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None)
     raise TypeError(f"Unsupported type for year-dependent value: {type(value).__name__}")
 
 
-def _df_units() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {"quantity": "energy",      "scale_factor": 1.0, "input": "MWh",      "output": "MWh"},
-            {"quantity": "power",       "scale_factor": 1.0, "input": "MW",        "output": "MW"},
-            {"quantity": "cost_energy", "scale_factor": 1.0, "input": "EUR/MWh",   "output": "EUR/MWh"},
-            {"quantity": "cost_power",  "scale_factor": 1.0, "input": "EUR/MW",    "output": "EUR/MW"},
-            {"quantity": "co2_spec",    "scale_factor": 1.0, "input": "tCO2/MWh",  "output": "tCO2/MWh"},
-        ],
-        columns=["quantity", "scale_factor", "input", "output"],
-    )
+def _df_units(unit: Unit) -> pd.DataFrame:
+    if isinstance(unit, UnitKW):
+        return pd.DataFrame(
+            [
+                {"quantity": "power", "input": "kW", "scale_factor": 1, "output": "kW"},
+                {"quantity": "energy", "input": "MWh", "scale_factor": 1000, "output": "kWh"},
+                {"quantity": "co2_emissions", "input": "t", "scale_factor": 1, "output": "t"},
+                {"quantity": "cost_energy", "input": "EUR/MWh", "scale_factor": 0.001, "output": "EUR/kWh"},
+                {"quantity": "cost_power", "input": "EUR/kW", "scale_factor": 1, "output": "EUR/kW"},
+                {"quantity": "co2_spec", "input": "kg/kWh", "scale_factor": 0.001, "output": "t/kWh"},
+                {"quantity": "money", "input": "EUR", "scale_factor": 1, "output": "EUR"},
+            ],
+            columns=["quantity", "input", "scale_factor", "output"],
+        )
+    elif isinstance(unit, UnitGW):
+        return pd.DataFrame(
+            [
+                {"quantity": "power", "input": "GW", "scale_factor": 1, "output": "GW"},
+                {"quantity": "energy", "input": "TWh", "scale_factor": 1000, "output": "GWh"},
+                {"quantity": "co2_emissions", "input": "Mio t", "scale_factor": 1, "output": "Mio t"},
+                {"quantity": "cost_energy", "input": "EUR/MWh", "scale_factor": 0.001, "output": "Mio EUR/GWh"},
+                {"quantity": "cost_power", "input": "EUR/kW", "scale_factor": 1, "output": "Mio EUR/GW"},
+                {"quantity": "co2_spec", "input": "kg/kWh", "scale_factor": 0.001, "output": "Mio t/GWh"},
+                {"quantity": "money", "input": "Mio EUR", "scale_factor": 1, "output": "Mio EUR"},
+            ],
+            columns=["quantity", "input", "scale_factor", "output"],
+        )
+    elif isinstance(unit, UnitMW):
+        return pd.DataFrame(
+            [
+                {"quantity": "power", "input": "MW", "scale_factor": 1, "output": "MW"},
+                {"quantity": "energy", "input": "GWh", "scale_factor": 1000, "output": "MWh"},
+                {"quantity": "co2_emissions", "input": "kilo t", "scale_factor": 1, "output": "kilo t"},
+                {"quantity": "cost_energy", "input": "EUR/MWh", "scale_factor": 0.001, "output": "k EUR/MWh"},
+                {"quantity": "cost_power", "input": "EUR/kW", "scale_factor": 1, "output": "k EUR/MW"},
+                {"quantity": "co2_spec", "input": "kg/kWh", "scale_factor": 0.001, "output": "kilo t/MWh"},
+                {"quantity": "money", "input": "k EUR", "scale_factor": 1, "output": "k EUR"},
+            ],
+            columns=["quantity", "input", "scale_factor", "output"],
+        )
+    raise TypeError(f"Unsupported unit type: {type(unit).__name__}")
 
 
 def _df_tss(tss_name: str, dt_hours: int) -> pd.DataFrame:
