@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 import shutil
 from typing import Any
-from pypeline.energy_system_my.scenario import Scenario
+from pypeline.energy_system.scenario import Scenario
 from pypeline.optimization.cesm.reporting import write_cesm_results_html_report
 from pypeline.optimization import CESMOptimizationBackend
 from pypeline.plot.plotter import EnergySystemPlotter

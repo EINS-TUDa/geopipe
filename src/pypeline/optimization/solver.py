@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
 
-from ..energy_system_my import EnergySystem, Scenario
+from ..energy_system import EnergySystem, Scenario
 
 
 @dataclass

@@ -4,9 +4,9 @@ from pathlib import Path
 import pandas as pd
 from numpy.ma.core import append
 
-from pypeline.energy_system_my.region import Demand
-from pypeline.energy_system_my.imports import Import
-from pypeline.energy_system_my.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
+from pypeline.energy_system.region import Demand
+from pypeline.energy_system.imports import Import
+from pypeline.energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
     DecentralTechnology, Technology
 from pypeline.optimization.cesm.conversion_sub_process import ConversionSubProcess
 from pypeline.optimization.resolved_system import ResolvedSystem

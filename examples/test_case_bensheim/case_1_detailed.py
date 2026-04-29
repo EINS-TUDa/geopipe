@@ -3,9 +3,9 @@ from pathlib import Path
 
 from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
 # from examples.example_runner import ScenarioCaseConfig, #_validate_case_regions, _case_plots_dir, write_results_report
-from pypeline.energy_system_my.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
-from pypeline.energy_system_my import Scenario
-from pypeline.energy_system_my import register_technologies
+from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
+from pypeline.energy_system import Scenario
+from pypeline.energy_system import register_technologies
 from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.injection import apply_injected_techs
 # from pypeline.optimization import CESMOptimizationBackend

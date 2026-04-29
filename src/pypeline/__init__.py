@@ -1,4 +1,4 @@
-from pypeline.energy_system_my import (
+from pypeline.energy_system import (
     EnergySystem,
     EnergySystemBuilder,
     EnergySystemBuilderConfig,

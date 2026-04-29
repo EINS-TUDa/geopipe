@@ -12,13 +12,13 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from pypeline.energy_system_my.imports import Import, load_imports_from_yaml
-from pypeline.energy_system_my.technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
-from pypeline.energy_system_my.region import compute_region_connections, RegionConnections
-from pypeline.energy_system_my.demand import DemandType
+from pypeline.energy_system.imports import Import, load_imports_from_yaml
+from pypeline.energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
+from pypeline.energy_system.region import compute_region_connections, RegionConnections
+from pypeline.energy_system.demand import DemandType
 from pypeline.data.data_registry import DataRegistry
 from pypeline.data.dataset import CensusTechnology
-from pypeline.energy_system_my.region import Demand, Region
+from pypeline.energy_system.region import Demand, Region
 from pypeline.units import Unit, UnitEnum
 from pypeline.topology_builder.topology import Topology
 

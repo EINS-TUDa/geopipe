@@ -10,11 +10,11 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from pypeline.energy_system_my.scenario import Scenario
-from pypeline.energy_system_my.imports import Import
-from pypeline.energy_system_my.region import Demand
-from pypeline.energy_system_my.energy_system import EnergySystem
-from pypeline.energy_system_my.technology import PipeTechnology, DecentralTechnology, GridTechnology, \
+from pypeline.energy_system.scenario import Scenario
+from pypeline.energy_system.imports import Import
+from pypeline.energy_system.region import Demand
+from pypeline.energy_system.energy_system import EnergySystem
+from pypeline.energy_system.technology import PipeTechnology, DecentralTechnology, GridTechnology, \
     CentralTechnology, CHPTechnology
 
 
