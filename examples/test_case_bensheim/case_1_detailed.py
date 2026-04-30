@@ -7,6 +7,7 @@ from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
+from pypeline.optimization.reporting import write_html_report
 # from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
 from pypeline.topology_builder.simple_builder import build_simple_topology
@@ -59,7 +60,8 @@ def main():
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
     solution = backend.solve(energy_system, scenario)
-    results_obj = solution.results
+
+    solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
 
     # write_results_report(
     #     output_dir=CASE_DIR / "output_data",
@@ -108,7 +110,7 @@ def main():
     # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    db_path = Path(results_obj.raw["db"])
+    db_path = Path(solution.db_path)
     conn = sqlite3.connect(str(db_path))
     try:
         dao = DAO(conn)
