@@ -1,9 +1,0 @@
-regions:
-  - region_id: 0
-    street_segment_ids:
-      - DEBYBDLMgJ00028F
-      - DEBYBDLMgJ0003kU
-  - region_id: 1
-    street_segment_ids:
-      - DEBYBDLMgJ00028E
-
