@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from ...energy_system import Unit
+from ...energy_system.units import Unit
 from ...energy_system.region import Demand
 from ...energy_system.imports import Import
 from ...energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
@@ -147,6 +147,7 @@ def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, st
         capex_cost_base=pipe.investment_costs_eur,
         cap_max=year_dep_value_to_cesm_string(pipe.max_capacity_per_year(start_year)),
         cap_res_min=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year)),
+        cap_res_max=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year)),
     )
 
 def _demand_to_conversion_sub_process(
@@ -176,6 +177,7 @@ def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, reg
         opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
         capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
         cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
+        cap_res_max=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
         cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
         output_profile=tech.output_profile_name,
     )
@@ -191,6 +193,7 @@ def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_na
         capex_cost_base=grid.investment_costs_eur,
         cap_max=year_dep_value_to_cesm_string(grid.max_capacity_per_year(start_year)),
         cap_res_min=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year)),
+        cap_res_max=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year)),
     )
 
 
@@ -209,6 +212,7 @@ def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: 
         capex_cost_base=year_dep_value_to_cesm_string(tech.capex_cost_base),
         cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
         cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
+        cap_res_max=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
         output_profile=tech.output_profile_name,
         availability_profile=tech.availability_profile_name,
     )
@@ -294,7 +298,7 @@ def create_techmap(resolved: ResolvedSystem) -> Techmap:
     df_cp = _conversion_process_df(set(df_cs["conversion_process_name"]))
 
     return Techmap(
-        Units=_df_units(),
+        Units=_df_units(unit=resolved.units),
         Scenario=_df_scenario(resolved),
         Commodity=df_co,
         ConversionProcess=df_cp,

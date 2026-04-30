@@ -53,6 +53,9 @@ class UnitEnum(Enum):
     KW = "kW"
     MW = "MW"
     GW = "GW"
+    KWH = "kWh"
+    MWH = "MWh"
+    GWH = "GWh"
 
     @property
     def unit(self) -> Unit:
@@ -62,3 +65,5 @@ class UnitEnum(Enum):
             return UnitMW()
         elif self is UnitEnum.GW:
             return UnitGW()
+        else:
+            raise ValueError(f"Unsupported unit: {self}")

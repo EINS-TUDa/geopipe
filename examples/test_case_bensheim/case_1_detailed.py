@@ -6,6 +6,7 @@ from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
 from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
 from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
+from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.injection import apply_injected_techs
 # from pypeline.optimization import CESMOptimizationBackend
@@ -46,13 +47,14 @@ def main():
     )
 
     data_reg = case1_data_registry()
-    register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml")
+    register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml", clear_registry=True)
 
     builder = EnergySystemBuilder(energy_system_name="Case1")
     builder.set_system_topology(topology_result.network)
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
     builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
+    builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")

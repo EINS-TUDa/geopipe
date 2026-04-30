@@ -4,6 +4,8 @@ from typing import Any, Iterable
 
 import pandas as pd
 
+from pypeline.energy_system.units import UnitEnum
+
 
 @dataclass(frozen=True)
 class DemandType:
@@ -15,6 +17,8 @@ class DemandType:
     decrease_percent_per_year: float
     demand_column_name: str
     profile_path: Path
+    # TODO: Add unit attribute which automatically converts the demand value to the unit of the energy system if necessary.
+    #  For now, we assume that the unit of the demand value is the same as the energy unit of the energy system.
 
 
 class Demand:

@@ -72,7 +72,7 @@ class EnergySystemBuilder:
         self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
         self._data_registry: Optional[DataRegistry] = None
-        self._unit: Unit = UnitEnum.MW.unit
+        self._unit: Unit = None
         self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
         self._imports: Optional[list[Import]] = None
@@ -206,7 +206,7 @@ class EnergySystemBuilder:
 
             for name in DecentralTechnology.registered_type_names():
                 share = technology_shares_data.get(name, 0.0)
-                existing_capacity = share * demand.peak(year_period=0)
+                existing_capacity = share * demand.peak(year_period=0) * 1000 # factor energy (e.g. MWH) to power (e.g. KW)
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
                                                                   output_profile_name=demand.profile_name))
 

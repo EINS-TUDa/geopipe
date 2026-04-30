@@ -136,7 +136,6 @@ class CentralTechnology(Technology):
             raise KeyError(f"The registered type '{name}' does not provide all the data for")
 
         self._existing_capacity = existing_capacity
-        self.existing_capacity = existing_capacity  # triggers setter
         self.output_profile_name = output_profile_name
         self.output_profile = output_profile
         self.availability_profile_name = availability_profile_name

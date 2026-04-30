@@ -5,8 +5,9 @@ from typing import Any, Optional, Callable
 import geopandas as gpd
 import pandas as pd
 from sqlalchemy import text
-from pypeline.data.database_connection import DatabaseConnection
-from pypeline.units import UnitEnum
+
+from ..data.database_connection import DatabaseConnection
+from ..energy_system.units import UnitEnum
 
 class CensusTechnology(Enum):
     Gas = "Gas"
@@ -19,7 +20,6 @@ class CensusTechnology(Enum):
     District_Heating = "District Heating"
     NoEnergyCarrier = "No Energy Carrier"
 
-
 CENSUS_HEATING_CATEGORY_TO_TECH: dict[str, str | None] = {
     "Gas": "ind_gas_boiler",
     "Heizoel": "ind_oil_boiler",
@@ -31,7 +31,6 @@ CENSUS_HEATING_CATEGORY_TO_TECH: dict[str, str | None] = {
     "Fernwaerme": "HeatExchanger",
     "kein_Energietraeger": None,
 }
-
 
 def census_category_to_tech(category: str | None) -> str | None:
     if category is None:
