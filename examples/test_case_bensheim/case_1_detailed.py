@@ -7,10 +7,9 @@ from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
-# from pypeline.plot.plotter import EnergySystemPlotter
 # from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
+from pypeline.topology_builder.simple_builder import build_simple_topology
 from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 from cesm.core.data_access import DAO
 
@@ -28,7 +27,7 @@ CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
 
 def main():
-    cfg = SimpleTopologyBuilderConfig(
+    topology_result = build_simple_topology(
         streets_file=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
         scenario_file=CASE_DIR / "case_1.yaml",
         region_id_column="id",
@@ -37,7 +36,6 @@ def main():
         street_length_column="laenge_segment",
         apply_injections=True,
     )
-    topology_result = SimpleTopologyBuilder.from_config(cfg).build()
 
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},

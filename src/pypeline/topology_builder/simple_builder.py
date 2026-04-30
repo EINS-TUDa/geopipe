@@ -26,18 +26,6 @@ from pypeline.injection import (
     find_segment_indices,
 )
 
-
-@dataclass(frozen=True)
-class SimpleTopologyBuilderConfig:
-    streets_file: Path
-    scenario_file: Path
-    region_id_column: str = "id"
-    street_id_column: str = "street_id"
-    demand_column: str = "total_heat_demand"
-    street_length_column: str = "street_length"
-    apply_injections: bool = True
-
-
 def load_scenario_yaml(config_file: Path) -> dict[str, Any]:
     if not config_file.exists():
         raise FileNotFoundError(f"Scenario file not found: {config_file}")
@@ -217,8 +205,7 @@ def _assign_regions(
     return assigned
 
 
-def _run_simple_pipeline(
-    *,
+def build_simple_topology(
     streets_file: Path,
     scenario_file: Path,
     region_id_column: str,
@@ -284,49 +271,3 @@ def _run_simple_pipeline(
         injected_demand_mwh=injected_demand_mwh,
         injected_techs=injected_techs,
     )
-
-
-class SimpleTopologyBuilder(AbstractTopologyBuilder):
-    """Build region topologies from case.yaml using street-segment IDs."""
-
-    def __init__(
-        self,
-        *,
-        streets_file: Path,
-        scenario_file: Path,
-        region_id_column: str = "id",
-        street_id_column: str = "street_id",
-        demand_column: str = "total_heat_demand",
-        street_length_column: str = "street_length",
-        apply_injections: bool = True,
-    ) -> None:
-        self.streets_file = streets_file
-        self.scenario_file = scenario_file
-        self.region_id_column = region_id_column
-        self.street_id_column = street_id_column
-        self.demand_column = demand_column
-        self.street_length_column = street_length_column
-        self.apply_injections = apply_injections
-
-    @classmethod
-    def from_config(cls, config: SimpleTopologyBuilderConfig) -> "SimpleTopologyBuilder":
-        return cls(
-            streets_file=config.streets_file,
-            scenario_file=config.scenario_file,
-            region_id_column=config.region_id_column,
-            street_id_column=config.street_id_column,
-            demand_column=config.demand_column,
-            street_length_column=config.street_length_column,
-            apply_injections=config.apply_injections,
-        )
-
-    def build(self) -> TopologyBuildResult:
-        return _run_simple_pipeline(
-            streets_file=self.streets_file,
-            scenario_file=self.scenario_file,
-            region_id_column=self.region_id_column,
-            street_id_column=self.street_id_column,
-            demand_column=self.demand_column,
-            street_length_column=self.street_length_column,
-            apply_injections=self.apply_injections,
-        )
