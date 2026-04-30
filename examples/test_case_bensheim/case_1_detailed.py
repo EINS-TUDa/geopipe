@@ -43,7 +43,7 @@ def main():
         considered_connected_region_distance_m= 50,
         default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
-        additional_grid_capacity_factor={"heat_grid" : 1.5}
+        additional_grid_capacity_factor={"heat_grid" : 1}
     )
 
     data_reg = case1_data_registry()
@@ -63,23 +63,6 @@ def main():
 
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
 
-    # write_results_report(
-    #     output_dir=CASE_DIR / "output_data",
-    #     model_name=config.model_name,
-    #     scenario_name=config.scenario_name,
-    #     results_obj=results_obj,
-    #     metadata={
-    #         "model_name": config.model_name,
-    #         "scenario_name": config.scenario_name,
-    #         "tss_name": config.tss_name,
-    #         "demand_name": config.demand_name,
-    #         "start_year": config.start_year,
-    #         "end_year": config.end_year,
-    #         "year_gap": config.year_gap,
-    #         "apply_injections": config.apply_injections,
-    #     },
-    # )
-    #
     # from compare_techmaps import compare_techmaps
     # compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison.html")
 

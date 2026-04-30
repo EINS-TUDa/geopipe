@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pickle
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +50,15 @@ class Solution:
             self,
             output_path=Path(output_path)
         )
+
+    def save(self, path: str) -> None:
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, path: str) -> "Solution":
+        with open(path, "rb") as f:
+            return pickle.load(f)
 
 
 class OptimizationBackend(ABC):
