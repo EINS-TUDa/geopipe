@@ -73,7 +73,7 @@ class EnergySystemBuilder:
         self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
         self._data_registry: Optional[DataRegistry] = None
-        self._unit: Unit = None
+        self._unit: Optional[Unit] = None
         self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
         self._imports: Optional[list[Import]] = None
@@ -207,11 +207,59 @@ class EnergySystemBuilder:
 
             for name in DecentralTechnology.registered_type_names():
                 share = technology_shares_data.get(name, 0.0)
-                existing_capacity = share * demand.peak(year_period=0) * 1000 # factor energy (e.g. MWH) to power (e.g. KW)
+                existing_capacity = share * demand.peak(
+                    year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
                                                                   output_profile_name=demand.profile_name))
 
         return decentral_technologies
+
+    def _build_grids(self, topology: Topology, decentralized_tech_per_region) -> dict[str, GridTechnology]:
+        region_length_km = topology.total_edge_length / 1000.0
+        grids = {grid_type_name: GridTechnology(name=grid_type_name, length_km=region_length_km)
+                 for grid_type_name in GridTechnology.registered_type_names()}
+
+        for decentralized_technology in decentralized_tech_per_region:
+            grid = grids.get(self._find_grid_type_from_decentralized_technology(decentralized_technology, grids))
+            if not grid:
+                continue
+            grid.existing_capacity += decentralized_technology.existing_capacity
+
+        return grids
+
+    def _build_central_technologies(self, region_ids: tuple[int, ...],
+                                    central_techs_per_region: dict[int, dict[str, CentralTechnology]],
+                                    region_groups_per_grid_type: dict[str, list[set[int]]]) -> dict[
+        int, dict[str, CentralTechnology]]:
+        # Place central technologies in preferred locations
+        # If no preferred region for a commodity, place central technologies in all regions outside connected groups.
+        for grid_type in GridTechnology.registered_type_names():
+            commodity_in = GridTechnology.get_type_defaults(grid_type).get("commodity_in")
+            preferred_regions = self._config.preferred_central_technologies_location_per_commodity.get(commodity_in,
+                                                                                                       None)
+            if preferred_regions:
+                for region_id in preferred_regions:
+                    if region_id not in region_ids:
+                        raise ValueError(
+                            f"Preferred region id {region_id} for commodity {commodity_in} is not a valid region id.")
+                    for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
+                                                                                           commodity_in):
+                        if central_tech_name in central_techs_per_region[region_id]:
+                            continue
+                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology(
+                            name=central_tech_name)
+            else:
+                for region_id in region_ids:
+                    if any(region_id in group for group in region_groups_per_grid_type.get(grid_type, [])):
+                        continue
+                    for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
+                                                                                           commodity_in):
+                        if central_tech_name in central_techs_per_region[region_id]:
+                            continue
+                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology(
+                            name=central_tech_name)
+
+        return central_techs_per_region
 
     def _pre_build(self):
         if not self._demand_types:
@@ -238,8 +286,9 @@ class EnergySystemBuilder:
                 continue
             if commodity_in == pipe_tech_commodity_out and commodity_out == pipe_tech_commodity_in:
                 return grid_type_name
-        raise ValueError(f"No grid type found for pipe type {pipe_type_name} with commodity_in {pipe_tech_commodity_in} "
-                         f"and commodity_out {pipe_tech_commodity_out}")
+        raise ValueError(
+            f"No grid type found for pipe type {pipe_type_name} with commodity_in {pipe_tech_commodity_in} "
+            f"and commodity_out {pipe_tech_commodity_out}")
 
     @staticmethod
     def _find_grid_type_from_decentralized_technology(decentralized_technology: DecentralTechnology,
@@ -266,25 +315,12 @@ class EnergySystemBuilder:
         region_ids = tuple(self._region_topologies().keys())
         demands_per_region: dict[int, list[Demand]] = {}
         decentralized_tech_per_region: dict[int, list[DecentralTechnology]] = {}
+        grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
         for region_id, topology in self._region_topologies().items():
             demands_per_region[region_id] = self._build_demands(topology)
             decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology,
                                                                                           demands_per_region[region_id])
-
-        # Create grids per region. Each registered grid type exists on every region.
-        grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
-        for region_id, topology in self._region_topologies().items():
-            # Total network length of this region, shared by every grid serving the region.
-            region_length_km = topology.total_edge_length / 1000.0
-            grids = {grid_type_name: GridTechnology(name=grid_type_name, length_km=region_length_km)
-                     for grid_type_name in GridTechnology.registered_type_names()}
-
-            for decentralized_technology in decentralized_tech_per_region[region_id]:
-                grid = grids.get(self._find_grid_type_from_decentralized_technology(decentralized_technology, grids))
-                if not grid:
-                    continue
-                grid.existing_capacity += decentralized_technology.existing_capacity
-            grid_tech_per_region[region_id] = grids
+            grid_tech_per_region[region_id] = self._build_grids(topology, decentralized_tech_per_region[region_id])
 
         # All connections between regions
         region_connections: RegionConnections = compute_region_connections(self._region_topologies(),
@@ -315,7 +351,8 @@ class EnergySystemBuilder:
             region_graph = nx.Graph()
             nodes_in_graph = [region_id for region_id in region_ids
                               if grid_tech_per_region[region_id][grid_type_name].existing_capacity > 0]
-            edges_in_graph = [(region_1_id, region_2_id, {"len": length}) for region_1_id, region_2_id, length in region_connections
+            edges_in_graph = [(region_1_id, region_2_id, {"len": length}) for region_1_id, region_2_id, length in
+                              region_connections
                               if length <= self._config.considered_connected_region_distance_m
                               if region_1_id in nodes_in_graph and region_2_id in nodes_in_graph]
             region_graph.add_nodes_from(nodes_in_graph)
@@ -389,31 +426,7 @@ class EnergySystemBuilder:
 
         # Place central technologies in preferred locations
         # If no preferred region for a commodity, place central technologies in all regions outside connected groups.
-        for grid_type in GridTechnology.registered_type_names():
-            commodity_in = GridTechnology.get_type_defaults(grid_type).get("commodity_in")
-            preferred_regions = self._config.preferred_central_technologies_location_per_commodity.get(commodity_in,
-                                                                                                       None)
-            if preferred_regions:
-                for region_id in preferred_regions:
-                    if region_id not in region_ids:
-                        raise ValueError(
-                            f"Preferred region id {region_id} for commodity {commodity_in} is not a valid region id.")
-                    for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
-                                                                                           commodity_in):
-                        if central_tech_name in central_techs_per_region[region_id]:
-                            continue
-                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology(
-                            name=central_tech_name)
-            else:
-                for region_id in region_ids:
-                    if any(region_id in group for group in region_groups_per_grid_type.get(grid_type, [])):
-                        continue
-                    for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
-                                                                                           commodity_in):
-                        if central_tech_name in central_techs_per_region[region_id]:
-                            continue
-                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology(
-                            name=central_tech_name)
+        central_techs_per_region = self._build_central_technologies(region_ids, central_techs_per_region, region_groups_per_grid_type)
 
         # create regions
         regions = []
