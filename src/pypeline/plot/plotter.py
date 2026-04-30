@@ -16,8 +16,7 @@ import geopandas as gpd
 import pandas as pd
 from shapely import voronoi_polygons
 from shapely.geometry import MultiPoint, Point
-from pypeline.energy_system.core import EnergySystem
-from pypeline.energy_system.rule_book import DEFAULT_HEAT_GRID_DEMAND_NAME
+from pypeline.energy_system import EnergySystem
 
 
 class PlotDefaults:

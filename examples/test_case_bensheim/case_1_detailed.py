@@ -2,29 +2,27 @@ import sqlite3
 from pathlib import Path
 
 from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
-# from examples.example_runner import ScenarioCaseConfig, #_validate_case_regions, _case_plots_dir, write_results_report
-from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystem, EnergySystemBuilderConfig
+from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
 from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
-from pypeline.topology_builder.core import streets_for_topology_plot
+from pypeline.plot.plotter import EnergySystemPlotter
 # from pypeline.injection import apply_injected_techs
-# from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.plot.plotter import EnergySystemPlotter
-# from pypeline.topology_builder.core import edge_metrics_from_topology_result, streets_for_topology_plot
 from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
-# from cesm.core.plotter import Plotter as CesmPlotter, PlotType
-# from cesm.core.data_access import DAO
+from cesm.core.plotter import Plotter as CesmPlotter, PlotType
+from cesm.core.data_access import DAO
 
 import logging
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-logging.getLogger("gurobipy").setLevel(logging.WARNING)
+logging.getLogger("pypeline").setLevel(logging.INFO)
+logging.getLogger("cesm").setLevel(logging.INFO)
 
 CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
@@ -61,13 +59,10 @@ def main():
 
     energy_system = builder.build()
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
-
-    # streets_for_plot = streets_for_topology_plot(topology_result, region_id_column="id")
-
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
-
     solution = backend.solve(energy_system, scenario=scenario)
     results_obj = solution.results
+
     # write_results_report(
     #     output_dir=CASE_DIR / "output_data",
     #     model_name=config.model_name,
@@ -103,39 +98,39 @@ def main():
     # )
     # print(f"Saved topology plot: {topology_plot_path}")
     #
-    # # --- 2) Technology mix plot ---
+    # --- 2) Technology mix plot ---
     # plotter = EnergySystemPlotter(energy_system)
     # years = scenario.years
     # mix_plot_paths = plotter.save_default_mix_plots(
     #     results_obj.raw,
     #     years=years,
-    #     plots_dir=plots_dir,
-    #     demand_name=config.demand_name,
+    #     plots_dir=CASE_DIR / "output_data",
+    #     demand_name="residential_heat",
     # )
     # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
     #
-    # # --- 3) Sankey diagrams via CESM plot module ---
-    # db_path = Path(results_obj.raw["db"])
-    # conn = sqlite3.connect(str(db_path))
-    # try:
-    #     dao = DAO(conn)
-    #     sankey_plotter = CesmPlotter(dao)
-    #     for year in years:
-    #         sankey_fig = sankey_plotter.plot_sankey(year=year)
-    #         sankey_output = plots_dir / f"sankey_{year}.html"
-    #         sankey_fig.write_html(str(sankey_output))
-    #         print(f"Saved Sankey diagram: {sankey_output}")
-    #
-    #     # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
-    #     heat_commodities = [
-    #         co for co in dao.get_set("commodity")
-    #         if "residential_heat_D" in str(co)
-    #     ]
-    #     for commodity in heat_commodities:
-    #         sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
-    #         sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
-    # finally:
-    #     conn.close()
+    # --- 3) Sankey diagrams via CESM plot module ---
+    db_path = Path(results_obj.raw["db"])
+    conn = sqlite3.connect(str(db_path))
+    try:
+        dao = DAO(conn)
+        sankey_plotter = CesmPlotter(dao)
+        for year in scenario.years:
+            sankey_fig = sankey_plotter.plot_sankey(year=year)
+            # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
+            # sankey_fig.write_html(str(sankey_output))
+            # print(f"Saved Sankey diagram: {sankey_output}")
+
+        # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
+        heat_commodities = [
+            co for co in dao.get_set("commodity")
+            if "residential_heat_D" in str(co)
+        ]
+        for commodity in heat_commodities:
+            sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+            sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+    finally:
+        conn.close()
 
 
 main()
