@@ -1,26 +1,7 @@
-"""CESMOptimizationBackend — the main entry point for CESM-based optimization.
-
-Implements the :class:`~pypeline.optimization.solver.OptimizationBackend`
-interface by orchestrating the full solve pipeline::
-
-    CESMOptimizationBackend.solve(energy_system, scenario)
-        │
-        ├─ input_writer.write_cesm_inputs_from_energy_system()
-        │       writes techmap XLSX to output_dir
-        │       writes timeseries TXT to timeseries_dir
-        │
-        ├─ _run_cesm()
-        │       calls the CESM Python API directly (Parser → Model → save_output)
-        │       writes db.sqlite to output_dir / run_subdir
-        │
-        ├─ result_parser.backfill_missing_commodity_timeseries()
-        │       fills gaps in output_co_y_t from timeseries
-        │
-        └─ result_parser.parse_cesm_outputs()
-                returns CESMResults → Solution
-"""
+# coding=utf-8
 import logging
 import sqlite3
+import time
 from pathlib import Path
 from gurobipy import GRB
 
@@ -71,7 +52,7 @@ class CESMOptimizationBackend(OptimizationBackend):
 
     # OptimizationBackend API ------------------------------------------------
     def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
-        db_path = self.output_dir / "{energy_system.name}-{scenario.name}.sqlite"
+        db_path = self.output_dir / f"{energy_system.name}-{scenario.name}.sqlite"
 
         resolved = resolve_system(energy_system,scenario)
         techmap = create_techmap(resolved)
@@ -83,6 +64,7 @@ class CESMOptimizationBackend(OptimizationBackend):
 
 
     def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path) -> None:
+        start = time.perf_counter()
         logger.info("Running CESM optimization for energy system '%s', scenario '%s'", energy_system_name, scenario_name)
         logger.info("CESM techmap input directory: %s", self.output_dir)
         conn = sqlite3.connect(":memory:")
@@ -113,3 +95,4 @@ class CESMOptimizationBackend(OptimizationBackend):
         conn.backup(disk)
         disk.close()
         conn.close()
+        logger.info("Finished CESM optimization in %.2f seconds. Output DB: %s", time.perf_counter() - start, db_path)

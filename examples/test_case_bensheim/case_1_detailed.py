@@ -23,6 +23,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+logging.getLogger("gurobipy").setLevel(logging.WARNING)
+
 CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
 

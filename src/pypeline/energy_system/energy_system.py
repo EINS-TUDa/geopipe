@@ -1,4 +1,5 @@
 # coding=utf-8
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np
@@ -259,6 +260,7 @@ class EnergySystemBuilder:
         return None
 
     def build(self) -> EnergySystem:
+        start = time.perf_counter()
         self._pre_build()
 
         region_ids = tuple(self._region_topologies().keys())
@@ -427,13 +429,15 @@ class EnergySystemBuilder:
             regions.append(region)
 
         pipes = [pipe for pipes_by_connection in pipes_per_type.values() for pipe in pipes_by_connection.values()]
-        return EnergySystem(name=self.energy_system_name,
-                            regions=regions,
-                            units=self._unit,
-                            system_topology=self._system_topology,
-                            imports=self._imports,
-                            pipes=pipes
-                            )
+        energy_system = EnergySystem(name=self.energy_system_name,
+                                     regions=regions,
+                                     units=self._unit,
+                                     system_topology=self._system_topology,
+                                     imports=self._imports,
+                                     pipes=pipes
+                                     )
+        logger.info("EnergySystemBuilder.build() took %.3f s", time.perf_counter() - start)
+        return energy_system
 
     def verify(self):
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
