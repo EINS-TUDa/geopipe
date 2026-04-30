@@ -8,6 +8,7 @@ from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
+from pypeline.topology_builder.core import streets_for_topology_plot
 # from pypeline.injection import apply_injected_techs
 # from pypeline.optimization import CESMOptimizationBackend
 # from pypeline.plot.plotter import EnergySystemPlotter
@@ -66,7 +67,7 @@ def main():
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
 
     solution = backend.solve(energy_system, scenario=scenario)
-    # results_obj = solution.results
+    results_obj = solution.results
     # write_results_report(
     #     output_dir=CASE_DIR / "output_data",
     #     model_name=config.model_name,

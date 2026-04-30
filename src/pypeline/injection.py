@@ -6,6 +6,8 @@ import geopandas as gpd
 import pandas as pd
 # from pypeline.energy_system.core import EnergySystem
 
+# TODO: Check if this still makes sense
+
 
 def resolve_region_technology(region: Any, technology_name: str) -> Any:
     candidates = [str(technology_name)]
