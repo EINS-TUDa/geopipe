@@ -60,7 +60,7 @@ def main():
     energy_system = builder.build()
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
-    solution = backend.solve(energy_system, scenario=scenario)
+    solution = backend.solve(energy_system, scenario)
     results_obj = solution.results
 
     # write_results_report(

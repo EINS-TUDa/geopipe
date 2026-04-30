@@ -51,7 +51,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     # OptimizationBackend API ------------------------------------------------
-    def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
+    def solve(self, energy_system: EnergySystem, scenario: Scenario) -> Solution:
         run_name = f"{energy_system.name}_{scenario.name}"
         db_path = self.output_dir / f"{run_name}.sqlite"
 
