@@ -52,23 +52,24 @@ class CESMOptimizationBackend(OptimizationBackend):
 
     # OptimizationBackend API ------------------------------------------------
     def solve(self, energy_system: EnergySystem, scenario: Scenario | None = None) -> Solution:
-        db_path = self.output_dir / f"{energy_system.name}-{scenario.name}.sqlite"
+        run_name = f"{energy_system.name}_{scenario.name}"
+        db_path = self.output_dir / f"{run_name}.sqlite"
 
         resolved = resolve_system(energy_system,scenario)
         techmap = create_techmap(resolved)
-        techmap.to_excel(self.output_dir / f"{energy_system.name}.xlsx")
+        techmap.to_excel(self.output_dir / f"{run_name}.xlsx")
 
-        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path)
+        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path, run_name=run_name)
         results = parse_cesm_outputs(db_path)
         return Solution(energy_system=energy_system, scenario=scenario, results=results)
 
 
-    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path) -> None:
+    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path, run_name: str) -> None:
         start = time.perf_counter()
         logger.info("Running CESM optimization for energy system '%s', scenario '%s'", energy_system_name, scenario_name)
         logger.info("CESM techmap input directory: %s", self.output_dir)
         conn = sqlite3.connect(":memory:")
-        parser = Parser(energy_system_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
+        parser = Parser(run_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
         parser.parse()
         model = Model(conn=conn)
         model.solve()

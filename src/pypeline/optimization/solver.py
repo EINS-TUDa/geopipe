@@ -8,11 +8,11 @@ from ..energy_system import EnergySystem, Scenario
 
 @dataclass
 class Results:
-    active_capacities: pd.DataFrame  # Columns: year, technology, capacity
-    yearly_energy_outputs: pd.DataFrame  # Columns: year, technology, energy_output
-    opex: Optional[float]
-    capex: Optional[float]
-    totex: Optional[float]
+    active_capacities: pd.DataFrame  # Columns: year, technology, region_id, capacity
+    yearly_energy_outputs: pd.DataFrame  # Columns: year, technology, region_id, energy_output
+    opex: float
+    capex: float
+    totex: float
 
 
 @dataclass

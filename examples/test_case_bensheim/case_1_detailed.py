@@ -7,7 +7,7 @@ from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
-from pypeline.plot.plotter import EnergySystemPlotter
+# from pypeline.plot.plotter import EnergySystemPlotter
 # from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
 from pypeline.topology_builder.simple_builder import SimpleTopologyBuilderConfig, SimpleTopologyBuilder
@@ -108,7 +108,7 @@ def main():
     #     demand_name="residential_heat",
     # )
     # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
-    #
+
     # --- 3) Sankey diagrams via CESM plot module ---
     db_path = Path(results_obj.raw["db"])
     conn = sqlite3.connect(str(db_path))
