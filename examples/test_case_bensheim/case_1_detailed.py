@@ -7,7 +7,6 @@ from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend
-from pypeline.optimization.reporting import write_html_report
 # from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
 from pypeline.topology_builder.simple_builder import build_simple_topology
@@ -62,9 +61,6 @@ def main():
     solution = backend.solve(energy_system, scenario)
 
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
-
-    # from compare_techmaps import compare_techmaps
-    # compare_techmaps(path_v1=CASE_DIR / "output_data" / f"Case1_pre_refactor.xlsx", path_v2=CASE_DIR / "output_data" / f"Case1.xlsx", path_output=CASE_DIR / "output_data" / "techmap_comparison.html")
 
     # # --- 1) Street topology plot ---
     # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
