@@ -1,32 +1,25 @@
+# coding=utf-8
 """Simple scenario-driven topology builder.
 
 Owns YAML-based region assignment and optional injection handling.
 Does not own generic graph conversion primitives.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
 import networkx as nx
-import pandas as pd
 import yaml
+import logging
 
-from pypeline.topology_builder.core import (
-    AbstractTopologyBuilder,
-    TopologyBuildResult,
-    gdf_to_nx,
-    gdf_to_region_topologies,
-)
-from pypeline.injection import (
-    apply_injections as apply_topology_injections,
-    find_segment_indices,
-)
+from pypeline.topology_builder.core import TopologyBuildResult, gdf_to_nx
 
-def load_scenario_yaml(config_file: Path) -> dict[str, Any]:
+logger = logging.getLogger(__name__)
+
+
+def load_yaml(config_file: Path) -> dict[str, Any]:
     if not config_file.exists():
         raise FileNotFoundError(f"Scenario file not found: {config_file}")
     with config_file.open("r", encoding="utf-8") as handle:
@@ -36,238 +29,138 @@ def load_scenario_yaml(config_file: Path) -> dict[str, Any]:
     return data
 
 
-def _resolve_region_anchor_indices(
-    streets: gpd.GeoDataFrame,
-    *,
-    region: dict[str, Any],
-    region_idx: int,
-    street_id_column: str,
-) -> list[int]:
-    segment_ids = region.get("street_segment_ids")
-    if not isinstance(segment_ids, list) or not segment_ids:
-        raise ValueError(f"regions[{region_idx}].street_segment_ids must be a non-empty list")
+def modify_streets_data(streets_data: gpd.GeoDataFrame | Path,
+                        modifications_file: Path, ) -> gpd.GeoDataFrame:
+    """Modify the data of a geopandas GeoDataFrame according to the specifications in a YAML file.
 
-    indices: list[int] = []
-    for segment_id in segment_ids:
-        hit = find_segment_indices(streets, street_id_column=street_id_column, segment_id=segment_id)
-        if not hit:
-            raise ValueError(f"Unknown street_segment_id '{segment_id}' in regions[{region_idx}]")
-        indices.extend(hit)
+    The yaml file mus have the following structure. The elements in the GeoDataFrame is described with a column name
+    and a row specifier which can be either the row index or the entry in another column.
+    For each entry, there are two actions supported: add and replace.
 
-    return sorted(set(int(i) for i in indices))
+    .. code-block:: yaml
+        column_name:  # Name of the column where to change
+          - index: 0  # Index of the row where to change
+            add: 50
+          - column_name: value_in_column  # Specifier of the row where to change, e.g. column_name: value_in_column
+            replace: 100
 
+    Parameters
+    ----------
+    streets_data : gpd.GeoDataFrame | Path
+        A GeoDataFrame containing the street data or a path to a file that can be read into a GeoDataFrame.
+    modifications_file : Path
+        A path to a YAML file that specifies the modifications to be made to the GeoDataFrame.
 
-def _all_geometry_nodes(geometry) -> list[tuple[float, float]]:
-    if geometry is None:
-        raise ValueError("Street segment geometry is missing")
+    Returns
+    -------
+    modified_streets_data : gpd.GeoDataFrame
+    """
+    if isinstance(streets_data, Path):
+        streets_data = gpd.read_file(streets_data)
+    streets_data: gpd.GeoDataFrame
 
-    if geometry.geom_type == "LineString":
-        lines = [geometry]
-    elif geometry.geom_type == "MultiLineString":
-        lines = list(geometry.geoms)
-    else:
-        raise ValueError(f"Unsupported street geometry type '{geometry.geom_type}'")
+    modifications_data = load_yaml(modifications_file)
 
-    nodes: list[tuple[float, float]] = []
-    seen: set[tuple[float, float]] = set()
-    for line in lines:
-        for coord in line.coords:
-            node = (float(coord[0]), float(coord[1]))
-            if node not in seen:
-                seen.add(node)
-                nodes.append(node)
+    for column_name, mod_data_per_street in modifications_data.items():
+        column_name: str
+        mod_data_per_street: list[dict[str, Any]]
+        for mod_data in mod_data_per_street:
+            mod_data: dict[str, Any]
+            if len(mod_data) != 2:
+                raise ValueError()
 
-    if not nodes:
-        raise ValueError("Street segment has no coordinates")
+            add_value = mod_data.pop("add", None)
+            replace_value = mod_data.pop("replace", None)
 
-    return nodes
+            if add_value is None and replace_value is None:
+                raise ValueError()
+            if add_value is not None and replace_value is not None:
+                raise ValueError()
 
-
-def _expand_region_with_shortest_paths(
-    streets: gpd.GeoDataFrame,
-    *,
-    seed_indices: list[int],
-    full_network: nx.Graph,
-    street_id_column: str,
-) -> list[int]:
-    if len(seed_indices) <= 1:
-        return seed_indices
-
-    selected = set(int(i) for i in seed_indices)
-    anchor_idx = int(seed_indices[0])
-    anchor_nodes = _all_geometry_nodes(streets.at[anchor_idx, "geometry"])
-
-    try:
-        lengths, paths = nx.multi_source_dijkstra(
-            full_network, sources=anchor_nodes, weight="length"
-        )
-    except nx.NodeNotFound as exc:
-        src_sid = streets.at[anchor_idx, street_id_column]
-        raise ValueError(f"Anchor street segment '{src_sid}' is not present in the network") from exc
-
-    for row_idx in seed_indices[1:]:
-        target_idx = int(row_idx)
-        target_nodes = _all_geometry_nodes(streets.at[target_idx, "geometry"])
-        reachable = [(lengths[n], n) for n in target_nodes if n in lengths]
-        if not reachable:
-            src_sid = streets.at[anchor_idx, street_id_column]
-            dst_sid = streets.at[target_idx, street_id_column]
-            raise ValueError(f"No path found to connect street segments '{src_sid}' and '{dst_sid}'")
-        _, best_target = min(reachable)
-        path = paths[best_target]
-
-        for u, v in zip(path[:-1], path[1:]):
-            edge_data = full_network.get_edge_data(u, v) or {}
-            attr_dicts: list[dict[str, Any]]
-            if isinstance(edge_data, dict) and street_id_column in edge_data:
-                attr_dicts = [edge_data]
-            elif isinstance(edge_data, dict):
-                attr_dicts = [val for val in edge_data.values() if isinstance(val, dict)]
+            [(key, value)] = mod_data.items()
+            if key == "index":
+                row_specifier = streets_data.index == value
             else:
-                attr_dicts = []
+                row_specifier = streets_data[key] == value
 
-            for attrs in attr_dicts:
-                sid = attrs.get(street_id_column)
-                if sid is None:
-                    continue
-                selected.update(
-                    find_segment_indices(streets, street_id_column=street_id_column, segment_id=sid)
-                )
+            value = streets_data.loc[row_specifier, column_name].iloc[0]
 
-    return sorted(selected)
+            if add_value is not None:
+                value = value + add_value
+            if replace_value is not None:
+                value = replace_value
 
+            streets_data.loc[row_specifier, column_name] = value
 
-def _assign_regions(
-    streets: gpd.GeoDataFrame,
-    *,
-    regions: list[dict[str, Any]],
-    region_id_column: str,
-    street_id_column: str,
-) -> gpd.GeoDataFrame:
-    if not regions:
-        raise ValueError("Scenario must define a non-empty 'regions' list")
-
-    assigned = streets.copy()
-    assigned[region_id_column] = pd.NA
-
-    full_network: nx.Graph | None = None
-    owner_by_row: dict[int, Any] = {}
-
-    for region_idx, region in enumerate(regions):
-        if not isinstance(region, dict):
-            raise ValueError(f"regions[{region_idx}] must be a mapping")
-
-        allowed_region_keys = {
-            "region_id",
-            "street_segment_ids",
-        }
-        unsupported_keys = sorted(set(region.keys()) - allowed_region_keys)
-        if unsupported_keys:
-            raise ValueError(f"regions[{region_idx}] has unsupported keys: {unsupported_keys}")
-
-        region_id = region.get("region_id")
-        if region_id is None:
-            raise ValueError(f"regions[{region_idx}] missing 'region_id'")
-
-        seed_indices = _resolve_region_anchor_indices(
-            assigned,
-            region=region,
-            region_idx=region_idx,
-            street_id_column=street_id_column,
-        )
-
-        resolved_indices = seed_indices
-        if len(seed_indices) > 1:
-            if full_network is None:
-                full_network = gdf_to_nx(assigned)
-            resolved_indices = _expand_region_with_shortest_paths(
-                assigned,
-                seed_indices=seed_indices,
-                full_network=full_network,
-                street_id_column=street_id_column,
-            )
-
-        for row_idx in resolved_indices:
-            previous_region = owner_by_row.get(int(row_idx))
-            if previous_region is not None and previous_region != region_id:
-                sid = assigned.at[int(row_idx), street_id_column]
-                raise ValueError(
-                    f"Street segment '{sid}' is assigned to multiple regions ({previous_region}, {region_id})"
-                )
-            owner_by_row[int(row_idx)] = region_id
-
-    if not owner_by_row:
-        raise ValueError("Scenario region mapping resulted in no assigned street segments")
-
-    for row_idx, region_id in owner_by_row.items():
-        assigned.at[int(row_idx), region_id_column] = region_id
-
-    return assigned
+    return streets_data
 
 
-def build_simple_topology(
-    streets_file: Path,
-    scenario_file: Path,
-    region_id_column: str,
-    street_id_column: str,
-    demand_column: str,
-    street_length_column: str,
-    apply_injections: bool,
-) -> TopologyBuildResult:
-    streets = gpd.read_file(streets_file)
-    if street_length_column not in streets.columns:
-        streets[street_length_column] = streets.geometry.length.astype(float)
+def build_simple_topology(streets_data: gpd.GeoDataFrame | Path,
+                          grouping: dict[str, dict[str, list[Any]]] | Path,
+                          region_id_column: str,
+                          default_region: Any = None) -> TopologyBuildResult:
+    """Build a topology according to the specifies grouping.
 
-    scenario_data = load_scenario_yaml(scenario_file)
-    regions = scenario_data.get("regions", [])
-    if not isinstance(regions, list):
-        raise ValueError("Scenario 'regions' must be a list")
+    The grouping is either a dict mapping a region name to a row selector or a yaml file that evaluates to such a dict.
+    For example:
 
-    injections = scenario_data.get("injections", [])
-    if injections is None:
-        injections = []
-    if not isinstance(injections, list):
-        raise ValueError("Scenario 'injections' must be a list")
+    .. code-block:: yaml
+        region_1:
+          index:
+            - 0
+            - 1
+          street_id:
+            - DEHE04620000AGYW
+            - DEHE04620000AGYV
+        region_2:
+          name:
+            - "Main Street"
 
-    allowed_root_keys = {"regions", "injections"}
-    unsupported_root_keys = sorted(set(scenario_data.keys()) - allowed_root_keys)
-    if unsupported_root_keys:
-        raise ValueError(f"Scenario has unsupported root keys: {unsupported_root_keys}")
+    For each region, the row selector specifies which rows are in the region.
+    In the example, region_1 contains all rows with index 0 and 1, and also those rows with specified "street_id".
+    Region_2 on the other hand contains all rows that have the name "Main Street".
 
-    streets = _assign_regions(
-        streets,
-        regions=regions,
-        region_id_column=region_id_column,
-        street_id_column=street_id_column,
-    )
+    Parameters
+    ----------
+    streets_data: gpd.GeoDataFrame | Path
+        A GeoDataFrame containing the street data or a path to a file that can be read into a GeoDataFrame.
+    grouping: dict[str, dict[str, list[Any]]] | Path
+        A dict mapping region names to row selectors or a path to a YAML file that evaluates to such a dict.
+    region_id_column: str
+        The column name where to write the region
+    default_region: Any
+        The default value to take for a region.
 
-    injected_demand_mwh = 0.0
-    injected_techs: list[dict[str, Any]] = []
-    if apply_injections:
-        streets, injected_demand_mwh, injected_techs = apply_topology_injections(
-            streets,
-            injections=injections,
-            street_id_column=street_id_column,
-            demand_column=demand_column,
-            region_id_column=region_id_column,
-        )
+    Returns
+    -------
+    TopologyBuildResult
+    """
+    if isinstance(streets_data, Path):
+        streets_data = gpd.read_file(streets_data)
+    streets_data: gpd.GeoDataFrame
 
-    assigned = streets[streets[region_id_column].notna()].copy()
-    if assigned.empty:
-        raise ValueError("Missing region-assigned street segments")
+    if isinstance(grouping, Path):
+        grouping = load_yaml(grouping)
+    grouping: dict[str, dict[str, list[Any]]]
 
-    region_topologies = gdf_to_region_topologies(
-        assigned,
-        key_column=region_id_column,
-    )
-    if not region_topologies:
-        raise ValueError("No region topologies built")
+    if region_id_column in streets_data:
+        logger.warning("Overwriting existing column '%s' in streets data with region assignments", region_id_column)
 
-    street_network = gdf_to_nx(streets)
-    return TopologyBuildResult(
-        network=street_network,
-        region_topologies=region_topologies,
-        streets=streets,
-        injected_demand_mwh=injected_demand_mwh,
-        injected_techs=injected_techs,
-    )
+    streets_data[region_id_column] = default_region
+    for region_name, data in grouping.items():
+        for column_name, values in data.items():
+            if column_name == "index":
+                streets_data.loc[streets_data.index.isin(values), region_id_column] = region_name
+            else:
+                streets_data.loc[streets_data[column_name].isin(values), region_id_column] = region_name
+
+    street_network = gdf_to_nx(streets_data)
+
+    topologies = defaultdict(nx.Graph)
+    for u, v, data in street_network.edges(data=True):
+        topologies[data.get(region_id_column)].add_edge(u, v, **data)
+
+    # Todo: Check if the street segments of a region are connected
+    return TopologyBuildResult(network=street_network,
+                               region_topologies=topologies,
+                               streets=streets_data)

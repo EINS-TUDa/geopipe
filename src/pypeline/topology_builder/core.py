@@ -14,13 +14,13 @@ import networkx as nx
 @dataclass
 class TopologyBuildResult:
     network: nx.Graph
-    region_topologies: list[nx.Graph]
+    region_topologies: dict[str, nx.Graph]
     streets: gpd.GeoDataFrame
-    injected_demand_mwh: float = 0.0
-    injected_techs: list[dict[str, Any]] = field(default_factory=list)
+
 
 class TopologyBuildError(RuntimeError):
     """Raised when topology building fails."""
+
 
 def gdf_to_nx(gdf: gpd.GeoDataFrame) -> nx.Graph:
     """Convert line-segment GeoDataFrame rows into a street graph."""
