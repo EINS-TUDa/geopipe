@@ -198,8 +198,10 @@ def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_na
 
 
 
-def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: int, scenario_name: str, start_year: int) -> ConversionSubProcess:
-    return ConversionSubProcess(
+def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: int, scenario_name: str, start_year: int) -> list[ConversionSubProcess]:
+    if isinstance(tech, CHPTechnology):
+        return _chp_to_conversion_sub_process(tech, region_id, scenario_name, start_year)
+    return [ConversionSubProcess(
         conversion_process_name=f"{tech.name}_D{region_id}",
         commodity_in=commodity_name(tech.commodity_in, region_id),
         commodity_out=commodity_name(tech.commodity_out, region_id),
@@ -215,10 +217,48 @@ def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: 
         cap_res_max=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
         output_profile=tech.output_profile_name,
         availability_profile=tech.availability_profile_name,
-    )
+    )]
 
-def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_name: str) -> ConversionSubProcess:
-    return ...
+def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_name: str, start_year) -> list[ConversionSubProcess]:
+    chp_name = f"{chp.name}_D{region_id}"
+    cs_import = ConversionSubProcess(
+        conversion_process_name=chp_name,
+        commodity_in=commodity_name(chp.commodity_in, region_id),
+        commodity_out=f"Help_{chp_name}",
+        scenario=scenario_name,
+    )
+    cs_loss = ConversionSubProcess(
+        conversion_process_name=chp_name,
+        commodity_in=f"Help_{chp_name}",
+        commodity_out="Dummy",
+        scenario=scenario_name,
+        in_frac_min=chp.loss,
+    )
+    cs_commodity_out = ConversionSubProcess(
+        conversion_process_name=chp_name,
+        commodity_in=f"Help_{chp_name}",
+        commodity_out=commodity_name(chp.commodity_out, region_id),
+        scenario=scenario_name,
+        technical_lifetime=chp.technical_lifetime,
+        in_frac_min=chp.efficiency,
+        in_frac_max=chp.efficiency,
+        opex_cost_energy=year_dep_value_to_cesm_string(chp.opex_cost_energy),
+        opex_cost_power=year_dep_value_to_cesm_string(chp.opex_cost_power),
+        capex_cost_power=year_dep_value_to_cesm_string(chp.capex_cost_power),
+        capex_cost_base=year_dep_value_to_cesm_string(chp.capex_cost_base),
+        cap_max=year_dep_value_to_cesm_string(chp.max_capacity_per_year(start_year)),
+        cap_res_max=year_dep_value_to_cesm_string(chp.capacity_per_year(start_year)),
+        cap_res_min=year_dep_value_to_cesm_string(chp.capacity_per_year(start_year)),
+        output_profile=chp.output_profile_name,
+        availability_profile=chp.availability_profile_name,
+    )
+    cs_commodity_out_2 = ConversionSubProcess(
+        conversion_process_name=chp_name,
+        commodity_in=f"Help_{chp_name}",
+        commodity_out=commodity_name(chp.commodity_out_2, region_id),
+        scenario=scenario_name
+    )
+    return [cs_import, cs_loss, cs_commodity_out, cs_commodity_out_2]
 
 def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     cs_list: list[ConversionSubProcess] = []
@@ -252,12 +292,7 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     # central techs
     for region_id, techs in resolved.central_technologies.items():
         for tech in techs:
-            cs_list.append(_central_tech_to_conversion_sub_process(tech, region_id, scenario_name, start_year))
-
-    # # chp
-    # for region_id, chps in resolved.chp_technologies.items():
-    #     for chp in chps:
-    #         cs_list.append(_chp_to_conversion_sub_process(chp, region_id, scenario_name))
+            cs_list.extend(_central_tech_to_conversion_sub_process(tech, region_id, scenario_name, start_year))
 
     # create DataFrame with attributes of ConversionSubProcess as columns
     columns = [f.name for f in fields(ConversionSubProcess)]

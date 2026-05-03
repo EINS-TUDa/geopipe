@@ -246,8 +246,8 @@ class EnergySystemBuilder:
                                                                                            commodity_in):
                         if central_tech_name in central_techs_per_region[region_id]:
                             continue
-                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology(
-                            name=central_tech_name)
+                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology.from_name(
+                            central_tech_name)
             else:
                 for region_id in region_ids:
                     if any(region_id in group for group in region_groups_per_grid_type.get(grid_type, [])):
@@ -256,8 +256,8 @@ class EnergySystemBuilder:
                                                                                            commodity_in):
                         if central_tech_name in central_techs_per_region[region_id]:
                             continue
-                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology(
-                            name=central_tech_name)
+                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology.from_name(
+                            central_tech_name)
 
         return central_techs_per_region
 
@@ -375,8 +375,8 @@ class EnergySystemBuilder:
                 # add all central technologies to the central_tech_region
                 for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
                                                                                        pipe_commodity_out):
-                    central_techs_per_region[central_tech_region][central_tech_name] = CentralTechnology(
-                        name=central_tech_name)
+                    central_techs_per_region[central_tech_region][central_tech_name] = CentralTechnology.from_name(
+                        central_tech_name)
 
                 # From central tech region, find the minimum spanning tree in this group.
                 sub_graph_in_region_group = region_graph.subgraph(region_group)

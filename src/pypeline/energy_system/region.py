@@ -15,8 +15,8 @@ class Region:
         self._id = id_
         self._topology = topology
         self._demands = {demand.name: demand for demand in demands}
-        self._technologies = {"decentral": [], "central": [], "chp": [], "grid": []}
-        class_to_key = {DecentralTechnology: "decentral", CentralTechnology: "central", CHPTechnology: "chp",
+        self._technologies = {"decentral": [], "central": [], "grid": []}
+        class_to_key = {DecentralTechnology: "decentral", CentralTechnology: "central", CHPTechnology: "central",
                         GridTechnology: "grid"}
         for technology in technologies:
             self._technologies[class_to_key[type(technology)]].append(technology)

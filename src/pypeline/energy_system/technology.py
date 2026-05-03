@@ -33,26 +33,43 @@ class Technology(ABC):
 
     @classmethod
     def _get_registered_type(cls, name: str):
+        # Strict per-class lookup. Direct construction (cls(name=...)) goes
+        # through this and must fail when the name belongs to a subclass —
+        # otherwise the instance would be missing subclass-specific fields.
+        # Cross-hierarchy lookups go through the public classmethods below.
         if name not in cls._registered_types:
             raise ValueError(f"Type of {name} does not exist.")
         return cls._registered_types[name]
 
     @classmethod
     def has_type(cls, name: str) -> bool:
-        return name in cls._registered_types
+        if name in cls._registered_types:
+            return True
+        return any(subclass.has_type(name) for subclass in cls.__subclasses__())
 
     @classmethod
     def registered_type_names(cls) -> list[str]:
-        return list(cls._registered_types.keys())
+        names = list(cls._registered_types.keys())
+        for subclass in cls.__subclasses__():
+            names.extend(subclass.registered_type_names())
+        return names
 
     @classmethod
     def get_type_defaults(cls, name: str) -> dict[str, Any]:
-        return cls._get_registered_type(name).copy()
+        if name in cls._registered_types:
+            return cls._registered_types[name].copy()
+        for subclass in cls.__subclasses__():
+            if subclass.has_type(name):
+                return subclass.get_type_defaults(name)
+        raise ValueError(f"Type of {name} does not exist.")
 
     @classmethod
     def get_type_names_by_attribute(cls, attribute: str, value: Any) -> tuple[str, ...]:
         """Return the names of registered types whose default ``attribute`` equals ``value``."""
-        return tuple(name for name, data in cls._registered_types.items() if data.get(attribute) == value)
+        names = tuple(name for name, data in cls._registered_types.items() if data.get(attribute) == value)
+        for subclass in cls.__subclasses__():
+            names = names + subclass.get_type_names_by_attribute(attribute, value)
+        return names
 
     @classmethod
     def is_grid_commodity(cls, commodity: str) -> bool:
@@ -114,6 +131,22 @@ class CentralTechnology(Technology):
     explicit series. Names are looked up in the data registry at build time.
     """
 
+    @classmethod
+    def from_name(cls, name: str, *args, **kwargs) -> "CentralTechnology":
+        """Construct the right concrete class for ``name``.
+
+        If ``name`` is registered under a subclass (e.g. CHPTechnology), the
+        returned instance is an instance of that subclass. Use this when the
+        caller iterates over names from the central registry and does not
+        know upfront whether a given name is a plain central tech or a CHP.
+        """
+        if name in cls._registered_types:
+            return cls(name, *args, **kwargs)
+        for subclass in cls.__subclasses__():
+            if subclass.has_type(name):
+                return subclass.from_name(name, *args, **kwargs)
+        raise ValueError(f"Type of {name} does not exist.")
+
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
                  output_profile_name: Optional[str] = None,
@@ -171,11 +204,7 @@ class CentralTechnology(Technology):
                 start_year + self.existing_capacity_retirement_years - 1: self.existing_capacity,
                 start_year + self.existing_capacity_retirement_years: 0.0}
 
-
-
-
-class CHPTechnology(Technology):
-    """A CHPType instantiated in a specific region."""
+class CHPTechnology(CentralTechnology):
 
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
@@ -183,21 +212,14 @@ class CHPTechnology(Technology):
                  output_profile: Optional[pd.Series] = None,
                  availability_profile_name: Optional[str] = None,
                  availability_profile: Optional[pd.Series] = None):
-        super().__init__(name)
+        super().__init__(name, existing_capacity, output_profile_name, output_profile, availability_profile_name, availability_profile)
         registered_type = type(self)._get_registered_type(name)
 
         try:
-            ...  # todo: Fill when CHP-specific fields are defined
+            self.commodity_out_2: str = registered_type["commodity_out_2"]
+            self.loss: float = registered_type["loss"]
         except KeyError:
             raise KeyError(f"The registered type '{name}' does not provide all the data for")
-
-        self.existing_capacity = existing_capacity
-        self.output_profile_name = output_profile_name
-        self.output_profile = output_profile
-        self.availability_profile_name = availability_profile_name
-        self.availability_profile = availability_profile
-
-
 
 
 class GridTechnology(Technology):
@@ -342,11 +364,10 @@ def register_technologies(path: str | Path, clear_registry: bool = True) -> None
 
     if clear_registry:
         Technology._region_scoped_commodities.clear()
-
-    for section_name, section_cls in _SECTION_TO_CLASS.items():
-        if clear_registry:
+        for section_cls in _SECTION_TO_CLASS.values():
             section_cls.clear_registered_types()
 
+    for section_name, section_cls in _SECTION_TO_CLASS.items():
         entries = raw.get(section_name)
         if entries is None:
             continue

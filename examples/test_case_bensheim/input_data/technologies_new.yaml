@@ -99,11 +99,21 @@ central:
     opex_cost_power: 100
     capex_cost_power: 440000
     capex_cost_base: 260000
-    cap_max: 450       # MW per unit
-    max_units: 1       # at most one unit per region
 
+chp:
 
-chp: {}
+  chp_gas:
+    commodity_in: gas
+    commodity_out: district_heat_in
+    commodity_out_2: electricity
+    efficiency: 0.4
+    loss: 0.1
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 2000
+    capex_cost_power: 500000
+    capex_cost_base: 260000
+    existing_capacity_retirement_years: 20
 
 
 grids:
