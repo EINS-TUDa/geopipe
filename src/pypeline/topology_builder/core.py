@@ -13,6 +13,72 @@ import geopandas as gpd
 import networkx as nx
 
 
+def modify_streets_data(streets_data: gpd.GeoDataFrame | Path,
+                        modifications_file: Path, ) -> gpd.GeoDataFrame:
+    """Modify the data of a geopandas GeoDataFrame according to the specifications in a YAML file.
+
+    The yaml file mus have the following structure. The elements in the GeoDataFrame is described with a column name
+    and a row specifier which can be either the row index or the entry in another column.
+    For each entry, there are two actions supported: add and replace.
+
+    .. code-block:: yaml
+        column_name:  # Name of the column where to change
+          - index: 0  # Index of the row where to change
+            add: 50
+          - column_name: value_in_column  # Specifier of the row where to change, e.g. column_name: value_in_column
+            replace: 100
+
+    Parameters
+    ----------
+    streets_data : gpd.GeoDataFrame | Path
+        A GeoDataFrame containing the street data or a path to a file that can be read into a GeoDataFrame.
+    modifications_file : Path
+        A path to a YAML file that specifies the modifications to be made to the GeoDataFrame.
+
+    Returns
+    -------
+    modified_streets_data : gpd.GeoDataFrame
+    """
+    if isinstance(streets_data, Path):
+        streets_data = gpd.read_file(streets_data)
+    streets_data: gpd.GeoDataFrame
+
+    modifications_data = load_yaml(modifications_file)
+
+    for column_name, mod_data_per_street in modifications_data.items():
+        column_name: str
+        mod_data_per_street: list[dict[str, Any]]
+        for mod_data in mod_data_per_street:
+            mod_data: dict[str, Any]
+            if len(mod_data) != 2:
+                raise ValueError()
+
+            add_value = mod_data.pop("add", None)
+            replace_value = mod_data.pop("replace", None)
+
+            if add_value is None and replace_value is None:
+                raise ValueError()
+            if add_value is not None and replace_value is not None:
+                raise ValueError()
+
+            [(key, value)] = mod_data.items()
+            if key == "index":
+                row_specifier = streets_data.index == value
+            else:
+                row_specifier = streets_data[key] == value
+
+            value = streets_data.loc[row_specifier, column_name].iloc[0]
+
+            if add_value is not None:
+                value = value + add_value
+            if replace_value is not None:
+                value = replace_value
+
+            streets_data.loc[row_specifier, column_name] = value
+
+    return streets_data
+
+
 def load_yaml(config_file: Path) -> dict[str, Any]:
     if not config_file.exists():
         raise FileNotFoundError(f"Scenario file not found: {config_file}")
