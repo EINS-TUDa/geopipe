@@ -8,6 +8,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from pypeline.energy_system import EnergySystem, Scenario
+from pypeline.optimization.cesm.units import scale_factors
 from pypeline.optimization.solver import Results, Solution
 
 logger = logging.getLogger(__name__)
@@ -31,12 +32,26 @@ class CESMResultsParser:
             opex, capex, totex = self._fetch_global_totals(con)
             emissions_df = self._fetch_emissions(con)
 
+        unit = self.energy_system.units
+        factors = scale_factors(unit)
+        for year_map in output_by_name_year.values():
+            for vals in year_map.values():
+                vals["cap_active"] /= factors["power"]
+                vals["cap_new"] /= factors["power"]
+                vals["eouttot"] /= factors["energy"]
+        opex /= factors["money"]
+        capex /= factors["money"]
+        totex /= factors["money"]
+        if not emissions_df.empty:
+            emissions_df = emissions_df.assign(amount=emissions_df["amount"] / factors["co2_emissions"])
+
         decentral_active, decentral_energy, decentral_new = self._build_decentral(output_by_name_year)
         central_active, central_energy, central_new = self._build_central(output_by_name_year)
         grids_active, grids_energy, grids_new = self._build_grids(output_by_name_year)
         pipes_active, pipes_energy, pipes_new = self._build_pipes(output_by_name_year)
 
         results = Results(
+            unit=unit,
             opex=opex,
             capex=capex,
             totex=totex,

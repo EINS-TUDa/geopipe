@@ -91,5 +91,5 @@ class CESMOptimizationBackend(OptimizationBackend):
         conn.backup(disk)
         disk.close()
         conn.close()
-        logger.info("Finished CESM optimization in %.2f seconds", time.perf_counter() - start)
+        logger.info("Ran CESM in %.2f seconds", time.perf_counter() - start)
         logger.info("CESM output written to database: %s", db_path)

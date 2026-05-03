@@ -8,11 +8,14 @@ from typing import Any, Optional
 import pandas as pd
 
 from ..energy_system import EnergySystem, Scenario
+from ..energy_system.units import Unit
 from .reporting import write_html_report
 
 
 @dataclass
 class Results:
+    unit: Unit  # Unit in which all numeric values below are expressed (matches EnergySystem.units).
+
     opex: float
     capex: float
     totex: float
