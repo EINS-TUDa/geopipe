@@ -11,22 +11,12 @@ from typing import Any
 
 import geopandas as gpd
 import networkx as nx
-import yaml
 import logging
 
 from pypeline.topology_builder.core import TopologyBuildResult, gdf_to_nx
+from .core import load_yaml
 
 logger = logging.getLogger(__name__)
-
-
-def load_yaml(config_file: Path) -> dict[str, Any]:
-    if not config_file.exists():
-        raise FileNotFoundError(f"Scenario file not found: {config_file}")
-    with config_file.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"Expected mapping root in {config_file}, got {type(data).__name__}")
-    return data
 
 
 def modify_streets_data(streets_data: gpd.GeoDataFrame | Path,

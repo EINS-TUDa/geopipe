@@ -6,9 +6,21 @@ Only owns topology build interfaces and basic GeoDataFrame-to-graph conversion.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
+import yaml
 from typing import Any
 import geopandas as gpd
 import networkx as nx
+
+
+def load_yaml(config_file: Path) -> dict[str, Any]:
+    if not config_file.exists():
+        raise FileNotFoundError(f"Scenario file not found: {config_file}")
+    with config_file.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected mapping root in {config_file}, got {type(data).__name__}")
+    return data
 
 
 @dataclass
