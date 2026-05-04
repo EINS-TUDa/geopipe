@@ -48,7 +48,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.timeseries_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def solve(self, energy_system: EnergySystem, scenario: Scenario) -> CESMSolution:
+    def solve(self, energy_system: EnergySystem, scenario: Scenario, lp_file: bool = False) -> CESMSolution:
         run_name = f"{energy_system.name}_{scenario.name}"
         db_path = self.output_dir / f"{run_name}.sqlite"
 
@@ -56,10 +56,10 @@ class CESMOptimizationBackend(OptimizationBackend):
         techmap = create_techmap(resolved)
         techmap.to_excel(self.output_dir / f"{run_name}.xlsx")
 
-        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path, run_name=run_name)
+        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path, run_name=run_name, lp_file=lp_file)
         return CESMResultsParser(db_path=db_path, energy_system=energy_system, scenario=scenario).parse()
 
-    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path, run_name: str) -> None:
+    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path, run_name: str, lp_file: bool) -> None:
         start = time.perf_counter()
         logger.info("Running CESM optimization for energy system '%s', scenario '%s'", energy_system_name, scenario_name)
         logger.info("CESM techmap input directory: %s", self.output_dir)
@@ -67,6 +67,11 @@ class CESMOptimizationBackend(OptimizationBackend):
         parser = Parser(run_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
         parser.parse()
         model = Model(conn=conn)
+        if lp_file:
+            lp_path = self.output_dir / f"{run_name}.lp"
+            model.model.write(str(lp_path))
+            logger.info("Wrote CESM model LP file: %s", lp_path)
+
         model.solve()
 
         grb_model = getattr(model, "model", None)

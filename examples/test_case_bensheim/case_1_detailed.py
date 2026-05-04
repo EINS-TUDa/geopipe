@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 
+from compare_techmaps import compare_techmaps
 from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
 from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
 from pypeline.energy_system import Scenario
@@ -58,10 +59,11 @@ def main():
     energy_system = builder.build()
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
-    solution = backend.solve(energy_system, scenario)
+    solution = backend.solve(energy_system, scenario, lp_file=True)
 
     # solution.save(path=CASE_DIR / "output_data")
     # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
+    compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.plot_grid(grid_name="heat_grid", year=2030)
 

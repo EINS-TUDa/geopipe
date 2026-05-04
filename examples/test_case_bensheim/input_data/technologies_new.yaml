@@ -14,9 +14,9 @@ decentralized:
     commodity_out: residential_heat
     efficiency: 3.9
     technical_lifetime: 18
-    opex_cost_energy: 0
-    opex_cost_power: 13000       # EUR/MW
-    capex_cost_power: 10100      # EUR/MWh
+    opex_cost_energy: 0     # EUR/MWh
+    opex_cost_power: 13       # EUR/kW
+    capex_cost_power: 5000      # EUR/kW
 
   ind_gas_boiler:
     commodity_in: gas
@@ -24,7 +24,7 @@ decentralized:
     efficiency: 0.94
     technical_lifetime: 20
     opex_cost_energy: 0
-    opex_cost_power: 5000
+    opex_cost_power: 5
     capex_cost_power: 1620
     existing_capacity_phase_out_years: 10 # Years from model start by which existing_capacity has decreased linearly to 0.
 
@@ -34,7 +34,7 @@ decentralized:
     efficiency: 0.925
     technical_lifetime: 20
     opex_cost_energy: 0
-    opex_cost_power: 6000
+    opex_cost_power: 6
     capex_cost_power: 700
 
   ind_hydrogen_boiler:
@@ -43,7 +43,7 @@ decentralized:
     efficiency: 0.95
     technical_lifetime: 20
     opex_cost_energy: 0
-    opex_cost_power: 177000
+    opex_cost_power: 177
     capex_cost_power: 5000
 
   heat_exchanger:
@@ -52,8 +52,8 @@ decentralized:
     efficiency: 0.99
     technical_lifetime: 25
     opex_cost_energy: 0
-    opex_cost_power: 1000
-    capex_cost_power: 193000
+    opex_cost_power: 1
+    capex_cost_power: 1930
     existing_capacity_phase_out_years: 15
 
 
@@ -64,10 +64,10 @@ central:
     commodity_out: district_heat_in
     efficiency: 3.1
     technical_lifetime: 25
-    opex_cost_energy: 0
-    opex_cost_power: 15000
-    capex_cost_power: 586000
-    capex_cost_base: 125000
+    opex_cost_energy: 0 # EUR/MWh
+    opex_cost_power: 15 # EUR/kW
+    capex_cost_power: 586 # EUR/kW
+    capex_cost_base: 125000 # EUR
 
   cen_gas_boiler:
     commodity_in: gas
@@ -75,8 +75,8 @@ central:
     efficiency: 0.99
     technical_lifetime: 25
     opex_cost_energy: 0
-    opex_cost_power: 2000
-    capex_cost_power: 107000
+    opex_cost_power: 2
+    capex_cost_power: 107
     capex_cost_base: 5400
     existing_capacity_retirement_years: 20
 
@@ -86,8 +86,8 @@ central:
     efficiency: 0.93
     technical_lifetime: 20
     opex_cost_energy: 0
-    opex_cost_power: 1500
-    capex_cost_power: 149000
+    opex_cost_power: 1
+    capex_cost_power: 149
     capex_cost_base: 5400
 
   cen_biomass_woodpellets:
@@ -96,8 +96,8 @@ central:
     efficiency: 0.5
     technical_lifetime: 25
     opex_cost_energy: 0
-    opex_cost_power: 100
-    capex_cost_power: 440000
+    opex_cost_power: 1
+    capex_cost_power: 440
     capex_cost_base: 260000
 
 chp:
@@ -110,10 +110,11 @@ chp:
     loss: 0.1
     technical_lifetime: 25
     opex_cost_energy: 0
-    opex_cost_power: 2000
-    capex_cost_power: 500000
+    opex_cost_power: 2
+    capex_cost_power: 500
     capex_cost_base: 260000
     existing_capacity_retirement_years: 20
+    cap_max: 300 # per unit
 
 
 grids:
