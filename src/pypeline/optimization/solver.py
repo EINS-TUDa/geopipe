@@ -9,7 +9,7 @@ import pandas as pd
 from ..energy_system import EnergySystem, Scenario
 from ..energy_system.units import Unit
 from .reporting import write_html_report
-from ..plot.solution_plotter import plot_grid
+from ..plot.solution_plotter import plot_grid, plot_decentral_shares
 
 
 @dataclass
@@ -60,8 +60,25 @@ class Solution:
             output_path=Path(output_path)
         )
 
-    def plot_grid(self, grid_name: str, year: int) -> Any:
-        return plot_grid(self, grid_name=grid_name, year=year)
+    def plot_grid(self, grid_name: str, year: int, output_path: Optional[Path | str] = None) -> Any:
+        return plot_grid(self, grid_name=grid_name, year=year, output_path=output_path)
+
+    def plot_decentral_shares(
+        self,
+        demand_name: str,
+        year: int | list[int],
+        metric: str = "energy_output",
+        technology_style: Optional[dict[str, dict[str, Any]]] = None,
+        output_path: Optional[Path | str] = None,
+    ) -> Any:
+        return plot_decentral_shares(
+            self,
+            demand_name=demand_name,
+            year=year,
+            metric=metric,
+            technology_style=technology_style,
+            output_path=output_path,
+        )
 
 
 class OptimizationBackend(ABC):

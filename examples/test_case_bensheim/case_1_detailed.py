@@ -8,7 +8,6 @@ from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
 from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend, Solution
-# from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
 from pypeline.topology_builder.topology_build_utils import modify_streets_data
 from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder
@@ -66,6 +65,8 @@ def main():
     compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.plot_grid(grid_name="heat_grid", year=2030)
+    solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
+    solution.energy_system.plot_system_topology()
 
     # # --- 1) Street topology plot ---
     # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
@@ -94,25 +95,25 @@ def main():
     # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    db_path = Path(solution.db_path)
-    conn = sqlite3.connect(str(db_path))
-    dao = DAO(conn)
-    sankey_plotter = CesmPlotter(dao)
-    for year in scenario.years:
-        sankey_fig = sankey_plotter.plot_sankey(year=year)
-        # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
-        # sankey_fig.write_html(str(sankey_output))
-        # print(f"Saved Sankey diagram: {sankey_output}")
-
-    # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
-    heat_commodities = [
-        co for co in dao.get_set("commodity")
-        if "residential_heat_D" in str(co)
-    ]
-    for commodity in heat_commodities:
-        sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
-        sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
-    conn.close()
+    # db_path = Path(solution.db_path)
+    # conn = sqlite3.connect(str(db_path))
+    # dao = DAO(conn)
+    # sankey_plotter = CesmPlotter(dao)
+    # for year in scenario.years:
+    #     sankey_fig = sankey_plotter.plot_sankey(year=year)
+    #     # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
+    #     # sankey_fig.write_html(str(sankey_output))
+    #     # print(f"Saved Sankey diagram: {sankey_output}")
+    #
+    # # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
+    # heat_commodities = [
+    #     co for co in dao.get_set("commodity")
+    #     if "residential_heat_D" in str(co)
+    # ]
+    # for commodity in heat_commodities:
+    #     sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+    #     sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+    # conn.close()
 
 
 if __name__ == '__main__':

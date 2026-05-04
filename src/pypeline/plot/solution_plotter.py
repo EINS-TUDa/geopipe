@@ -1,12 +1,17 @@
 # coding=utf-8
 from __future__ import annotations
 
-from typing import Any, Iterable
+from pathlib import Path
+from typing import Any, Iterable, Optional
 
 import contextily as ctx
+import geopandas as gpd
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import pandas as pd
+from matplotlib.patches import Circle
+from shapely import voronoi_polygons
+from shapely.geometry import MultiPoint
 
 from ..energy_system.region import Region
 from ..energy_system.technology import GridTechnology
@@ -20,9 +25,22 @@ if TYPE_CHECKING:
 
 _INACTIVE_COLOR = "#cccccc"
 _PIPE_COLOR = "#8b4513"  # brown
+_VORONOI_FILL_COLOR = "#656870"
+
+_DECENTRAL_METRIC_COLUMNS: dict[str, str] = {
+    "energy_output": "energy_output",
+    "new_capacity": "new_capacity",
+    "active_capacity": "capacity",
+}
+# (display title, unit kind on Unit dataclass: "energy" or "power")
+_DECENTRAL_METRIC_DISPLAY: dict[str, tuple[str, str]] = {
+    "energy_output": ("Energy output", "energy"),
+    "new_capacity": ("New capacity", "power"),
+    "active_capacity": ("Active capacity", "power"),
+}
 
 
-def plot_grid(solution: "Solution", grid_name: str, year: int) -> None:
+def plot_grid(solution: "Solution", grid_name: str, year: int, output_path: Optional[str | Path] = None) -> None:
     """
     Plot the energy_system._system_topology on a map. Color the edges of region where grid_name has active capacity.
     Each region should be colored differently.
@@ -108,7 +126,303 @@ def plot_grid(solution: "Solution", grid_name: str, year: int) -> None:
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     fig.tight_layout()
+    _save_figure(fig, output_path)
     plt.show()
+
+
+def plot_decentral_shares(
+    solution: "Solution",
+    demand_name: str,
+    year: int | list[int],
+    metric: str = "energy_output",
+    technology_style: dict[str, dict[str, Any]] | None = None,
+    output_path: Optional[str | Path] = None,
+) -> None:
+    """
+    Plot a donut chart per region showing the share of decentral technologies that
+    supply ``demand_name``. Each region is drawn as a Voronoi cell built from its
+    topology nodes.
+
+    Parameters
+    ----------
+    solution
+        Solution containing energy_system and results.
+    demand_name
+        Key into ``results.decentral_technologies_per_demand``.
+    year
+        A single year (``int``) renders one figure; a list of years renders a
+        subplot grid with two columns and as many rows as needed.
+    metric
+        One of ``"energy_output"`` (eouttot), ``"new_capacity"`` or
+        ``"active_capacity"``. Selects which column of the results dataframe is
+        aggregated into the donut shares.
+    technology_style
+        Optional mapping ``{decentral_technology.name: {"color": ..., "label": ...}}``.
+        Missing entries fall back to a tab20 palette colour and the technology
+        name as legend label.
+    """
+    if solution.energy_system is None or solution.results is None:
+        raise ValueError("solution must have both energy_system and results set")
+    if metric not in _DECENTRAL_METRIC_COLUMNS:
+        raise ValueError(
+            f"Unknown metric '{metric}'. Choose from {sorted(_DECENTRAL_METRIC_COLUMNS)}."
+        )
+
+    es = solution.energy_system
+    results = solution.results
+
+    df = results.decentral_technologies_per_demand.get(demand_name)
+    if df is None:
+        raise ValueError(
+            f"Demand '{demand_name}' not found in results.decentral_technologies_per_demand"
+        )
+
+    years = [int(year)] if isinstance(year, int) else [int(y) for y in year]
+    if not years:
+        raise ValueError("`year` must be an int or a non-empty list of ints")
+
+    column = _DECENTRAL_METRIC_COLUMNS[metric]
+    shares_per_year: dict[int, dict[int, dict[str, float]]] = {
+        y: _decentral_shares_per_region(_slice_df(df, year=y), column) for y in years
+    }
+
+    region_geoms = _voronoi_region_geometries(es.regions)
+    combined_shares: dict[int, dict[str, float]] = {}
+    for shares_per_region in shares_per_year.values():
+        for rid, shares in shares_per_region.items():
+            combined_shares.setdefault(rid, {}).update(shares)
+    style_lookup = _resolve_technology_style(combined_shares, technology_style)
+
+    metric_title, unit_kind = _DECENTRAL_METRIC_DISPLAY[metric]
+    unit_str = results.unit.energy if unit_kind == "energy" else results.unit.power
+
+    ncols = 1 if len(years) == 1 else 2
+    nrows = (len(years) + ncols - 1) // ncols
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(12 * ncols, 12 * nrows), squeeze=False,
+    )
+    axes_flat = axes.ravel().tolist()
+
+    for ax, y in zip(axes_flat, years):
+        _draw_decentral_shares_axis(
+            ax,
+            energy_system=es,
+            region_geoms=region_geoms,
+            shares_per_region=shares_per_year[y],
+            style_lookup=style_lookup,
+            metric_title=metric_title,
+            unit_str=unit_str,
+            demand_name=demand_name,
+            year=y,
+        )
+    for ax in axes_flat[len(years):]:
+        ax.axis("off")
+
+    used_techs = sorted({tech for shares in combined_shares.values() for tech in shares})
+    legend_handles = [
+        mpatches.Patch(color=style_lookup[tech]["color"], label=style_lookup[tech]["label"])
+        for tech in used_techs
+    ]
+    if legend_handles:
+        fig.legend(
+            handles=legend_handles,
+            loc="upper right",
+            fontsize=14,
+            title="Decentral technologies",
+            title_fontsize=15,
+        )
+
+    fig.tight_layout()
+    _save_figure(fig, output_path)
+    plt.show()
+
+
+def _draw_decentral_shares_axis(
+    ax,
+    *,
+    energy_system,
+    region_geoms: list[Any],
+    shares_per_region: dict[int, dict[str, float]],
+    style_lookup: dict[str, dict[str, Any]],
+    metric_title: str,
+    unit_str: str,
+    demand_name: str,
+    year: int,
+) -> None:
+    _draw_voronoi_cells(ax, energy_system.regions, region_geoms)
+    _draw_region_donuts(
+        ax,
+        regions=energy_system.regions,
+        region_geoms=region_geoms,
+        shares_per_region=shares_per_region,
+        style_lookup=style_lookup,
+        metric_title=metric_title,
+        unit_str=unit_str,
+    )
+    ax.set_aspect("equal", adjustable="box")
+    _zoom_to_regions(ax, energy_system.regions)
+    _add_basemap(ax, energy_system)
+    ax.set_title(f"Decentral shares — {metric_title} — '{demand_name}' — {year}", fontsize=16)
+    ax.set_xlabel("x", fontsize=14)
+    ax.set_ylabel("y", fontsize=14)
+    ax.tick_params(axis="both", labelsize=12)
+
+
+def _decentral_shares_per_region(sliced: pd.DataFrame, column: str) -> dict[int, dict[str, float]]:
+    out: dict[int, dict[str, float]] = {}
+    if sliced is None or sliced.empty:
+        return out
+    if column not in sliced.columns:
+        raise ValueError(f"Column '{column}' missing from decentral results dataframe")
+    for _, row in sliced.iterrows():
+        value = float(row[column])
+        if value <= 0:
+            continue
+        rid = int(row["region_id"])
+        tech = str(row["technology"])
+        region_map = out.setdefault(rid, {})
+        region_map[tech] = region_map.get(tech, 0.0) + value
+    return out
+
+
+def _voronoi_region_geometries(regions: Iterable[Region]) -> list[Any]:
+    region_list = list(regions)
+    if not region_list:
+        raise ValueError("Energy system has no regions for Voronoi geometry")
+
+    seed_points = []
+    all_node_points: list[tuple[float, float]] = []
+    for region in region_list:
+        topology = region.topology
+        nodes = list(topology.graph.nodes) if topology is not None else []
+        if not nodes:
+            raise ValueError(f"Region {region.id} has no topology nodes for Voronoi geometry")
+        region_nodes = [(float(n[0]), float(n[1])) for n in nodes]
+        all_node_points.extend(region_nodes)
+        seed_points.append(MultiPoint(region_nodes).representative_point())
+
+    seed_keys = {(round(float(pt.x), 9), round(float(pt.y), 9)) for pt in seed_points}
+    if len(seed_keys) != len(seed_points):
+        raise ValueError("Voronoi region seeds are not unique")
+
+    envelope = MultiPoint(all_node_points).convex_hull
+    minx, miny, maxx, maxy = envelope.bounds
+    map_span = max(float(maxx - minx), float(maxy - miny), 1.0)
+    clip_geom = envelope.buffer(map_span * 0.25)
+
+    cells = voronoi_polygons(MultiPoint(seed_points), extend_to=clip_geom, ordered=True)
+    cell_list = list(getattr(cells, "geoms", []))
+    if len(cell_list) != len(seed_points):
+        raise ValueError("Voronoi output cell count does not match region count")
+
+    geoms: list[Any] = []
+    for region, cell in zip(region_list, cell_list):
+        geom = cell.intersection(clip_geom).buffer(0)
+        if geom is None or geom.is_empty:
+            raise ValueError(f"Voronoi geometry is empty for region {region.id}")
+        geoms.append(geom)
+    return geoms
+
+
+def _resolve_technology_style(
+    shares_per_region: dict[int, dict[str, float]],
+    technology_style: dict[str, dict[str, Any]] | None,
+) -> dict[str, dict[str, Any]]:
+    used = sorted({tech for shares in shares_per_region.values() for tech in shares})
+    palette = plt.get_cmap("tab20", max(len(used), 1))
+    out: dict[str, dict[str, Any]] = {}
+    for idx, tech in enumerate(used):
+        provided = (technology_style or {}).get(tech, {})
+        out[tech] = {
+            "color": provided.get("color", palette(idx)),
+            "label": provided.get("label", tech),
+        }
+    return out
+
+
+def _draw_voronoi_cells(ax, regions: Iterable[Region], region_geoms: list[Any]) -> None:
+    crs = next((r.crs for r in regions if r.crs is not None), None)
+    gpd.GeoSeries(region_geoms, crs=crs).plot(
+        ax=ax,
+        facecolor=_VORONOI_FILL_COLOR,
+        edgecolor="black",
+        linewidth=0.8,
+        alpha=0.5,
+        zorder=1,
+    )
+
+
+def _draw_region_donuts(
+    ax,
+    *,
+    regions: Iterable[Region],
+    region_geoms: list[Any],
+    shares_per_region: dict[int, dict[str, float]],
+    style_lookup: dict[str, dict[str, Any]],
+    metric_title: str,
+    unit_str: str,
+) -> None:
+    bounds = [g.bounds for g in region_geoms]
+    minx = min(b[0] for b in bounds)
+    miny = min(b[1] for b in bounds)
+    maxx = max(b[2] for b in bounds)
+    maxy = max(b[3] for b in bounds)
+    map_span = max(maxx - minx, maxy - miny, 1.0)
+    pie_radius = map_span * 0.05
+
+    for region, geom in zip(regions, region_geoms):
+        rid = int(region.id)
+        centroid = geom.centroid
+        cx, cy = float(centroid.x), float(centroid.y)
+
+        shares = shares_per_region.get(rid, {})
+        total = sum(shares.values())
+        if total <= 0:
+            ax.text(
+                cx,
+                cy,
+                f"Region {rid}\nno {metric_title.lower()}",
+                ha="center",
+                va="center",
+                fontsize=14,
+                zorder=4,
+                bbox={"facecolor": "white", "edgecolor": "black", "alpha": 0.85, "boxstyle": "round,pad=0.3"},
+            )
+            continue
+
+        labels = sorted(shares.keys())
+        sizes = [shares[t] for t in labels]
+        colors = [style_lookup[t]["color"] for t in labels]
+        wedges, _ = ax.pie(
+            sizes,
+            colors=colors,
+            radius=pie_radius,
+            center=(cx, cy),
+            frame=True,
+            wedgeprops={"width": pie_radius * 0.5, "linewidth": 0.5, "edgecolor": "white"},
+        )
+        for w in wedges:
+            w.set_zorder(3)
+
+        ax.add_patch(Circle((cx, cy), radius=pie_radius * 0.5, facecolor="white", edgecolor="none", zorder=3.5))
+        ax.text(
+            cx,
+            cy,
+            f"{rid}\n{total:.1f} {unit_str}",
+            ha="center",
+            va="center",
+            fontsize=14,
+            fontweight="bold",
+            zorder=4,
+        )
+
+
+def _save_figure(fig, output_path: Optional[str | Path]) -> None:
+    if output_path is None:
+        return
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=300, bbox_inches="tight")
 
 
 def _zoom_to_regions(ax, regions: Iterable[Region], *, margin_frac: float = 0.05) -> None:

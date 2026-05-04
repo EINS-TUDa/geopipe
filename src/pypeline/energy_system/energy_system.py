@@ -37,6 +37,10 @@ class EnergySystem:
     imports: list[Import] = field(default_factory=list)
     pipes: list[PipeTechnology] = field(default_factory=list)
 
+    def plot_system_topology(self, output_path: Optional[str | Path] = None) -> None:
+        from ..plot.energy_system_plotter import plot_system_topology
+        plot_system_topology(self, output_path=output_path)
+
 
 class EnergySystemBuilderConfig(BaseSettings):
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
