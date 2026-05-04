@@ -101,11 +101,19 @@ class TopologyBuildError(RuntimeError):
     """Raised when topology building fails."""
 
 
-def gdf_to_nx(gdf: gpd.GeoDataFrame) -> nx.Graph:
-    """Convert line-segment GeoDataFrame rows into a street graph."""
+def gdf_to_nx(gdf: gpd.GeoDataFrame, extensive_columns: list[str] | None = None) -> nx.Graph:
+    """Convert line-segment GeoDataFrame rows into a street graph.
+
+    Each row's geometry is split into edges between consecutive vertices. Extensive
+    columns (length-additive, e.g. demand totals) are distributed across the row's
+    segments proportionally to segment length, so summing across edges recovers the
+    original row value. Non-extensive attributes are copied verbatim onto every segment.
+    """
     graph: nx.Graph = nx.Graph()
     if hasattr(gdf, "crs") and gdf.crs is not None:
         graph.graph["crs"] = gdf.crs
+
+    extensive_columns = set(extensive_columns or ())
 
     for _, row in gdf.iterrows():
         geom = row.geometry
@@ -121,13 +129,24 @@ def gdf_to_nx(gdf: gpd.GeoDataFrame) -> nx.Graph:
         else:
             continue
 
+        segments = []
         for line in lines:
             coords = list(line.coords)
             for idx in range(len(coords) - 1):
                 u = (float(coords[idx][0]), float(coords[idx][1]))
                 v = (float(coords[idx + 1][0]), float(coords[idx + 1][1]))
                 length = ((v[0] - u[0]) ** 2 + (v[1] - u[1]) ** 2) ** 0.5
-                graph.add_edge(u, v, geometry=line, length=length, **attrs)
+                segments.append((u, v, line, length))
+
+        total_length = sum(seg_length for _, _, _, seg_length in segments)
+        for u, v, line, length in segments:
+            seg_attrs = dict(attrs)
+            if extensive_columns and total_length > 0:
+                share = length / total_length
+                for col in extensive_columns:
+                    if col in seg_attrs:
+                        seg_attrs[col] = seg_attrs[col] * share
+            graph.add_edge(u, v, geometry=line, length=length, **seg_attrs)
 
     return graph
 

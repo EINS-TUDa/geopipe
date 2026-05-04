@@ -35,6 +35,7 @@ def main():
     topology_builder.set_streets_data(streets_data)
     topology_builder.set_grouping(CASE_DIR / "input_data" / "region_grouping.yaml")
     topology_builder.set_region_id_column("id")
+    topology_builder.set_extensive_columns(["waerme_mwh"])
     topology_result = topology_builder.build()
 
     esb_cfg = EnergySystemBuilderConfig(
@@ -56,6 +57,7 @@ def main():
     builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()
+    energy_system.plot_system_topology()
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
     solution = backend.solve(energy_system, scenario, lp_file=True)
@@ -66,54 +68,27 @@ def main():
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.plot_grid(grid_name="heat_grid", year=2030)
     solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
-    solution.energy_system.plot_system_topology()
-
-    # # --- 1) Street topology plot ---
-    # topology_polygons = EnergySystemPlotter.build_topology_plot_polygons_from_energy_system(
-    #     energy_system=energy_system,
-    #     demand_name=config.demand_name,
-    # )
-    # topology_plot_path = plots_dir / "case1_street_topology.png"
-    # EnergySystemPlotter.plot_streets_colored_by_region(
-    #     streets_with_region=streets_for_plot,
-    #     polygons=topology_polygons,
-    #     output_path=topology_plot_path,
-    #     region_id_column="id",
-    #     title=f"District topology: {config.model_name}",
-    # )
-    # print(f"Saved topology plot: {topology_plot_path}")
-    #
-    # --- 2) Technology mix plot ---
-    # plotter = EnergySystemPlotter(energy_system)
-    # years = scenario.years
-    # mix_plot_paths = plotter.save_default_mix_plots(
-    #     results_obj.raw,
-    #     years=years,
-    #     plots_dir=CASE_DIR / "output_data",
-    #     demand_name="residential_heat",
-    # )
-    # print(f"Saved technology mix plot: {mix_plot_paths['technology']}")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    # db_path = Path(solution.db_path)
-    # conn = sqlite3.connect(str(db_path))
-    # dao = DAO(conn)
-    # sankey_plotter = CesmPlotter(dao)
-    # for year in scenario.years:
-    #     sankey_fig = sankey_plotter.plot_sankey(year=year)
-    #     # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
-    #     # sankey_fig.write_html(str(sankey_output))
-    #     # print(f"Saved Sankey diagram: {sankey_output}")
-    #
-    # # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
-    # heat_commodities = [
-    #     co for co in dao.get_set("commodity")
-    #     if "residential_heat_D" in str(co)
-    # ]
-    # for commodity in heat_commodities:
-    #     sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
-    #     sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
-    # conn.close()
+    db_path = Path(solution.db_path)
+    conn = sqlite3.connect(str(db_path))
+    dao = DAO(conn)
+    sankey_plotter = CesmPlotter(dao)
+    for year in scenario.years:
+        sankey_fig = sankey_plotter.plot_sankey(year=year)
+        # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
+        # sankey_fig.write_html(str(sankey_output))
+        # print(f"Saved Sankey diagram: {sankey_output}")
+
+    # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
+    heat_commodities = [
+        co for co in dao.get_set("commodity")
+        if "residential_heat_D" in str(co)
+    ]
+    for commodity in heat_commodities:
+        sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+        sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+    conn.close()
 
 
 if __name__ == '__main__':

@@ -25,6 +25,7 @@ class TopologyBuilder(ABC):
         self._street_network = None
         self._topologies = None
         self._default_regions_in_topology: bool = False
+        self._extensive_columns: list[str] = []
 
     def set_streets_data(self, streets_data: gpd.GeoDataFrame | Path) -> Self:
         if isinstance(streets_data, Path):
@@ -43,6 +44,13 @@ class TopologyBuilder(ABC):
     def set_default_regions_in_topology(self, default_regions_in_topology: bool) -> Self:
         self._default_regions_in_topology = default_regions_in_topology
 
+    def set_extensive_columns(self, extensive_columns: list[str]) -> Self:
+        """Columns whose values are length-additive (e.g. demand totals) and must be
+        split across segments by length share when a row is broken into multiple edges.
+        """
+        self._extensive_columns = list(extensive_columns)
+        return self
+
     def _check_input(self):
         if not isinstance(self._streets_data, gpd.GeoDataFrame):
             raise TypeError("Streets data must be a GeoDataFrame")
@@ -59,7 +67,7 @@ class TopologyBuilder(ABC):
         ...
 
     def _build_street_network(self) -> nx.Graph:
-        self._street_network = gdf_to_nx(self._streets_data)
+        self._street_network = gdf_to_nx(self._streets_data, extensive_columns=self._extensive_columns)
 
     def _build_topologies(self):
         topologies = defaultdict(nx.Graph)
