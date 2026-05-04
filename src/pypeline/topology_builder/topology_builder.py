@@ -58,6 +58,8 @@ class TopologyBuilder(ABC):
         if self._region_id_column in self._streets_data:
             logger.warning("Column for regions already exists (name %s). The region data will be overwritten",
                            self._region_id_column)
+        if not self._extensive_columns:
+            logger.warning("No extensive columns specified. Demands have to be set as extensive.")
 
     def _setup(self):
         self._streets_data[self._region_id_column] = self._default_region
