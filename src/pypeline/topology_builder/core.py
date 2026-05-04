@@ -12,6 +12,10 @@ from typing import Any
 import geopandas as gpd
 import networkx as nx
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def modify_streets_data(streets_data: gpd.GeoDataFrame | Path,
                         modifications_file: Path, ) -> gpd.GeoDataFrame:
@@ -61,11 +65,11 @@ def modify_streets_data(streets_data: gpd.GeoDataFrame | Path,
             if add_value is not None and replace_value is not None:
                 raise ValueError()
 
-            [(key, value)] = mod_data.items()
+            [(key, identifier)] = mod_data.items()
             if key == "index":
-                row_specifier = streets_data.index == value
+                row_specifier = streets_data.index == identifier
             else:
-                row_specifier = streets_data[key] == value
+                row_specifier = streets_data[key] == identifier
 
             value = streets_data.loc[row_specifier, column_name].iloc[0]
 
@@ -73,6 +77,9 @@ def modify_streets_data(streets_data: gpd.GeoDataFrame | Path,
                 value = value + add_value
             if replace_value is not None:
                 value = replace_value
+
+            logger.info("Modifying column '%s' for rows where '%s' is '%s': %s -> %s",
+                        column_name, key, identifier, streets_data.loc[row_specifier, column_name].iloc[0], value)
 
             streets_data.loc[row_specifier, column_name] = value
 
@@ -92,7 +99,7 @@ def load_yaml(config_file: Path) -> dict[str, Any]:
 @dataclass
 class TopologyBuildResult:
     network: nx.Graph
-    region_topologies: dict[str, nx.Graph]
+    region_topologies: dict[int, nx.Graph]
     streets: gpd.GeoDataFrame
 
 

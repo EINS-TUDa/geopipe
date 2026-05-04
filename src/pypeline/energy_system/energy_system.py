@@ -133,7 +133,7 @@ class EnergySystemBuilder:
                 raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
             profile = pd.Series(profile.values.ravel())
 
-            value = sum(topology.property_from_edges(demand_type.demand_column_name))
+            value = float(np.nansum(topology.property_from_edges(demand_type.demand_column_name)))
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
 

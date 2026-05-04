@@ -9,8 +9,9 @@ import logging
 import geopandas as gpd
 import networkx as nx
 import shapely
+from networkx.algorithms.components import is_connected
 
-from topology_builder import TopologyBuildResult
+from . import TopologyBuildResult
 from .core import gdf_to_nx, load_yaml
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ class TopologyBuilder(ABC):
         self._default_region = None
         self._street_network = None
         self._topologies = None
-        self._default_regions_in_topology: bool = True
+        self._default_regions_in_topology: bool = False
 
     def set_streets_data(self, streets_data: gpd.GeoDataFrame | Path) -> Self:
         if isinstance(streets_data, Path):
@@ -70,9 +71,9 @@ class TopologyBuilder(ABC):
         self._topologies = dict(topologies)
 
     def _topologies_check(self):
-        for topology in self._topologies:
-            if not topology.is_connected():
-                raise ValueError("Topology is not connected")
+        for region_id, region_topology in self._topologies.items():
+            if not is_connected(region_topology):
+                raise ValueError(f"Topology of region {region_id} is not connected")
 
     def build(self) -> TopologyBuildResult:
         """Build the topology"""
@@ -174,8 +175,8 @@ class SimpleTopologyBuilder(TopologyBuilder):
             raise TypeError("Grouping must be a dict")
 
         for key, value in self._grouping.items():
-            if not isinstance(key, str):
-                raise TypeError("Key must be a string")
+            if not isinstance(key, int):
+                raise TypeError("Key must be an integer")
             if not isinstance(value, dict):
                 raise TypeError("Value must be a dict")
 
