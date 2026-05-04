@@ -63,4 +63,4 @@ dev = [
 cesm = { path = "CESM", editable = true }
 
 [tool.pytest.ini_options]
-python_functions = ["*_t"]
+python_functions = ["test_*", "*_test"]

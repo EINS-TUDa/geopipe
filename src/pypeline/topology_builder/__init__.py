@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     )
     from pypeline.topology_builder.simple_builder import (
         SimpleTopologyBuilder,
-        load_scenario_yaml,
+        load_yaml,
     )
     from pypeline.topology_builder.region_topology_builder import (
         RegionTopologyConfig,
@@ -35,7 +35,7 @@ __all__ = [
     "DijkstraTopologyBuilder",
     "DijkstraTopologyBuilderConfig",
     "SimpleTopologyBuilder",
-    "load_scenario_yaml",
+    "load_yaml",
     "RegionTopologyConfig",
     "RegionTopologyGeometry",
     "build_region_topology",

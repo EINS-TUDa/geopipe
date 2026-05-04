@@ -9,7 +9,8 @@ from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend, Solution
 # from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.simple_builder import build_simple_topology
+from pypeline.topology_builder.core import modify_streets_data
+from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder
 from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 from cesm.core.data_access import DAO
 
@@ -23,27 +24,25 @@ logging.basicConfig(
 logging.getLogger("pypeline").setLevel(logging.INFO)
 logging.getLogger("cesm").setLevel(logging.INFO)
 
-
 CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
 
 def main():
-    topology_result = build_simple_topology(
-        streets_file=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
-        scenario_file=CASE_DIR / "case_1.yaml",
-        region_id_column="id",
-        street_id_column="street_id",
-        demand_column="waerme_mwh",
-        street_length_column="laenge_segment",
-        apply_injections=True,
-    )
+    streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
+                                       modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
+
+    builder = SimpleTopologyBuilder()
+    builder.set_streets_data(streets_data)
+    builder.set_grouping(CASE_DIR / "input_data" / "region_grouping.yaml")
+    builder.set_region_id_column("id")
+    topology_result = builder.build()
 
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},
-        considered_connected_region_distance_m= 50,
-        default_central_technology_per_commodity={"district_heat_in": "chp_gas"},
+        considered_connected_region_distance_m=50,
+        default_central_technology_per_commodity={"district_heat_in": "cen_gas_boiler"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
-        additional_grid_capacity_factor={"heat_grid" : 1}
+        additional_grid_capacity_factor={"heat_grid": 1}
     )
 
     data_reg = case1_data_registry()
@@ -116,4 +115,5 @@ def main():
     #     conn.close()
 
 
-main()
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,5 @@
+waerme_mwh:
+  - index: 12
+    add: 50
+  - street_id: DEHE04620000AGYW  # Index 13
+    replace: 150

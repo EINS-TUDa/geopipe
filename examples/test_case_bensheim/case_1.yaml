@@ -1,8 +1,0 @@
-regions:
-  - region_id: 0
-    street_segment_ids:
-      - DEHE04620001hKyX
-      - DEHE04620001hKzm
-  - region_id: 1
-    street_segment_ids:
-      - DEHE04620001hKzc
