@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from pathlib import Path
-from typing import Optional, Self, Any
+from typing import Self, Any
 import logging
 
 import geopandas as gpd
@@ -11,8 +11,7 @@ import networkx as nx
 import shapely
 from networkx.algorithms.components import is_connected
 
-from . import TopologyBuildResult
-from .core import gdf_to_nx, load_yaml
+from .topology_build_utils import gdf_to_nx, load_yaml, TopologyBuildResult
 
 logger = logging.getLogger(__name__)
 

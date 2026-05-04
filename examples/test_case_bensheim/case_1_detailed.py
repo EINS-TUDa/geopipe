@@ -9,7 +9,7 @@ from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend, Solution
 # from pypeline.injection import apply_injected_techs
 # from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.core import modify_streets_data
+from pypeline.topology_builder.topology_build_utils import modify_streets_data
 from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder
 from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 from cesm.core.data_access import DAO
