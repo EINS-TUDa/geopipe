@@ -32,26 +32,26 @@ class Topology:
         for node, data in self.graph.nodes(data=True):
             property_value_to_nodes.get(data.get(property_name), []).append(node)
 
-        return {property_value: Topology(self.graph.subgraph(nodes))
+        return {property_value: Topology(self.graph.subgraph(nodes).copy()) # .copy() can be removed once we switch to json dumps instead of pickle
                 for property_value, nodes in property_value_to_nodes.items()}
 
     def sub_topology_by_node_property(self, property_name: str, property_value) -> 'Topology':
         nodes_with_property_value = [node for node, data in self.graph.nodes(data=True)
                                      if data.get(property_name) == property_value]
-        return Topology(self.graph.subgraph(nodes_with_property_value))
+        return Topology(self.graph.subgraph(nodes_with_property_value).copy()) # .copy() can be removed once we switch to json dumps instead of pickle
 
     def sub_topologies_by_edge_property(self, property_name: str) -> dict[Any, 'Topology']:
         property_value_to_edges = defaultdict(list)
         for u, v, data in self.graph.edges(data=True):
             if not pd.isna(data.get(property_name)):
                 property_value_to_edges[data.get(property_name)].append((u, v))
-        return {property_value: Topology(self.graph.edge_subgraph(edges)) for property_value, edges in
+        return {property_value: Topology(self.graph.edge_subgraph(edges).copy()) for property_value, edges in # .copy() can be removed once we switch to json dumps instead of pickle
                 property_value_to_edges.items()}
 
     def sub_topology_by_edge_property(self, property_name: str, property_value) -> 'Topology':
         edges_with_property_value = [(u, v) for u, v, data in self.graph.edges(data=True)
                                      if data.get(property_name) == property_value]
-        return Topology(self.graph.edge_subgraph(edges_with_property_value))
+        return Topology(self.graph.edge_subgraph(edges_with_property_value).copy()) # .copy() can be removed once we switch to json dumps instead of pickle
 
 
 

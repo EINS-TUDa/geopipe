@@ -35,8 +35,6 @@ class EnergySystem:
     units: Unit
     system_topology: nx.Graph | None = None
     imports: list[Import] = field(default_factory=list)
-    constraints: dict[str, dict[int, float]] = field(default_factory=dict)
-    data_dir: str | Path | None = None
     pipes: list[PipeTechnology] = field(default_factory=list)
 
 

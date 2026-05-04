@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+# coding: utf-8
 import pickle
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -10,6 +9,7 @@ import pandas as pd
 from ..energy_system import EnergySystem, Scenario
 from ..energy_system.units import Unit
 from .reporting import write_html_report
+from ..plot.solution_plotter import plot_grid
 
 
 @dataclass
@@ -45,6 +45,23 @@ class Solution:
     scenario: Optional[Scenario] = field(default=None)
     results: Optional[Results] = field(default=None)
 
+    @property
+    def file_name(self) -> str:
+        return f"{self.energy_system.name}_{self.scenario.name}.pkl"
+
+    def save(self, path: Path | str, file_name: Optional[str] = None) -> None:
+        if file_name is None:
+            file_name = self.file_name
+        path = Path(path) / file_name
+        with open(path, "wb") as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, path: Path | str, file_name: str) -> "Solution":
+        path = Path(path) / file_name
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
     def write_html_report(
         self,
         output_path: str | Path,
@@ -54,14 +71,8 @@ class Solution:
             output_path=Path(output_path)
         )
 
-    def save(self, path: str) -> None:
-        with open(path, "wb") as f:
-            pickle.dump(self, f)
-
-    @classmethod
-    def load(cls, path: str) -> "Solution":
-        with open(path, "rb") as f:
-            return pickle.load(f)
+    def plot_grid(self, grid_name: str, year: int) -> Any:
+        return plot_grid(self, grid_name=grid_name, year=year)
 
 
 class OptimizationBackend(ABC):

@@ -254,6 +254,10 @@ class GridTechnology(Technology):
         self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
 
     @property
+    def length_km(self) -> float:
+        return self._grid_length_km
+
+    @property
     def investment_costs_eur(self) -> float:
         return self._grid_length_km * self.capex_per_km
 
