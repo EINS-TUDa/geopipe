@@ -8,6 +8,8 @@ from typing import Any, Optional
 import pandas as pd
 
 from pypeline.energy_system import EnergySystem, Scenario
+from pypeline.energy_system.technology import CHPTechnology
+from pypeline.optimization.cesm.techmap import commodity_name
 from pypeline.optimization.cesm.units import scale_factors
 from pypeline.optimization.solver import Results, Solution
 
@@ -34,11 +36,13 @@ class CESMResultsParser:
 
         unit = self.energy_system.units
         factors = scale_factors(unit)
-        for year_map in output_by_name_year.values():
-            for vals in year_map.values():
-                vals["cap_active"] /= factors["power"]
-                vals["cap_new"] /= factors["power"]
-                vals["eouttot"] /= factors["energy"]
+        for cs_map in output_by_name_year.values():
+            for year_map in cs_map.values():
+                for vals in year_map.values():
+                    vals["cap_active"] /= factors["power"]
+                    vals["cap_new"] /= factors["power"]
+                    vals["eouttot"] /= factors["energy"]
+                    # installed_units is a count, not scaled.
         opex /= factors["money"]
         capex /= factors["money"]
         totex /= factors["money"]
@@ -46,7 +50,7 @@ class CESMResultsParser:
             emissions_df = emissions_df.assign(amount=emissions_df["amount"] / factors["co2_emissions"])
 
         decentral_active, decentral_energy, decentral_new = self._build_decentral(output_by_name_year)
-        central_active, central_energy, central_new = self._build_central(output_by_name_year)
+        central_active, central_energy, central_new, central_installed_units = self._build_central(output_by_name_year)
         grids_active, grids_energy, grids_new = self._build_grids(output_by_name_year)
         pipes_active, pipes_energy, pipes_new = self._build_pipes(output_by_name_year)
 
@@ -62,6 +66,7 @@ class CESMResultsParser:
             active_capacities_central_technologies_per_commodity_out=central_active,
             yearly_energy_outputs_central_technologies_per_commodity_out=central_energy,
             new_capacities_central_technologies_per_commodity_out=central_new,
+            installed_units_central_technologies_per_commodity_out=central_installed_units,
             active_capacities_grids_per_commodity_in=grids_active,
             yearly_energy_outputs_grids_per_commodity_in=grids_energy,
             new_capacities_grids_per_commodity_in=grids_new,
@@ -78,33 +83,46 @@ class CESMResultsParser:
         )
 
     @staticmethod
-    def _fetch_subprocess_outputs(con: sqlite3.Connection) -> dict[str, dict[int, dict[str, float]]]:
-        """Return ``{conversion_process_name: {year: {cap_active, cap_new, eouttot}}}``."""
+    def _fetch_subprocess_outputs(
+        con: sqlite3.Connection,
+    ) -> dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]]:
+        """Return ``{conversion_process_name: {(commodity_in, commodity_out): {year: {cap_active, cap_new, eouttot, installed_units}}}}``.
+
+        Subprocesses are kept distinct so a conversion_process that maps to several subprocesses
+        (e.g. a CHP, which has separate subprocesses for each output commodity) can be split apart
+        instead of being collapsed into a single per-process row.
+        """
         cur = con.cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = {row[0] for row in cur.fetchall()}
-        if not {"output_cs_y", "conversion_subprocess", "conversion_process", "year"}.issubset(tables):
+        required = {"output_cs_y", "conversion_subprocess", "conversion_process", "commodity", "year"}
+        if not required.issubset(tables):
             return {}
         cur.execute(
             """
             SELECT cp.name,
+                   ci.name AS commodity_in,
+                   co.name AS commodity_out,
                    y.value AS year,
-                   COALESCE(SUM(o.cap_active), 0.0) AS cap_active,
-                   COALESCE(SUM(o.cap_new), 0.0) AS cap_new,
-                   COALESCE(SUM(o.eouttot), 0.0) AS eouttot
+                   COALESCE(o.cap_active, 0.0) AS cap_active,
+                   COALESCE(o.cap_new, 0.0) AS cap_new,
+                   COALESCE(o.eouttot, 0.0) AS eouttot,
+                   COALESCE(o.installed_units, 0.0) AS installed_units
             FROM output_cs_y AS o
             JOIN conversion_subprocess AS cs ON cs.id = o.cs_id
             JOIN conversion_process AS cp ON cp.id = cs.cp_id
+            JOIN commodity AS ci ON ci.id = cs.cin_id
+            JOIN commodity AS co ON co.id = cs.cout_id
             JOIN year AS y ON y.id = o.y_id
-            GROUP BY cp.name, y.value
             """
         )
-        result: dict[str, dict[int, dict[str, float]]] = {}
-        for name, year, cap_active, cap_new, eouttot in cur.fetchall():
-            result.setdefault(str(name), {})[int(year)] = {
+        result: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]] = {}
+        for name, cin, cout, year, cap_active, cap_new, eouttot, installed_units in cur.fetchall():
+            result.setdefault(str(name), {}).setdefault((str(cin), str(cout)), {})[int(year)] = {
                 "cap_active": cap_active,
                 "cap_new": cap_new,
                 "eouttot": eouttot,
+                "installed_units": installed_units,
             }
         return result
 
@@ -141,12 +159,17 @@ class CESMResultsParser:
         return pd.DataFrame(rows, columns=["year", "amount"])
 
     def _rows_for(
-        self, output_by_name_year: dict[str, dict[int, dict[str, float]]], cesm_name: str
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
+        cesm_name: str,
+        commodity_in: str,
+        commodity_out: str,
     ) -> dict[int, dict[str, float]]:
-        return output_by_name_year.get(cesm_name, {})
+        return output_by_name_year.get(cesm_name, {}).get((commodity_in, commodity_out), {})
 
     def _build_decentral(
-        self, output_by_name_year: dict[str, dict[int, dict[str, float]]]
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
     ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
         active_rows: dict[str, list[dict[str, Any]]] = {}
         energy_rows: dict[str, list[dict[str, Any]]] = {}
@@ -165,7 +188,9 @@ class CESMResultsParser:
                     )
                     continue
                 cesm_name = f"{tech.name}_D{region.id}"
-                for year, vals in self._rows_for(output_by_name_year, cesm_name).items():
+                cin = commodity_name(tech.commodity_in, region.id)
+                cout = commodity_name(tech.commodity_out, region.id)
+                for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
                     active_rows.setdefault(demand_name, []).append(
                         {"year": year, "technology": tech.name, "region_id": region.id, "capacity": vals["cap_active"]}
                     )
@@ -183,35 +208,56 @@ class CESMResultsParser:
         )
 
     def _build_central(
-        self, output_by_name_year: dict[str, dict[int, dict[str, float]]]
-    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
+    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
         active_rows: dict[str, list[dict[str, Any]]] = {}
         energy_rows: dict[str, list[dict[str, Any]]] = {}
         new_rows: dict[str, list[dict[str, Any]]] = {}
+        installed_units_rows: dict[str, list[dict[str, Any]]] = {}
 
         for region in self.energy_system.regions:
             for tech in region.central_techs:
-                key = tech.commodity_out
                 cesm_name = f"{tech.name}_D{region.id}"
-                for year, vals in self._rows_for(output_by_name_year, cesm_name).items():
-                    active_rows.setdefault(key, []).append(
-                        {"year": year, "technology": tech.name, "region_id": region.id, "capacity": vals["cap_active"]}
-                    )
-                    energy_rows.setdefault(key, []).append(
-                        {"year": year, "technology": tech.name, "region_id": region.id, "energy_output": vals["eouttot"]}
-                    )
-                    new_rows.setdefault(key, []).append(
-                        {"year": year, "technology": tech.name, "region_id": region.id, "new_capacity": vals["cap_new"]}
-                    )
+                # A CHP maps to multiple subprocesses sharing the same conversion_process_name;
+                # each output commodity has its own (cap_active, cap_new, eouttot). The two output
+                # subprocesses both have commodity_in == f"Help_{cesm_name}" in the database.
+                if isinstance(tech, CHPTechnology):
+                    lookups = [
+                        (tech.commodity_out, f"Help_{cesm_name}", commodity_name(tech.commodity_out, region.id)),
+                        (tech.commodity_out_2, f"Help_{cesm_name}", commodity_name(tech.commodity_out_2, region.id)),
+                    ]
+                else:
+                    lookups = [(
+                        tech.commodity_out,
+                        commodity_name(tech.commodity_in, region.id),
+                        commodity_name(tech.commodity_out, region.id),
+                    )]
+                for key, cin, cout in lookups:
+                    for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
+                        active_rows.setdefault(key, []).append(
+                            {"year": year, "technology": tech.name, "region_id": region.id, "capacity": vals["cap_active"]}
+                        )
+                        energy_rows.setdefault(key, []).append(
+                            {"year": year, "technology": tech.name, "region_id": region.id, "energy_output": vals["eouttot"]}
+                        )
+                        new_rows.setdefault(key, []).append(
+                            {"year": year, "technology": tech.name, "region_id": region.id, "new_capacity": vals["cap_new"]}
+                        )
+                        installed_units_rows.setdefault(key, []).append(
+                            {"year": year, "technology": tech.name, "region_id": region.id, "installed_units": vals["installed_units"]}
+                        )
 
         return (
             _frames(active_rows, ["year", "technology", "region_id", "capacity"]),
             _frames(energy_rows, ["year", "technology", "region_id", "energy_output"]),
             _frames(new_rows, ["year", "technology", "region_id", "new_capacity"]),
+            _frames(installed_units_rows, ["year", "technology", "region_id", "installed_units"]),
         )
 
     def _build_grids(
-        self, output_by_name_year: dict[str, dict[int, dict[str, float]]]
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
     ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
         active_rows: dict[str, list[dict[str, Any]]] = {}
         energy_rows: dict[str, list[dict[str, Any]]] = {}
@@ -221,7 +267,9 @@ class CESMResultsParser:
             for grid in region.grids:
                 key = grid.commodity_in
                 cesm_name = f"{grid.name}_D{region.id}"
-                for year, vals in self._rows_for(output_by_name_year, cesm_name).items():
+                cin = commodity_name(grid.commodity_in, region.id)
+                cout = commodity_name(grid.commodity_out, region.id)
+                for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
                     active_rows.setdefault(key, []).append(
                         {"year": year, "technology": grid.name, "region_id": region.id, "capacity": vals["cap_active"]}
                     )
@@ -239,7 +287,8 @@ class CESMResultsParser:
         )
 
     def _build_pipes(
-        self, output_by_name_year: dict[str, dict[int, dict[str, float]]]
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
     ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
         active_rows: dict[str, list[dict[str, Any]]] = {}
         energy_rows: dict[str, list[dict[str, Any]]] = {}
@@ -248,7 +297,9 @@ class CESMResultsParser:
         for pipe in self.energy_system.pipes:
             key = pipe.commodity_out
             cesm_name = f"{pipe.name}_D{pipe.region_id_in}_D{pipe.region_id_out}"
-            for year, vals in self._rows_for(output_by_name_year, cesm_name).items():
+            cin = commodity_name(pipe.commodity_in, pipe.region_id_in)
+            cout = commodity_name(pipe.commodity_out, pipe.region_id_out)
+            for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
                 base = {
                     "year": year,
                     "technology": pipe.name,

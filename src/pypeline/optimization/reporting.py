@@ -68,25 +68,29 @@ def _render_group_section(
     new: dict[str, pd.DataFrame],
     key_label: str,
     renames: dict[str, str],
+    installed_units: Optional[dict[str, pd.DataFrame]] = None,
 ) -> str:
-    keys = sorted(set(active) | set(energy) | set(new))
-    if not keys:
+    keys = set(active) | set(energy) | set(new)
+    if installed_units is not None:
+        keys |= set(installed_units)
+    sorted_keys = sorted(keys)
+    if not sorted_keys:
         return (
             f"<details><summary>{_escape(summary)}</summary>"
             f"<p><em>No technologies in this group.</em></p></details>"
         )
 
     parts = [f"<details open><summary>{_escape(summary)}</summary>"]
-    for key in keys:
+    for key in sorted_keys:
         parts.append(f"<h3>{_escape(key_label)}: {_escape(key)}</h3>")
-        parts.append(
-            _render_card_grid(
-                "grid-3",
-                _render_df("Active capacity", _with_units(active.get(key, pd.DataFrame()), renames)),
-                _render_df("Yearly energy output", _with_units(energy.get(key, pd.DataFrame()), renames)),
-                _render_df("New capacity", _with_units(new.get(key, pd.DataFrame()), renames)),
-            )
-        )
+        cards = [
+            _render_df("Active capacity", _with_units(active.get(key, pd.DataFrame()), renames)),
+            _render_df("Yearly energy output", _with_units(energy.get(key, pd.DataFrame()), renames)),
+            _render_df("New capacity", _with_units(new.get(key, pd.DataFrame()), renames)),
+        ]
+        if installed_units is not None:
+            cards.append(_render_df("Installed units", installed_units.get(key, pd.DataFrame())))
+        parts.append(_render_card_grid("grid-3", *cards))
     parts.append("</details>")
     return "\n".join(parts)
 
@@ -176,6 +180,7 @@ def write_html_report(
             active=results.active_capacities_central_technologies_per_commodity_out,
             energy=results.yearly_energy_outputs_central_technologies_per_commodity_out,
             new=results.new_capacities_central_technologies_per_commodity_out,
+            installed_units=results.installed_units_central_technologies_per_commodity_out,
             key_label="Commodity Out",
             renames=renames,
         ),

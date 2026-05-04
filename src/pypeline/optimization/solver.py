@@ -29,6 +29,8 @@ class Results:
     active_capacities_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, capacity
     yearly_energy_outputs_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, energy_output
     new_capacities_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, new_capacity
+    installed_units_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, installed_units
+
 
     active_capacities_grids_per_commodity_in: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, capacity
     yearly_energy_outputs_grids_per_commodity_in: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, energy_output
