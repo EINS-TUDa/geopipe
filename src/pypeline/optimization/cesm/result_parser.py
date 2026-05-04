@@ -49,30 +49,17 @@ class CESMResultsParser:
         if not emissions_df.empty:
             emissions_df = emissions_df.assign(amount=emissions_df["amount"] / factors["co2_emissions"])
 
-        decentral_active, decentral_energy, decentral_new = self._build_decentral(output_by_name_year)
-        central_active, central_energy, central_new, central_installed_units = self._build_central(output_by_name_year)
-        grids_active, grids_energy, grids_new = self._build_grids(output_by_name_year)
-        pipes_active, pipes_energy, pipes_new = self._build_pipes(output_by_name_year)
-
         results = Results(
             unit=unit,
             opex=opex,
             capex=capex,
             totex=totex,
             emissions_by_year=emissions_df,
-            active_capacities_decentral_technologies_per_demand=decentral_active,
-            yearly_energy_outputs_decentral_technologies_per_demand=decentral_energy,
-            new_capacities_decentral_technologies_per_demand=decentral_new,
-            active_capacities_central_technologies_per_commodity_out=central_active,
-            yearly_energy_outputs_central_technologies_per_commodity_out=central_energy,
-            new_capacities_central_technologies_per_commodity_out=central_new,
-            installed_units_central_technologies_per_commodity_out=central_installed_units,
-            active_capacities_grids_per_commodity_in=grids_active,
-            yearly_energy_outputs_grids_per_commodity_in=grids_energy,
-            new_capacities_grids_per_commodity_in=grids_new,
-            active_capacities_pipes_per_commodity_out=pipes_active,
-            yearly_energy_outputs_pipes_per_commodity_out=pipes_energy,
-            new_capacities_pipes_per_commodity_out=pipes_new,
+            decentral_technologies_per_demand=self._build_decentral(output_by_name_year),
+            central_technologies_per_commodity_out=self._build_central(output_by_name_year),
+            grids_per_commodity_in=self._build_grids(output_by_name_year),
+            pipes_per_commodity_out=self._build_pipes(output_by_name_year),
+            imports_per_commodity_out=self._build_imports(output_by_name_year),
         )
 
         return CESMSolution(
@@ -170,11 +157,8 @@ class CESMResultsParser:
     def _build_decentral(
         self,
         output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
-    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-        active_rows: dict[str, list[dict[str, Any]]] = {}
-        energy_rows: dict[str, list[dict[str, Any]]] = {}
-        new_rows: dict[str, list[dict[str, Any]]] = {}
-
+    ) -> dict[str, pd.DataFrame]:
+        rows: dict[str, list[dict[str, Any]]] = {}
         for region in self.energy_system.regions:
             demand_by_commodity_in: dict[str, str] = {
                 d.demand_type.commodity_in: d.name for d in region.demands
@@ -191,31 +175,22 @@ class CESMResultsParser:
                 cin = commodity_name(tech.commodity_in, region.id)
                 cout = commodity_name(tech.commodity_out, region.id)
                 for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
-                    active_rows.setdefault(demand_name, []).append(
-                        {"year": year, "technology": tech.name, "region_id": region.id, "capacity": vals["cap_active"]}
-                    )
-                    energy_rows.setdefault(demand_name, []).append(
-                        {"year": year, "technology": tech.name, "region_id": region.id, "energy_output": vals["eouttot"]}
-                    )
-                    new_rows.setdefault(demand_name, []).append(
-                        {"year": year, "technology": tech.name, "region_id": region.id, "new_capacity": vals["cap_new"]}
-                    )
+                    rows.setdefault(demand_name, []).append({
+                        "year": year,
+                        "technology": tech.name,
+                        "region_id": region.id,
+                        "capacity": vals["cap_active"],
+                        "energy_output": vals["eouttot"],
+                        "new_capacity": vals["cap_new"],
+                    })
 
-        return (
-            _frames(active_rows, ["year", "technology", "region_id", "capacity"]),
-            _frames(energy_rows, ["year", "technology", "region_id", "energy_output"]),
-            _frames(new_rows, ["year", "technology", "region_id", "new_capacity"]),
-        )
+        return _frames(rows, ["year", "technology", "region_id", "capacity", "energy_output", "new_capacity"])
 
     def _build_central(
         self,
         output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
-    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-        active_rows: dict[str, list[dict[str, Any]]] = {}
-        energy_rows: dict[str, list[dict[str, Any]]] = {}
-        new_rows: dict[str, list[dict[str, Any]]] = {}
-        installed_units_rows: dict[str, list[dict[str, Any]]] = {}
-
+    ) -> dict[str, pd.DataFrame]:
+        rows: dict[str, list[dict[str, Any]]] = {}
         for region in self.energy_system.regions:
             for tech in region.central_techs:
                 cesm_name = f"{tech.name}_D{region.id}"
@@ -235,34 +210,26 @@ class CESMResultsParser:
                     )]
                 for key, cin, cout in lookups:
                     for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
-                        active_rows.setdefault(key, []).append(
-                            {"year": year, "technology": tech.name, "region_id": region.id, "capacity": vals["cap_active"]}
-                        )
-                        energy_rows.setdefault(key, []).append(
-                            {"year": year, "technology": tech.name, "region_id": region.id, "energy_output": vals["eouttot"]}
-                        )
-                        new_rows.setdefault(key, []).append(
-                            {"year": year, "technology": tech.name, "region_id": region.id, "new_capacity": vals["cap_new"]}
-                        )
-                        installed_units_rows.setdefault(key, []).append(
-                            {"year": year, "technology": tech.name, "region_id": region.id, "installed_units": vals["installed_units"]}
-                        )
+                        rows.setdefault(key, []).append({
+                            "year": year,
+                            "technology": tech.name,
+                            "region_id": region.id,
+                            "capacity": vals["cap_active"],
+                            "energy_output": vals["eouttot"],
+                            "new_capacity": vals["cap_new"],
+                            "installed_units": vals["installed_units"],
+                        })
 
-        return (
-            _frames(active_rows, ["year", "technology", "region_id", "capacity"]),
-            _frames(energy_rows, ["year", "technology", "region_id", "energy_output"]),
-            _frames(new_rows, ["year", "technology", "region_id", "new_capacity"]),
-            _frames(installed_units_rows, ["year", "technology", "region_id", "installed_units"]),
+        return _frames(
+            rows,
+            ["year", "technology", "region_id", "capacity", "energy_output", "new_capacity", "installed_units"],
         )
 
     def _build_grids(
         self,
         output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
-    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-        active_rows: dict[str, list[dict[str, Any]]] = {}
-        energy_rows: dict[str, list[dict[str, Any]]] = {}
-        new_rows: dict[str, list[dict[str, Any]]] = {}
-
+    ) -> dict[str, pd.DataFrame]:
+        rows: dict[str, list[dict[str, Any]]] = {}
         for region in self.energy_system.regions:
             for grid in region.grids:
                 key = grid.commodity_in
@@ -270,58 +237,68 @@ class CESMResultsParser:
                 cin = commodity_name(grid.commodity_in, region.id)
                 cout = commodity_name(grid.commodity_out, region.id)
                 for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
-                    active_rows.setdefault(key, []).append(
-                        {"year": year, "technology": grid.name, "region_id": region.id, "capacity": vals["cap_active"]}
-                    )
-                    energy_rows.setdefault(key, []).append(
-                        {"year": year, "technology": grid.name, "region_id": region.id, "energy_output": vals["eouttot"]}
-                    )
-                    new_rows.setdefault(key, []).append(
-                        {"year": year, "technology": grid.name, "region_id": region.id, "new_capacity": vals["cap_new"]}
-                    )
+                    rows.setdefault(key, []).append({
+                        "year": year,
+                        "technology": grid.name,
+                        "region_id": region.id,
+                        "capacity": vals["cap_active"],
+                        "energy_output": vals["eouttot"],
+                        "new_capacity": vals["cap_new"],
+                    })
 
-        return (
-            _frames(active_rows, ["year", "technology", "region_id", "capacity"]),
-            _frames(energy_rows, ["year", "technology", "region_id", "energy_output"]),
-            _frames(new_rows, ["year", "technology", "region_id", "new_capacity"]),
-        )
+        return _frames(rows, ["year", "technology", "region_id", "capacity", "energy_output", "new_capacity"])
 
     def _build_pipes(
         self,
         output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
-    ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-        active_rows: dict[str, list[dict[str, Any]]] = {}
-        energy_rows: dict[str, list[dict[str, Any]]] = {}
-        new_rows: dict[str, list[dict[str, Any]]] = {}
-
+    ) -> dict[str, pd.DataFrame]:
+        rows: dict[str, list[dict[str, Any]]] = {}
         for pipe in self.energy_system.pipes:
             key = pipe.commodity_out
             cesm_name = f"{pipe.name}_D{pipe.region_id_in}_D{pipe.region_id_out}"
             cin = commodity_name(pipe.commodity_in, pipe.region_id_in)
             cout = commodity_name(pipe.commodity_out, pipe.region_id_out)
             for year, vals in self._rows_for(output_by_name_year, cesm_name, cin, cout).items():
-                base = {
+                rows.setdefault(key, []).append({
                     "year": year,
                     "technology": pipe.name,
                     "region_id_from": pipe.region_id_in,
                     "region_id_to": pipe.region_id_out,
-                }
-                active_rows.setdefault(key, []).append({**base, "capacity": vals["cap_active"]})
-                energy_rows.setdefault(key, []).append({**base, "energy_output": vals["eouttot"]})
-                new_rows.setdefault(key, []).append({**base, "new_capacity": vals["cap_new"]})
+                    "capacity": vals["cap_active"],
+                    "energy_output": vals["eouttot"],
+                    "new_capacity": vals["cap_new"],
+                })
 
-        return (
-            _frames(active_rows, ["year", "technology", "region_id_from", "region_id_to", "capacity"]),
-            _frames(energy_rows, ["year", "technology", "region_id_from", "region_id_to", "energy_output"]),
-            _frames(new_rows, ["year", "technology", "region_id_from", "region_id_to", "new_capacity"]),
+        return _frames(
+            rows,
+            ["year", "technology", "region_id_from", "region_id_to", "capacity", "energy_output", "new_capacity"],
         )
+
+    def _build_imports(
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
+    ) -> dict[str, pd.DataFrame]:
+        rows: dict[str, list[dict[str, Any]]] = {}
+        # Imports are global (commodity_in="Dummy", commodity_out un-prefixed); there is no region.
+        for imp in self.energy_system.imports:
+            key = imp.commodity_out
+            for year, vals in self._rows_for(output_by_name_year, imp.name, "Dummy", imp.commodity_out).items():
+                rows.setdefault(key, []).append({
+                    "year": year,
+                    "capacity": vals["cap_active"],
+                    "energy_output": vals["eouttot"],
+                    "new_capacity": vals["cap_new"],
+                })
+
+        return _frames(rows, ["year", "capacity", "energy_output", "new_capacity"])
 
 
 def _frames(
     rows_by_key: dict[str, list[dict[str, Any]]],
     columns: list[str],
 ) -> dict[str, pd.DataFrame]:
+    sort_by = [c for c in ("year", "technology") if c in columns]
     return {
-        key: pd.DataFrame(rows, columns=columns).sort_values(["year", "technology"]).reset_index(drop=True)
+        key: pd.DataFrame(rows, columns=columns).sort_values(sort_by).reset_index(drop=True)
         for key, rows in rows_by_key.items()
     }

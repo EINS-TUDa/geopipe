@@ -43,24 +43,19 @@ def plot_grid(solution: "Solution", grid_name: str, year: int) -> None:
     grid_commodity_in = grid_tech.commodity_in
     demand_commodity = grid_tech.commodity_out
 
-    active_grid_caps = _slice_df(
-        results.active_capacities_grids_per_commodity_in.get(grid_commodity_in, pd.DataFrame()),
+    grid_slice = _slice_df(
+        results.grids_per_commodity_in.get(grid_commodity_in, pd.DataFrame()),
         year=year, technology=grid_name,
     )
     active_regions: set[int] = {
-        int(row["region_id"]) for _, row in active_grid_caps.iterrows() if float(row["capacity"]) > 0
+        int(row["region_id"]) for _, row in grid_slice.iterrows() if float(row["capacity"]) > 0
     }
-
-    grid_energy_slice = _slice_df(
-        results.yearly_energy_outputs_grids_per_commodity_in.get(grid_commodity_in, pd.DataFrame()),
-        year=year, technology=grid_name,
-    )
     grid_energy_by_region: dict[int, float] = {
-        int(row["region_id"]): float(row["energy_output"]) for _, row in grid_energy_slice.iterrows()
+        int(row["region_id"]): float(row["energy_output"]) for _, row in grid_slice.iterrows()
     }
 
     central_slice = _slice_df(
-        results.active_capacities_central_technologies_per_commodity_out.get(grid_commodity_in, pd.DataFrame()),
+        results.central_technologies_per_commodity_out.get(grid_commodity_in, pd.DataFrame()),
         year=year,
     )
     central_by_region: dict[int, list[tuple[str, float]]] = {}
@@ -70,7 +65,7 @@ def plot_grid(solution: "Solution", grid_name: str, year: int) -> None:
             central_by_region.setdefault(int(row["region_id"]), []).append((str(row["technology"]), cap))
 
     pipes_slice = _slice_df(
-        results.active_capacities_pipes_per_commodity_out.get(grid_commodity_in, pd.DataFrame()),
+        results.pipes_per_commodity_out.get(grid_commodity_in, pd.DataFrame()),
         year=year,
     )
     active_pipes: list[tuple[int, int, float]] = [
@@ -330,7 +325,7 @@ def _decentral_supplied_per_region(
         for r in energy_system.regions
     }
     out: dict[int, dict[str, float]] = {}
-    for df in results.active_capacities_decentral_technologies_per_demand.values():
+    for df in results.decentral_technologies_per_demand.values():
         sliced = _slice_df(df, year=year)
         for _, row in sliced.iterrows():
             rid = int(row["region_id"])

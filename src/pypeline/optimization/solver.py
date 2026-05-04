@@ -22,24 +22,11 @@ class Results:
 
     emissions_by_year: pd.DataFrame  # Columns: year, amount
 
-    active_capacities_decentral_technologies_per_demand: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, capacity
-    yearly_energy_outputs_decentral_technologies_per_demand: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, energy_output
-    new_capacities_decentral_technologies_per_demand: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, new_capacity
-
-    active_capacities_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, capacity
-    yearly_energy_outputs_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, energy_output
-    new_capacities_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, new_capacity
-    installed_units_central_technologies_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, installed_units
-
-
-    active_capacities_grids_per_commodity_in: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, capacity
-    yearly_energy_outputs_grids_per_commodity_in: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, energy_output
-    new_capacities_grids_per_commodity_in: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id, new_capacity
-
-    active_capacities_pipes_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id_from, region_id_to, capacity
-    yearly_energy_outputs_pipes_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id_from, region_id_to, energy_output
-    new_capacities_pipes_per_commodity_out: dict[str, pd.DataFrame]  #DF Columns: year, technology, region_id_from, region_id_to, new_capacity
-
+    decentral_technologies_per_demand: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity
+    central_technologies_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity, installed_units
+    grids_per_commodity_in: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity
+    pipes_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id_from, region_id_to, capacity, energy_output, new_capacity
+    imports_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, capacity, energy_output, new_capacity
 
 @dataclass
 class Solution:

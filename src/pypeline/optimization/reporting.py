@@ -4,7 +4,7 @@ from __future__ import annotations
 import html
 import webbrowser
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -35,12 +35,13 @@ def _with_units(df: pd.DataFrame, renames: dict[str, str]) -> pd.DataFrame:
 
 
 def _render_df(title: str, df: pd.DataFrame, *, max_rows: int = 1000) -> str:
+    heading = f"<h3>{_escape(title)}</h3>" if title else ""
     if df is None or df.empty:
-        return f"<h3>{_escape(title)}</h3><p><em>No rows</em></p>"
+        return f"{heading}<p><em>No rows</em></p>"
     clipped = df.head(max_rows)
     table_html = clipped.to_html(index=False, classes="tbl", border=0, escape=True)
     suffix = "" if len(df) <= max_rows else f"<p><em>Showing first {max_rows} of {len(df)} rows.</em></p>"
-    return f"<h3>{_escape(title)}</h3><div class='tbl-wrap'>{table_html}</div>{suffix}"
+    return f"{heading}<div class='tbl-wrap'>{table_html}</div>{suffix}"
 
 
 def _render_mapping_table(title: str, values: dict[str, Any]) -> str:
@@ -63,17 +64,11 @@ def _render_card_grid(grid_class: str, *cards: str) -> str:
 def _render_group_section(
     summary: str,
     *,
-    active: dict[str, pd.DataFrame],
-    energy: dict[str, pd.DataFrame],
-    new: dict[str, pd.DataFrame],
+    frames: dict[str, pd.DataFrame],
     key_label: str,
     renames: dict[str, str],
-    installed_units: Optional[dict[str, pd.DataFrame]] = None,
 ) -> str:
-    keys = set(active) | set(energy) | set(new)
-    if installed_units is not None:
-        keys |= set(installed_units)
-    sorted_keys = sorted(keys)
+    sorted_keys = sorted(frames)
     if not sorted_keys:
         return (
             f"<details><summary>{_escape(summary)}</summary>"
@@ -83,14 +78,7 @@ def _render_group_section(
     parts = [f"<details open><summary>{_escape(summary)}</summary>"]
     for key in sorted_keys:
         parts.append(f"<h3>{_escape(key_label)}: {_escape(key)}</h3>")
-        cards = [
-            _render_df("Active capacity", _with_units(active.get(key, pd.DataFrame()), renames)),
-            _render_df("Yearly energy output", _with_units(energy.get(key, pd.DataFrame()), renames)),
-            _render_df("New capacity", _with_units(new.get(key, pd.DataFrame()), renames)),
-        ]
-        if installed_units is not None:
-            cards.append(_render_df("Installed units", installed_units.get(key, pd.DataFrame())))
-        parts.append(_render_card_grid("grid-3", *cards))
+        parts.append(_render_df("", _with_units(frames.get(key, pd.DataFrame()), renames)))
     parts.append("</details>")
     return "\n".join(parts)
 
@@ -168,37 +156,35 @@ def write_html_report(
         "<h2>Decentral Technologies (per demand)</h2>",
         _render_group_section(
             "Decentral Technologies",
-            active=results.active_capacities_decentral_technologies_per_demand,
-            energy=results.yearly_energy_outputs_decentral_technologies_per_demand,
-            new=results.new_capacities_decentral_technologies_per_demand,
+            frames=results.decentral_technologies_per_demand,
             key_label="Demand",
             renames=renames,
         ),
         "<h2>Central Technologies (per commodity_out)</h2>",
         _render_group_section(
             "Central Technologies",
-            active=results.active_capacities_central_technologies_per_commodity_out,
-            energy=results.yearly_energy_outputs_central_technologies_per_commodity_out,
-            new=results.new_capacities_central_technologies_per_commodity_out,
-            installed_units=results.installed_units_central_technologies_per_commodity_out,
+            frames=results.central_technologies_per_commodity_out,
             key_label="Commodity Out",
             renames=renames,
         ),
         "<h2>Grids (per commodity_in)</h2>",
         _render_group_section(
             "Grids",
-            active=results.active_capacities_grids_per_commodity_in,
-            energy=results.yearly_energy_outputs_grids_per_commodity_in,
-            new=results.new_capacities_grids_per_commodity_in,
+            frames=results.grids_per_commodity_in,
             key_label="Commodity In",
             renames=renames,
         ),
         "<h2>Pipes (per commodity_out)</h2>",
         _render_group_section(
             "Pipes",
-            active=results.active_capacities_pipes_per_commodity_out,
-            energy=results.yearly_energy_outputs_pipes_per_commodity_out,
-            new=results.new_capacities_pipes_per_commodity_out,
+            frames=results.pipes_per_commodity_out,
+            key_label="Commodity Out",
+            renames=renames,
+        ),
+        "<h2>Imports (per commodity_out)</h2>",
+        _render_group_section(
+            "Imports",
+            frames=results.imports_per_commodity_out,
             key_label="Commodity Out",
             renames=renames,
         ),
