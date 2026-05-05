@@ -4,24 +4,35 @@
 
 PYthon-based data piPELINe for Energy system modeling
 
-## How to run with CESM
+## Quickstart
 
-1. Clone the repository
-   ```
-   git clone https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/
-   ```
-2. Change into the directory
-   ```
+### Prerequisites
+- Python 3.11
+- (Recommended) uv for environment management, https://docs.astral.sh/uv/getting-started/installation/
+- Gurobi
+
+### Clone (with submodules) 
+   ```bash
+   git clone --recurse-submodules -b pypeline git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
    cd data_pipeline_esm
    ```
-3. Initialize and update submodules (make sure to be on correct branch which contains the submodule)
-   ```
-   git submodule update --init --recursive
-   ```
-4. Setup environment using uv (recommended). Make sure uv is installed (https://docs.astral.sh/uv/getting-started/installation/).
-   ```
-   uv sync
-   ```
+### Environment. 
+```bash
+uv sync
+```
+
+### Verify setup
+```bash
+uv run python -c "import pypeline; print('OK')"
+```
+
+### Run first examples
+Run examples in `examples/` to verify that everything is working. For example:
+```bash
+uv run python examples/test_case_bensheim/main.py
+```
+
+
 ## Documentation
 Documentation can be found [here](https://CaroAy.github.io/data-pipeline-esm/).
 To build the documentation, use:
@@ -32,8 +43,3 @@ To preview the documentation locally, use:
 ```
 uv run mkdocs serve
 ```
-
-## Getting Started
-
-Run examples via `project_cli.py` and select the example you want to run in the terminal.
-It will continue to prompt you for optional demand/supply injections and then give result visualization options.

@@ -89,10 +89,10 @@ def main():
 
     # solution.save(path=CASE_DIR / "output_data")
     # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
-    compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
-    # solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
-    # solution.plot_grid(grid_name="heat_grid", year=2030)
-    # solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
+    # compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
+    solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
+    solution.plot_grid(grid_name="heat_grid", year=2030)
+    solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
 
     # --- 3) Sankey diagrams via CESM plot module ---
     db_path = Path(solution.db_path)
