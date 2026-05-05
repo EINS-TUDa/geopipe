@@ -3,6 +3,8 @@ from pathlib import Path
 
 from compare_techmaps import compare_techmaps
 from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
+from pypeline.data.dataset import CensusTechnology
+from pypeline.energy_system.demand import DemandType
 from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
 from pypeline.energy_system import Scenario
 from pypeline.energy_system import register_technologies
@@ -49,10 +51,33 @@ def main():
     data_reg = case1_data_registry()
     register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml", clear_registry=True)
 
+    residential_heat_demand = DemandType(name="residential_heat",
+                       commodity_in="residential_heat",
+                       cooperation_of_technologies=False,
+                       profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
+                       demand_column_name="waerme_mwh",
+                       technology_shares_query_params={
+                           "key": "heating_shares",
+                           "name_mapping": {
+                               CensusTechnology.Gas: "ind_gas_boiler",
+                               CensusTechnology.Oil: "ind_oil_boiler",
+                               CensusTechnology.Wood: "wood",
+                               CensusTechnology.Biomass: None,
+                               CensusTechnology.Renewable: "ind_heat_pump",
+                               CensusTechnology.Electric: None,
+                               CensusTechnology.Coal: None,
+                               CensusTechnology.District_Heating: "heat_exchanger",
+                               CensusTechnology.NoEnergyCarrier: None,
+                           },
+                       },
+                       default_decentral_supply_technology="ind_oil_boiler",
+                       decrease_percent_per_year=0)
+
     builder = EnergySystemBuilder(energy_system_name="Case1")
     builder.set_system_topology(topology_result.network)
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
+    builder.set_demand_types([residential_heat_demand])
     builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
     builder.set_unit(UnitEnum.KW)
 
@@ -73,9 +98,9 @@ def main():
     db_path = Path(solution.db_path)
     conn = sqlite3.connect(str(db_path))
     dao = DAO(conn)
-    sankey_plotter = CesmPlotter(dao)
+    cesm_plotter = CesmPlotter(dao)
     for year in scenario.years:
-        sankey_fig = sankey_plotter.plot_sankey(year=year)
+        sankey_fig = cesm_plotter.plot_sankey(year=year)
         # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
         # sankey_fig.write_html(str(sankey_output))
         # print(f"Saved Sankey diagram: {sankey_output}")
@@ -86,8 +111,8 @@ def main():
         if "residential_heat_D" in str(co)
     ]
     for commodity in heat_commodities:
-        sankey_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
-        sankey_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+        cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+        cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
     conn.close()
 
 

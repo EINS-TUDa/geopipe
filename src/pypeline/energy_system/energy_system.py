@@ -147,31 +147,6 @@ class EnergySystemBuilder:
             collection.append(demand)
         return collection
 
-    @staticmethod
-    def _default_demand_types():
-        return [
-            DemandType(name="residential_heat",
-                       commodity_in="residential_heat",
-                       cooperation_of_technologies=False,
-                       profile_path=Path(__file__).parent / "HeatDemandProfile.txt",
-                       demand_column_name="waerme_mwh",
-                       technology_shares_query_params={
-                           "key": "heating_shares",
-                           "name_mapping": {
-                               CensusTechnology.Gas: "ind_gas_boiler",
-                               CensusTechnology.Oil: "ind_oil_boiler",
-                               CensusTechnology.Wood: "wood",
-                               CensusTechnology.Biomass: None,
-                               CensusTechnology.Renewable: "ind_heat_pump",
-                               CensusTechnology.Electric: None,
-                               CensusTechnology.Coal: None,
-                               CensusTechnology.District_Heating: "heat_exchanger",
-                               CensusTechnology.NoEnergyCarrier: None,
-                           },
-                       },
-                       default_decentral_supply_technology="ind_oil_boiler",
-                       decrease_percent_per_year=0), ]
-
     def _process_technology_shares(self, technology_shares_data: dict[str, float], demand: Demand, topology: Topology) \
             -> dict[str, float]:
         # If technology_shares_data is empty
@@ -265,10 +240,6 @@ class EnergySystemBuilder:
         return central_techs_per_region
 
     def _pre_build(self):
-        if not self._demand_types:
-            logger.info("No demand types given. Using the default values.")
-            self.add_demand_types(*self._default_demand_types())
-
         if self._config is None:
             logger.info("No config given. Using the default values.")
             self.set_config(EnergySystemBuilderConfig())
@@ -456,33 +427,27 @@ class EnergySystemBuilder:
         return energy_system
 
     def verify(self):
+        errors=[]
+        warnings=[]
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
-            raise ValueError(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
+            errors.append(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
         if not isinstance(self.base_crs, str) or not self.base_crs:
-            raise ValueError(f"Base crs must be a non-empty string and not {type(self.base_crs)}")
+            errors.append(f"Base CRS must be a non-empty string and not {type(self.base_crs)}")
         if not isinstance(self._system_topology, Topology):
-            raise ValueError("System topology must be set")
-        # region_ids = set()
-        # for _, _, d in self.street_network.edges(data=True):
-        #     raw = d.get("id")
-        #     try:
-        #         region_ids.add(int(float(raw)))
-        #     except (TypeError, ValueError):
-        #         pass
-        # if not region_ids:
-        #     raise ValueError(
-        #         "street_network has no edges with a valid 'id' attribute. "
-        #         "Every edge must carry an integer 'id' indicating its region. "
-        #         "Use set_street_network() with a graph produced by gdf_to_nx() after "
-        #         "assigning region ids to the street GeoDataFrame."
-        #     )
-        # if self.rule_book is not None and not isinstance(self.rule_book, EnergySystemRuleBook):
-        #     raise ValueError(f"RuleBook must be None or EnergySystemRuleBook and not {type(self.rule_book)}")
-        # if not isinstance(self.data_registry, DataRegistry):
-        #     raise ValueError(f"DataRegistry must be set and of type DataRegistry and not {type(self.data_registry)}")
-        # if not isinstance(self.technology_registry, TechnologyRegistry):
-        #     raise ValueError(
-        #         f"TechnologyRegistry must be set and of type TechnologyRegistry and not {type(self.technology_registry)}"
-        #     )
-        # if not self.imports:
-        #     raise ValueError("Imports must be set using set_imports() with a non-empty imports.yaml")
+            errors.append(f"System topology must be set and of type Topology and not {type(self._system_topology)}")
+        if not isinstance(self._data_registry, DataRegistry):
+            errors.append(f"DataRegistry must be set and of type DataRegistry and not {type(self._data_registry)}")
+        if not isinstance(self._unit, Unit):
+            errors.append(f"Unit must be set and of type Unit and not {type(self._unit)}")
+        if self._config is None:
+            warnings.append(f"No config given. Using the default values.")
+        elif not isinstance(self._config, EnergySystemBuilderConfig):
+            errors.append(f"Config must be of type EnergySystemBuilderConfig and not {type(self._config)}")
+        if not self._demand_types:
+            errors.append("At least one demand type must be added using set_demand_types() or add_demand_types().")
+        if self._imports is None:
+            errors.append("Imports must be set using set_imports() with a non-empty imports.yaml")
+        if errors:
+            raise ValueError("Errors in EnergySystemBuilder configuration:\n" + "\n".join(errors))
+        if warnings:
+            logger.warning("Warnings in EnergySystemBuilder configuration:\n" + "\n".join(warnings))
