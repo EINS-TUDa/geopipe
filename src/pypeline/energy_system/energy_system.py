@@ -428,7 +428,6 @@ class EnergySystemBuilder:
 
     def verify(self):
         errors=[]
-        warnings=[]
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
             errors.append(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
         if not isinstance(self.base_crs, str) or not self.base_crs:
@@ -439,9 +438,7 @@ class EnergySystemBuilder:
             errors.append(f"DataRegistry must be set and of type DataRegistry and not {type(self._data_registry)}")
         if not isinstance(self._unit, Unit):
             errors.append(f"Unit must be set and of type Unit and not {type(self._unit)}")
-        if self._config is None:
-            warnings.append(f"No config given. Using the default values.")
-        elif not isinstance(self._config, EnergySystemBuilderConfig):
+        if not isinstance(self._config, EnergySystemBuilderConfig) and self._config is not None:
             errors.append(f"Config must be of type EnergySystemBuilderConfig and not {type(self._config)}")
         if not self._demand_types:
             errors.append("At least one demand type must be added using set_demand_types() or add_demand_types().")
@@ -449,5 +446,3 @@ class EnergySystemBuilder:
             errors.append("Imports must be set using set_imports() with a non-empty imports.yaml")
         if errors:
             raise ValueError("Errors in EnergySystemBuilder configuration:\n" + "\n".join(errors))
-        if warnings:
-            logger.warning("Warnings in EnergySystemBuilder configuration:\n" + "\n".join(warnings))

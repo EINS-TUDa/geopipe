@@ -1,3 +1,5 @@
+import hashlib
+import re
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -256,14 +258,17 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
 
 
 def _color_from_name(name: str) -> str:
-    # simple deterministic color assignment based on name
     colors = [
         "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
         "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
         "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
         "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5",
     ]
-    return colors[hash(name) % len(colors)]
+    # remove suffix like _D, _D1, _Dxyz at the end of the string
+    base = re.sub(r"_D.*$", "", name)
+    h = hashlib.md5(base.encode()).hexdigest()
+    index = int(h, 16) % len(colors)
+    return colors[index]
 
 def _commodity_df(commodity_names: set[str]) -> pd.DataFrame:
     return pd.DataFrame(
