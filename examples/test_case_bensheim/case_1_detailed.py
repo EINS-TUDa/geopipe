@@ -58,7 +58,7 @@ def main():
 
     energy_system = builder.build()
     energy_system.plot_system_topology()
-    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=3, tss="4ThinWeeks")
+    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual")
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
     solution = backend.solve(energy_system, scenario, lp_file=True)
 

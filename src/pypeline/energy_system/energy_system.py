@@ -1,4 +1,5 @@
 # coding=utf-8
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -225,7 +226,7 @@ class EnergySystemBuilder:
             grid = grids.get(self._find_grid_type_from_decentralized_technology(decentralized_technology, grids))
             if not grid:
                 continue
-            grid.existing_capacity += decentralized_technology.existing_capacity
+            grid.existing_capacity += decentralized_technology.existing_capacity / decentralized_technology.efficiency
 
         return grids
 
@@ -400,8 +401,8 @@ class EnergySystemBuilder:
                         # on edge = (start,child)
                         existing_capacity_of_child_grid = update_existing_capacities(child)
                         child_pipe: PipeTechnology = pipes_per_type[pipe_type_name][(start, child)]
-                        child_pipe.existing_capacity += existing_capacity_of_child_grid
-                        capacity_from_children += child_pipe.existing_capacity
+                        child_pipe.existing_capacity += existing_capacity_of_child_grid/grid_tech_per_region[child][grid_type_name].efficiency
+                        capacity_from_children += child_pipe.existing_capacity/child_pipe.efficiency
 
                     grid_on_region: GridTechnology = grid_tech_per_region[start][grid_type_name]
                     logger.info(
@@ -424,7 +425,7 @@ class EnergySystemBuilder:
                     raise ValueError(
                         f"Default central technology {central_type_name} for commodity {pipe_commodity_out} has wrong commodity_out."
                         f"Should be {CentralTechnology.get_type_defaults(central_type_name).get('commodity_out')}.")
-                central_techs_per_region[central_tech_region][central_type_name].existing_capacity = total_capacity
+                central_techs_per_region[central_tech_region][central_type_name].existing_capacity = total_capacity/grid_tech_per_region[central_tech_region][grid_type_name].efficiency
 
         # Place central technologies in preferred locations
         # If no preferred region for a commodity, place central technologies in all regions outside connected groups.
