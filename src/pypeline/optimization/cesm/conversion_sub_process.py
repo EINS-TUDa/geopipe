@@ -9,7 +9,7 @@ class ConversionSubProcess:
     commodity_in: str
     commodity_out: str
     scenario: str
-    spec_co2: Optional[float] = None
+    spec_co2: Optional[float | str] = None
     efficiency: Optional[float] = None
 
     technical_lifetime: Optional[float] = None
