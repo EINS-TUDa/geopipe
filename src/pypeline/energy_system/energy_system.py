@@ -47,11 +47,14 @@ class EnergySystemBuilderConfig(BaseSettings):
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
     minimum_decentral_technology_share: dict[str, float] = Field(default_factory=dict)
     #: Threshold to consider regions connected. Only one region of all connected regions holds the central technology
+    # Exception: techs in constrain_central_technology_location are always placed in the indicated regions.
     considered_connected_region_distance_m: float = np.inf
     #: Key: commodity_out central technologies, Value: central technology name as default
     default_central_technology_per_commodity: dict[str, str]
     #: Key: commodity_out central technologies, Value: list of region ids to prioritize
     preferred_central_technologies_location_per_commodity: dict[str, list[int]] = Field(default_factory=dict)
+    # Key: central technology name, Value: list of region ids where the central technology has to be placed, cannot be placed in other regions
+    constrain_central_technology_location: dict[str, list[int]] = Field(default_factory=dict)
     #: Name of the ID property on the edges of the topology Graph
     region_id_name: str = "id"
     #: Factor added to the grid capacity. Dict of grid name to factor. 10 % corresponds to 1.1

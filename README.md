@@ -29,7 +29,7 @@ uv run python -c "import pypeline; print('OK')"
 ### Run first examples
 Run examples in `examples/` to verify that everything is working. For example:
 ```bash
-uv run python examples/test_case_bensheim/main.py
+uv run python examples/test_case_bensheim/bensheim_test_main.py
 ```
 
 

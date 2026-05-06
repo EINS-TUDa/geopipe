@@ -100,6 +100,18 @@ central:
     capex_cost_power: 440
     capex_cost_base: 260000
 
+  cen_waste_heat_langnese:
+    commodity_in: Dummy
+    commodity_out: district_heat_in
+    efficiency: 1
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 1
+    capex_cost_power: 440
+    capex_cost_base: 260000
+    max_capacity_per_year_per_unit: 100 # kW # per unit, can also be year dependent dict. Year is relative to start year (0 is first year of modeling period)
+    max_units: 1 # Number of units that can be built, can also be year dependent dict
+
 chp:
 
   chp_gas:
@@ -114,7 +126,6 @@ chp:
     capex_cost_power: 500
     capex_cost_base: 260000
     existing_capacity_retirement_years: 20
-    cap_max: 300 # per unit
 
 
 grids:

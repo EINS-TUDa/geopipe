@@ -17,4 +17,3 @@ imports:
       2030: 0
   - commodity_out: biomass
     price_eur_per_mwh: 80.0
-

@@ -45,7 +45,8 @@ def main():
         considered_connected_region_distance_m=50,
         default_central_technology_per_commodity={"district_heat_in": "chp_gas"},
         preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
-        additional_grid_capacity_factor={"heat_grid": 1}
+        additional_grid_capacity_factor={"heat_grid": 1},
+        restrict_central_technology_location_to_region={"cen_waste_heat_langnese": [0]}
     )
 
     data_reg = case1_data_registry()
@@ -89,7 +90,7 @@ def main():
 
     # solution.save(path=CASE_DIR / "output_data")
     # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
-    # compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
+    compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.plot_grid(grid_name="heat_grid", year=2030)
     solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
