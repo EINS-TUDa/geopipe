@@ -30,8 +30,8 @@ CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
 
 def main():
-    # streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
-    #                                    modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
+    streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
+                                       modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
 
     # topology_builder = SimpleTopologyBuilder()
     # topology_builder.set_streets_data(streets_data)
@@ -40,89 +40,89 @@ def main():
     # topology_builder.set_extensive_columns(["waerme_mwh"])
     # topology_result = topology_builder.build()
 
-    # topology_builder = PolygonTopologyBuilder()
-    # topology_builder.set_streets_data(streets_data)
-    # topology_builder.set_region_id_column("id")
-    # topology_builder.set_extensive_columns(["waerme_mwh"])
-    # topology_builder.set_polygons_data(CASE_DIR / "input_data" / "4_polygone_bensheim.geojson")
-    # topology_result = topology_builder.build()
-    #
-    # esb_cfg = EnergySystemBuilderConfig(
-    #     minimum_decentral_technology_share={"heat_exchanger": 0.1},
-    #     considered_connected_region_distance_m=50,
-    #     central_tech_locations_per_commodity={"district_heat_in": [0]},
-    #     central_tech_existing_capacities={"district_heat_in": {0: [("cen_waste_heat_langnese", 0.6),("cen_gas_boiler", 0.4)],
-    #                                                            "default": [("chp_gas", 0.8),("cen_gas_boiler", 0.2)]}},
-    #     additional_grid_capacity_factor={"heat_grid": 1.1},
-    # )
-    #
-    # data_reg = case1_data_registry()
-    # register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml", clear_registry=True)
-    #
-    # residential_heat_demand = DemandType(name="residential_heat",
-    #                    commodity_in="residential_heat",
-    #                    cooperation_of_technologies=False,
-    #                    profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
-    #                    demand_column_name="waerme_mwh",
-    #                    technology_shares_query_params={
-    #                        "key": "heating_shares",
-    #                        "name_mapping": {
-    #                            CensusTechnology.Gas: "ind_gas_boiler",
-    #                            CensusTechnology.Oil: "ind_oil_boiler",
-    #                            CensusTechnology.Wood: "ind_biomass",
-    #                            CensusTechnology.Biomass: None,
-    #                            CensusTechnology.Renewable: "ind_heat_pump",
-    #                            CensusTechnology.Electric: None,
-    #                            CensusTechnology.Coal: None,
-    #                            CensusTechnology.District_Heating: "heat_exchanger",
-    #                            CensusTechnology.NoEnergyCarrier: None,
-    #                        },
-    #                    },
-    #                    default_decentral_supply_technology="ind_oil_boiler",
-    #                    decrease_percent_per_year=0)
-    #
-    # builder = EnergySystemBuilder(energy_system_name="Case1")
-    # builder.set_system_topology(topology_result.network)
-    # builder.set_data_registry(data_reg)
-    # builder.set_config(esb_cfg)
-    # builder.set_demand_types([residential_heat_demand])
-    # builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
-    # builder.set_unit(UnitEnum.KW)
-    #
-    # energy_system = builder.build()
-    # energy_system.plot_system_topology()
-    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
-    # backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
-    # solution = backend.solve(energy_system, scenario, lp_file=True)
+    topology_builder = PolygonTopologyBuilder()
+    topology_builder.set_streets_data(streets_data)
+    topology_builder.set_region_id_column("id")
+    topology_builder.set_extensive_columns(["waerme_mwh"])
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "4_polygone_bensheim.geojson")
+    topology_result = topology_builder.build()
 
-    # solution.save(path=CASE_DIR / "output_data")
-    solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
+    esb_cfg = EnergySystemBuilderConfig(
+        minimum_decentral_technology_share={"heat_exchanger": 0.1},
+        considered_connected_region_distance_m=50,
+        central_tech_locations_per_commodity={"district_heat_in": [0]},
+        central_tech_existing_capacities={"district_heat_in": {0: [("cen_waste_heat_langnese", 0.6),("cen_gas_boiler", 0.4)],
+                                                               "default": [("chp_gas", 0.8),("cen_gas_boiler", 0.2)]}},
+        additional_grid_capacity_factor={"heat_grid": 1.1},
+    )
+
+    data_reg = case1_data_registry()
+    register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml", clear_registry=True)
+
+    residential_heat_demand = DemandType(name="residential_heat",
+                       commodity_in="residential_heat",
+                       cooperation_of_technologies=False,
+                       profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
+                       demand_column_name="waerme_mwh",
+                       technology_shares_query_params={
+                           "key": "heating_shares",
+                           "name_mapping": {
+                               CensusTechnology.Gas: "ind_gas_boiler",
+                               CensusTechnology.Oil: "ind_oil_boiler",
+                               CensusTechnology.Wood: "ind_biomass",
+                               CensusTechnology.Biomass: None,
+                               CensusTechnology.Renewable: "ind_heat_pump",
+                               CensusTechnology.Electric: None,
+                               CensusTechnology.Coal: None,
+                               CensusTechnology.District_Heating: "heat_exchanger",
+                               CensusTechnology.NoEnergyCarrier: None,
+                           },
+                       },
+                       default_decentral_supply_technology="ind_oil_boiler",
+                       decrease_percent_per_year=0)
+
+    builder = EnergySystemBuilder(energy_system_name="Case1")
+    builder.set_system_topology(topology_result.network)
+    builder.set_data_registry(data_reg)
+    builder.set_config(esb_cfg)
+    builder.set_demand_types([residential_heat_demand])
+    builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
+    builder.set_unit(UnitEnum.KW)
+
+    energy_system = builder.build()
+    energy_system.plot_system_topology()
+    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
+    backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
+    solution = backend.solve(energy_system, scenario, lp_file=True)
+
+    solution.save(path=CASE_DIR / "output_data")
+    # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
     # compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
-    # solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
+    solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.energy_system.plot_system_topology()
     solution.plot_grid(grid_name="heat_grid", year=2030)
     solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    # db_path = Path(solution.db_path)
-    # conn = sqlite3.connect(str(db_path))
-    # dao = DAO(conn)
-    # cesm_plotter = CesmPlotter(dao)
-    # for year in scenario.years:
-    #     sankey_fig = cesm_plotter.plot_sankey(year=year)
-    #     # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
-    #     # sankey_fig.write_html(str(sankey_output))
-    #     # print(f"Saved Sankey diagram: {sankey_output}")
-    #
-    # # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
-    # heat_commodities = [
-    #     co for co in dao.get_set("commodity")
-    #     if "residential_heat_D" in str(co)
-    # ]
-    # for commodity in heat_commodities:
-    #     cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
-    #     cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
-    # conn.close()
+    db_path = Path(solution.db_path)
+    conn = sqlite3.connect(str(db_path))
+    dao = DAO(conn)
+    cesm_plotter = CesmPlotter(dao)
+    for year in scenario.years:
+        sankey_fig = cesm_plotter.plot_sankey(year=year)
+        # sankey_output = CASE_DIR / "output_data" / f"sankey_{year}.html"
+        # sankey_fig.write_html(str(sankey_output))
+        # print(f"Saved Sankey diagram: {sankey_output}")
+
+    # --- 4) Active capacity & new capacity plots for residential_heat_DXXX ---
+    heat_commodities = [
+        co for co in dao.get_set("commodity")
+        if "residential_heat_D" in str(co)
+    ]
+    for commodity in heat_commodities:
+        cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY, commodity=commodity)
+        cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY, commodity=commodity)
+    conn.close()
 
 
 if __name__ == '__main__':
