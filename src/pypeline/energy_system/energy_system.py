@@ -19,10 +19,10 @@ from .technology import PipeTechnology, GridTechnology, CentralTechnology, Decen
 from .region import compute_region_connections, RegionConnections
 from .demand import DemandType
 from ..data.data_registry import DataRegistry
-from ..data.dataset import CensusTechnology
 from .region import Demand, Region
 from .units import Unit, UnitEnum
 from ..topology_builder.topology import Topology
+from ..plot.energy_system_plotter import plot_system_topology
 
 import logging
 
@@ -39,7 +39,6 @@ class EnergySystem:
     pipes: list[PipeTechnology] = field(default_factory=list)
 
     def plot_system_topology(self, output_path: Optional[str | Path] = None) -> None:
-        from ..plot.energy_system_plotter import plot_system_topology
         plot_system_topology(self, output_path=output_path)
 
 

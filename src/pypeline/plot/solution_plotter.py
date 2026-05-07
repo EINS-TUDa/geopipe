@@ -12,6 +12,7 @@ import pandas as pd
 from matplotlib.patches import Circle
 from shapely import voronoi_polygons
 from shapely.geometry import MultiPoint
+from shapely.ops import unary_union
 
 from ..energy_system.region import Region
 from ..energy_system.technology import GridTechnology
@@ -23,9 +24,9 @@ if TYPE_CHECKING:
 
 
 
-_INACTIVE_COLOR = "#cccccc"
+_INACTIVE_COLOR = "#787a7d"
 _PIPE_COLOR = "#8b4513"  # brown
-_VORONOI_FILL_COLOR = "#656870"
+_REGION_FILL_COLOR = "#656870"
 
 _DECENTRAL_METRIC_COLUMNS: dict[str, str] = {
     "energy_output": "energy_output",
@@ -186,7 +187,7 @@ def plot_decentral_shares(
         y: _decentral_shares_per_region(_slice_df(df, year=y), column) for y in years
     }
 
-    region_geoms = _voronoi_region_geometries(es.regions)
+    region_geoms = _region_polygons(es.regions)
     combined_shares: dict[int, dict[str, float]] = {}
     for shares_per_region in shares_per_year.values():
         for rid, shares in shares_per_region.items():
@@ -249,8 +250,8 @@ def _draw_decentral_shares_axis(
     demand_name: str,
     year: int,
 ) -> None:
-    _draw_voronoi_cells(ax, energy_system.regions, region_geoms)
-    _draw_region_donuts(
+    _draw_region_polygons(ax, energy_system.regions, region_geoms)
+    pie_radius, pie_centers = _draw_region_donuts(
         ax,
         regions=energy_system.regions,
         region_geoms=region_geoms,
@@ -260,7 +261,7 @@ def _draw_decentral_shares_axis(
         unit_str=unit_str,
     )
     ax.set_aspect("equal", adjustable="box")
-    _zoom_to_regions(ax, energy_system.regions)
+    _zoom_to_donuts(ax, energy_system.regions, pie_centers, pie_radius)
     _add_basemap(ax, energy_system)
     ax.set_title(f"Decentral shares — {metric_title} — '{demand_name}' — {year}", fontsize=16)
     ax.set_xlabel("x", fontsize=14)
@@ -285,42 +286,65 @@ def _decentral_shares_per_region(sliced: pd.DataFrame, column: str) -> dict[int,
     return out
 
 
-def _voronoi_region_geometries(regions: Iterable[Region]) -> list[Any]:
+def _region_polygons(regions: Iterable[Region]) -> list[Any]:
+    """
+    Build one polygon per region by Voronoi-tessellating *all* topology nodes
+    (each tagged with its region) and dissolving the cells per region.
+
+    The result hugs each region's actual node footprint — like a convex hull
+    bent along the perpendicular bisector where two regions meet — and is
+    non-overlapping by construction.
+    """
     region_list = list(regions)
     if not region_list:
-        raise ValueError("Energy system has no regions for Voronoi geometry")
+        raise ValueError("Energy system has no regions for region polygons")
 
-    seed_points = []
-    all_node_points: list[tuple[float, float]] = []
-    for region in region_list:
-        topology = region.topology
-        nodes = list(topology.graph.nodes) if topology is not None else []
+    seeds: list[tuple[float, float]] = []
+    seed_region_idx: list[int] = []
+    region_hulls: list[Any] = []
+    for idx, region in enumerate(region_list):
+        nodes = list(region.topology.graph.nodes) if region.topology is not None else []
         if not nodes:
-            raise ValueError(f"Region {region.id} has no topology nodes for Voronoi geometry")
-        region_nodes = [(float(n[0]), float(n[1])) for n in nodes]
-        all_node_points.extend(region_nodes)
-        seed_points.append(MultiPoint(region_nodes).representative_point())
+            raise ValueError(f"Region {region.id} has no topology nodes")
+        points = [(float(n[0]), float(n[1])) for n in nodes]
+        seeds.extend(points)
+        seed_region_idx.extend([idx] * len(points))
+        region_hulls.append(MultiPoint(points).convex_hull)
 
-    seed_keys = {(round(float(pt.x), 9), round(float(pt.y), 9)) for pt in seed_points}
-    if len(seed_keys) != len(seed_points):
-        raise ValueError("Voronoi region seeds are not unique")
+    # Voronoi requires unique seeds; drop duplicates (shared boundary nodes).
+    seen: set[tuple[float, float]] = set()
+    unique_seeds: list[tuple[float, float]] = []
+    unique_region_idx: list[int] = []
+    for pt, ridx in zip(seeds, seed_region_idx):
+        key = (round(pt[0], 9), round(pt[1], 9))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_seeds.append(pt)
+        unique_region_idx.append(ridx)
 
-    envelope = MultiPoint(all_node_points).convex_hull
+    envelope = unary_union(region_hulls)
     minx, miny, maxx, maxy = envelope.bounds
     map_span = max(float(maxx - minx), float(maxy - miny), 1.0)
-    clip_geom = envelope.buffer(map_span * 0.25)
+    clip_geom = envelope.buffer(map_span * 0.05)
 
-    cells = voronoi_polygons(MultiPoint(seed_points), extend_to=clip_geom, ordered=True)
+    cells = voronoi_polygons(MultiPoint(unique_seeds), extend_to=clip_geom, ordered=True)
     cell_list = list(getattr(cells, "geoms", []))
-    if len(cell_list) != len(seed_points):
-        raise ValueError("Voronoi output cell count does not match region count")
+    if len(cell_list) != len(unique_seeds):
+        raise ValueError("Voronoi output cell count does not match seed count")
+
+    cells_per_region: list[list[Any]] = [[] for _ in region_list]
+    for cell, ridx in zip(cell_list, unique_region_idx):
+        cells_per_region[ridx].append(cell)
 
     geoms: list[Any] = []
-    for region, cell in zip(region_list, cell_list):
-        geom = cell.intersection(clip_geom).buffer(0)
-        if geom is None or geom.is_empty:
-            raise ValueError(f"Voronoi geometry is empty for region {region.id}")
-        geoms.append(geom)
+    for region, cells_for_region in zip(region_list, cells_per_region):
+        if not cells_for_region:
+            raise ValueError(f"Region {region.id} produced no Voronoi cells")
+        merged = unary_union(cells_for_region).intersection(clip_geom).buffer(0)
+        if merged is None or merged.is_empty:
+            raise ValueError(f"Region polygon is empty for region {region.id}")
+        geoms.append(merged)
     return geoms
 
 
@@ -340,11 +364,11 @@ def _resolve_technology_style(
     return out
 
 
-def _draw_voronoi_cells(ax, regions: Iterable[Region], region_geoms: list[Any]) -> None:
+def _draw_region_polygons(ax, regions: Iterable[Region], region_geoms: list[Any]) -> None:
     crs = next((r.crs for r in regions if r.crs is not None), None)
     gpd.GeoSeries(region_geoms, crs=crs).plot(
         ax=ax,
-        facecolor=_VORONOI_FILL_COLOR,
+        facecolor=_REGION_FILL_COLOR,
         edgecolor="black",
         linewidth=0.8,
         alpha=0.5,
@@ -361,19 +385,25 @@ def _draw_region_donuts(
     style_lookup: dict[str, dict[str, Any]],
     metric_title: str,
     unit_str: str,
-) -> None:
-    bounds = [g.bounds for g in region_geoms]
-    minx = min(b[0] for b in bounds)
-    miny = min(b[1] for b in bounds)
-    maxx = max(b[2] for b in bounds)
-    maxy = max(b[3] for b in bounds)
+) -> tuple[float, list[tuple[float, float]]]:
+    region_list = list(regions)
+    # Size pies relative to the topology footprint (not the cell extent), so a
+    # small region in a large map doesn't get an oversized donut.
+    boundary_bounds = [r.boundary.bounds for r in region_list]
+    minx = min(b[0] for b in boundary_bounds)
+    miny = min(b[1] for b in boundary_bounds)
+    maxx = max(b[2] for b in boundary_bounds)
+    maxy = max(b[3] for b in boundary_bounds)
     map_span = max(maxx - minx, maxy - miny, 1.0)
     pie_radius = map_span * 0.05
 
-    for region, geom in zip(regions, region_geoms):
+    centers: list[tuple[float, float]] = []
+    for region, geom in zip(region_list, region_geoms):
         rid = int(region.id)
-        centroid = geom.centroid
-        cx, cy = float(centroid.x), float(centroid.y)
+        # Place pies on the topology centroid so they sit over the actual region.
+        c = region.boundary.centroid
+        cx, cy = float(c.x), float(c.y)
+        centers.append((cx, cy))
 
         shares = shares_per_region.get(rid, {})
         total = sum(shares.values())
@@ -415,6 +445,34 @@ def _draw_region_donuts(
             fontweight="bold",
             zorder=4,
         )
+
+    return pie_radius, centers
+
+
+def _zoom_to_donuts(
+    ax,
+    regions: Iterable[Region],
+    pie_centers: list[tuple[float, float]],
+    pie_radius: float,
+    *,
+    margin_frac: float = 0.05,
+) -> None:
+    bounds = [region.boundary.bounds for region in regions]
+    if not bounds:
+        return
+    minx = min(b[0] for b in bounds)
+    miny = min(b[1] for b in bounds)
+    maxx = max(b[2] for b in bounds)
+    maxy = max(b[3] for b in bounds)
+    if pie_centers:
+        minx = min(minx, min(cx - pie_radius for cx, _ in pie_centers))
+        maxx = max(maxx, max(cx + pie_radius for cx, _ in pie_centers))
+        miny = min(miny, min(cy - pie_radius for _, cy in pie_centers))
+        maxy = max(maxy, max(cy + pie_radius for _, cy in pie_centers))
+    span = max(maxx - minx, maxy - miny, 1.0)
+    pad = span * margin_frac
+    ax.set_xlim(minx - pad, maxx + pad)
+    ax.set_ylim(miny - pad, maxy + pad)
 
 
 def _save_figure(fig, output_path: Optional[str | Path]) -> None:
@@ -492,7 +550,7 @@ def _draw_system_edges(ax, system_topology, *, active_regions: set[int], color_m
             [float(u[0]), float(v[0])],
             [float(u[1]), float(v[1])],
             color=color,
-            linewidth=1.2 if is_active else 0.8,
+            linewidth=4 if is_active else 2,
             zorder=2 if is_active else 1,
         )
 

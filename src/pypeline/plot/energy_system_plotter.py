@@ -13,7 +13,7 @@ from ..energy_system.region import Region
 from .solution_plotter import _add_basemap, _save_figure, _zoom_to_regions
 
 
-_INACTIVE_EDGE_COLOR = "#cccccc"
+_INACTIVE_EDGE_COLOR = "#787a7d"
 _PIPE_COLOR = "#8b4513"  # brown
 
 
@@ -92,12 +92,13 @@ def _draw_topology_edges_by_region(ax, system_topology, *, color_map: dict[int, 
             rid = int(raw) if raw is not None else None
         except (TypeError, ValueError):
             rid = None
-        color = color_map.get(rid, _INACTIVE_EDGE_COLOR) if rid is not None else _INACTIVE_EDGE_COLOR
+        is_active = rid is not None and rid in color_map
+        color = color_map[rid] if is_active else _INACTIVE_EDGE_COLOR
         ax.plot(
             [float(u[0]), float(v[0])],
             [float(u[1]), float(v[1])],
             color=color,
-            linewidth=1.4,
+            linewidth=4 if is_active else 2,
             zorder=2,
         )
 

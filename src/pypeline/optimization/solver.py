@@ -11,6 +11,10 @@ from ..energy_system.units import Unit
 from .reporting import write_html_report
 from ..plot.solution_plotter import plot_grid, plot_decentral_shares
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class Results:
@@ -36,7 +40,7 @@ class Solution:
 
     @property
     def file_name(self) -> str:
-        return f"{self.energy_system.name}_{self.scenario.name}.pkl"
+        return f"{self.energy_system.name}_{self.scenario.name}_Solution.pkl"
 
     def save(self, path: Path | str, file_name: Optional[str] = None) -> None:
         if file_name is None:
@@ -44,6 +48,7 @@ class Solution:
         path = Path(path) / file_name
         with open(path, "wb") as f:
             pickle.dump(self, f)
+        logger.info(f"Saved solution to {path}")
 
     @classmethod
     def load(cls, path: Path | str, file_name: str) -> "Solution":
