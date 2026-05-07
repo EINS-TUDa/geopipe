@@ -168,7 +168,7 @@ class CentralTechnology(Technology):
             self.capex_cost_base: float = registered_type["capex_cost_base"]
             self.max_capacity_per_year_per_unit: Optional[float | dict[int, float]] = registered_type.get("max_capacity_per_year_per_unit", None)
             self.max_units: Optional[int | dict[int, int]] = registered_type.get("max_units")
-            self.restricted_to_streets: list[str] = registered_type.get("restricted_to_streets", [])
+            self.constrain_location_to_streets: list[str] = registered_type.get("constrain_location_to_streets", [])
             if self.availability_profile_name is None:
                 self.availability_profile = registered_type.get("availability_profile")
             if self.output_profile_name is None:

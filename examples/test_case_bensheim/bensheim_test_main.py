@@ -12,7 +12,7 @@ from pypeline.energy_system.units import UnitEnum
 from pypeline.optimization import CESMOptimizationBackend, Solution
 # from pypeline.plot.plotter import EnergySystemPlotter
 from pypeline.topology_builder.topology_build_utils import modify_streets_data
-from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder
+from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
 from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 from cesm.core.data_access import DAO
 
@@ -33,20 +33,27 @@ def main():
     streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
                                        modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
 
-    topology_builder = SimpleTopologyBuilder()
+    # topology_builder = SimpleTopologyBuilder()
+    # topology_builder.set_streets_data(streets_data)
+    # topology_builder.set_grouping(CASE_DIR / "input_data" / "region_grouping.yaml")
+    # topology_builder.set_region_id_column("id")
+    # topology_builder.set_extensive_columns(["waerme_mwh"])
+    # topology_result = topology_builder.build()
+
+    topology_builder = PolygonTopologyBuilder()
     topology_builder.set_streets_data(streets_data)
-    topology_builder.set_grouping(CASE_DIR / "input_data" / "region_grouping.yaml")
     topology_builder.set_region_id_column("id")
     topology_builder.set_extensive_columns(["waerme_mwh"])
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "4_polygone_bensheim.geojson")
     topology_result = topology_builder.build()
 
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.1},
         considered_connected_region_distance_m=50,
-        default_central_technology_per_commodity={"district_heat_in": "chp_gas"},
-        preferred_central_technologies_location_per_commodity={"district_heat_in": [1]},
-        additional_grid_capacity_factor={"heat_grid": 1},
-        restrict_central_technology_location_to_region={"cen_waste_heat_langnese": [0]}
+        central_tech_locations_per_commodity={"district_heat_in": [0]},
+        central_tech_existing_capacities={"district_heat_in": {0: [("cen_waste_heat_langnese", 0.6),("cen_gas_boiler", 0.4)],
+                                                               "default": [("chp_gas", 0.8),("cen_gas_boiler", 0.2)]}},
+        additional_grid_capacity_factor={"heat_grid": 1.1},
     )
 
     data_reg = case1_data_registry()
@@ -62,7 +69,7 @@ def main():
                            "name_mapping": {
                                CensusTechnology.Gas: "ind_gas_boiler",
                                CensusTechnology.Oil: "ind_oil_boiler",
-                               CensusTechnology.Wood: "wood",
+                               CensusTechnology.Wood: "ind_biomass",
                                CensusTechnology.Biomass: None,
                                CensusTechnology.Renewable: "ind_heat_pump",
                                CensusTechnology.Electric: None,
@@ -83,8 +90,8 @@ def main():
     builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()
-    # energy_system.plot_system_topology()
-    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="4ThinWeeks", co2_limit={2029: None, 2030: 0})
+    energy_system.plot_system_topology()
+    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
     solution = backend.solve(energy_system, scenario, lp_file=True)
 

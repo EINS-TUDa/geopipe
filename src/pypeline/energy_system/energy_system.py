@@ -46,17 +46,27 @@ class EnergySystem:
 class EnergySystemBuilderConfig(BaseSettings):
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
     minimum_decentral_technology_share: dict[str, float] = Field(default_factory=dict)
-    #: Threshold to consider regions connected. Only one region of all connected regions holds the central technology
-    # Exception: techs in constrain_central_technology_location are always placed in the indicated regions.
+    #: Threshold to consider regions connected. Within a connected group, exactly one region acts as the
+    #: source for existing-capacity propagation along the MST.
     considered_connected_region_distance_m: float = np.inf
-    #: Key: commodity_out central technologies, Value: central technology name as default
-    default_central_technology_per_commodity: dict[str, str]
-    #: Key: commodity_out central technologies, Value: list of region ids to prioritize
-    preferred_central_technologies_location_per_commodity: dict[str, list[int]] = Field(default_factory=dict)
-    # Key: central technology name, Value: list of region ids where the central technology has to be placed, cannot be placed in other regions
-    constrain_central_technology_location: dict[str, list[int]] = Field(default_factory=dict)
+    #: Per commodity_out, the list of region ids where central technologies of that commodity are built.
+    #: A central tech is instantiated in every listed region whose topology satisfies the tech's
+    #: ``constrain_location_to_streets`` (if any). If a connected region group contains no listed region,
+    #: the largest-grid region in the group is auto-added to this set for that commodity.
+    central_tech_locations_per_commodity: dict[str, list[int]] = Field(default_factory=dict)
+    #: Per commodity_out, per region id (or the literal ``"default"``), the list of ``(tech_name, share)``
+    #: tuples that distribute the source region's total existing output capacity among central techs.
+    #: Shares per region key must sum to 1. Region keys must appear in
+    #: ``central_tech_locations_per_commodity`` for the same commodity. Lookup for a source region falls
+    #: back to ``"default"``; if neither is configured and the source has positive capacity, an error is
+    #: raised.
+    central_tech_existing_capacities: dict[str, dict[int | str, list[tuple[str, float]]]] = Field(
+        default_factory=dict)
     #: Name of the ID property on the edges of the topology Graph
     region_id_name: str = "id"
+    #: Name of the street-id property on the edges of the topology Graph; used to evaluate
+    #: ``constrain_location_to_streets`` for central technologies.
+    street_id_name: str = "street_id"
     #: Factor added to the grid capacity. Dict of grid name to factor. 10 % corresponds to 1.1
     additional_grid_capacity_factor: dict[str, float]
 
@@ -166,8 +176,12 @@ class EnergySystemBuilder:
         # Apply minimum share thresholds from config
         for name, share in technology_shares_data.items():
             if share < self._config.minimum_decentral_technology_share.get(name, -1):
-                logger.info("Share of technology %s for demand %s in region with topology %s is below "
-                            "the minimum threshold. Skipping.", name, demand.demand_type.name, topology)
+                region_id = next(iter(
+                    data.get("id") for _, _, data in topology.graph.edges(data=True) if data.get("id") is not None),
+                                 "unknown")
+                logger.info("Share of technology %s for demand %s in region_id %s is below "
+                            "the minimum threshold. Skipping.", name, demand.demand_type.name, region_id)
+
                 technology_shares_data[name] = 0
 
         # Normalize shares to sum to 1 if they don't already
@@ -186,12 +200,20 @@ class EnergySystemBuilder:
 
             technology_shares_data = self._process_technology_shares(technology_shares_data, demand, topology)
 
+            shares_seen = set()
             for name in DecentralTechnology.registered_type_names():
                 share = technology_shares_data.get(name, 0.0)
                 existing_capacity = share * demand.peak(
                     year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
                                                                   output_profile_name=demand.profile_name))
+                shares_seen.add(name)
+            for name, share in technology_shares_data.items():
+                if share > 0 and name not in shares_seen:
+                    raise ValueError(f"Non-zero share {share} for technology '{name}' in demand "
+                                     f"{demand.demand_type.name} cannot be assigned to any DecentralTechnology. "
+                                     f"Ensure {demand.demand_type.name} contains valid mappings to a registered "
+                                     f"DecentralTechnology. ")
 
         return decentral_technologies
 
@@ -208,39 +230,79 @@ class EnergySystemBuilder:
 
         return grids
 
-    def _build_central_technologies(self, region_ids: tuple[int, ...],
-                                    central_techs_per_region: dict[int, dict[str, CentralTechnology]],
-                                    region_groups_per_grid_type: dict[str, list[set[int]]]) -> dict[
+    def _build_central_technologies(self, effective_locations: dict[str, set[int]],
+                                    source_capacity_per_commodity: dict[tuple[str, int], float]) -> dict[
         int, dict[str, CentralTechnology]]:
-        # Place central technologies in preferred locations
-        # If no preferred region for a commodity, place central technologies in all regions outside connected groups.
-        for grid_type in GridTechnology.registered_type_names():
-            commodity_in = GridTechnology.get_type_defaults(grid_type).get("commodity_in")
-            preferred_regions = self._config.preferred_central_technologies_location_per_commodity.get(commodity_in,
-                                                                                                       None)
-            if preferred_regions:
-                for region_id in preferred_regions:
-                    if region_id not in region_ids:
-                        raise ValueError(
-                            f"Preferred region id {region_id} for commodity {commodity_in} is not a valid region id.")
-                    for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
-                                                                                           commodity_in):
-                        if central_tech_name in central_techs_per_region[region_id]:
-                            continue
-                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology.from_name(
-                            central_tech_name)
-            else:
-                for region_id in region_ids:
-                    if any(region_id in group for group in region_groups_per_grid_type.get(grid_type, [])):
+        """Instantiate every central tech (matching commodity_out) in every region listed in
+        ``effective_locations[commodity]``, skipping regions excluded by the tech's
+        ``constrain_location_to_streets``.
+
+        Then distribute each source region's total output capacity over the configured
+        (tech, share) tuples to set ``existing_capacity`` on the respective central techs.
+        """
+        central_techs_per_region: dict[int, dict[str, CentralTechnology]] = {
+            region_id: {} for region_id in self._region_topologies().keys()}
+        for commodity, region_ids in effective_locations.items():
+            for region_id in region_ids:
+                for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out", commodity):
+                    if not self._can_place_tech_in_region(central_tech_name, region_id):
                         continue
-                    for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
-                                                                                           commodity_in):
-                        if central_tech_name in central_techs_per_region[region_id]:
-                            continue
-                        central_techs_per_region[region_id][central_tech_name] = CentralTechnology.from_name(
-                            central_tech_name)
+                    central_techs_per_region[region_id][central_tech_name] = CentralTechnology.from_name(
+                        central_tech_name)
+
+        # Distribute the source region's total output capacity over the configured (tech, share) tuples.
+        for (commodity, source_region), total_output_capacity in source_capacity_per_commodity.items():
+            if total_output_capacity <= 0:
+                continue
+            shares = self._lookup_existing_capacity_shares(commodity, source_region)
+            for tech_name, share in shares:
+                if not self._can_place_tech_in_region(tech_name, source_region):
+                    raise ValueError(
+                        f"Tech '{tech_name}' is configured to receive existing capacity in region "
+                        f"{source_region} for commodity '{commodity}' but cannot be placed there due to its "
+                        f"constrain_location_to_streets.")
+                tech = central_techs_per_region[source_region].get(tech_name)
+                if tech is None:
+                    raise ValueError(
+                        f"Tech '{tech_name}' is configured to receive existing capacity in region "
+                        f"{source_region} for commodity '{commodity}' but is not instantiated there. "
+                        f"Add region {source_region} to central_tech_locations_per_commodity[{commodity!r}].")
+                tech.existing_capacity = total_output_capacity * share
 
         return central_techs_per_region
+
+    def _can_place_tech_in_region(self, tech_name: str, region_id: int) -> bool:
+        """Return False if the tech declares ``constrain_location_to_streets`` and the region's topology
+        contains none of those street ids. Techs without the constraint are placeable everywhere.
+        """
+        constrained_streets = CentralTechnology.get_type_defaults(tech_name).get("constrain_location_to_streets") or []
+        if not constrained_streets:
+            return True
+        topology = self._region_topologies()[region_id]
+        street_id_name = self._config.street_id_name
+        region_streets = {data.get(street_id_name) for _, _, data in topology.graph.edges(data=True)
+                          if data.get(street_id_name) is not None}
+        return any(s in region_streets for s in constrained_streets)
+
+    def _initial_effective_locations(self) -> dict[str, set[int]]:
+        """Initial effective placement set per commodity, taken from config. Auto-extended later in build()
+        when a connected region group contains no configured location for its commodity.
+        """
+        return {commodity: set(regions)
+                for commodity, regions in self._config.central_tech_locations_per_commodity.items()}
+
+    def _lookup_existing_capacity_shares(self, commodity: str, region_id: int) -> list[tuple[str, float]]:
+        """Return the (tech_name, share) list for the source region. Falls back to the ``"default"`` entry
+        if the region has no explicit configuration. Raises if neither is configured.
+        """
+        by_region = self._config.central_tech_existing_capacities.get(commodity, {})
+        if region_id in by_region:
+            return by_region[region_id]
+        if "default" in by_region:
+            return by_region["default"]
+        raise ValueError(
+            f"No existing-capacity shares configured for commodity '{commodity}' in region {region_id}, "
+            f"and no 'default' fallback provided in central_tech_existing_capacities[{commodity!r}].")
 
     def _pre_build(self):
         if self._config is None:
@@ -276,14 +338,25 @@ class EnergySystemBuilder:
                 return grid_type_name
         return None
 
-    def _determine_region_for_central_technology(self, commodity: str, region_group: set[int]):
-        preferred_regions = self._config.preferred_central_technologies_location_per_commodity.get(commodity)
-        if not preferred_regions:
-            return None
-        for region in preferred_regions:
-            if region in region_group:
-                return region
-        return None
+    def _determine_source_region_for_group(self, commodity: str, region_group: set[int],
+                                           effective_locations: dict[str, set[int]],
+                                           grid_tech_per_region: dict[int, dict[str, GridTechnology]],
+                                           grid_type_name: str) -> int:
+        """Pick the region that holds the existing capacity for ``commodity`` in ``region_group``.
+
+        If at least one region of the group is listed in ``effective_locations[commodity]``, the largest-grid
+        candidate among those is chosen. Otherwise the largest-grid region in the group is auto-added to
+        ``effective_locations[commodity]`` and returned.
+        """
+        locations = effective_locations.setdefault(commodity, set())
+        candidates = locations & region_group
+        if not candidates:
+            chosen = max(region_group, key=lambda rid: grid_tech_per_region[rid][grid_type_name].existing_capacity)
+            locations.add(chosen)
+            logger.info("No region of commodity %s configured in region group %s; auto-adding region %s "
+                        "(largest grid capacity).", commodity, sorted(region_group), chosen)
+            return chosen
+        return max(candidates, key=lambda rid: grid_tech_per_region[rid][grid_type_name].existing_capacity)
 
     def build(self) -> EnergySystem:
         start = time.perf_counter()
@@ -303,11 +376,17 @@ class EnergySystemBuilder:
         region_connections: RegionConnections = compute_region_connections(self._region_topologies(),
                                                                            self._system_topology,
                                                                            self._config.region_id_name)
+
+        # Effective placement set per commodity. Initialised from config; auto-extended below when a connected
+        # region group contains no configured location for its commodity.
+        effective_locations = self._initial_effective_locations()
+
         # Build pipes for all region connections
         # Derive existing capacities for grids, pipes and central technologies
         pipes_per_type: dict[str, dict[tuple[int, int], PipeTechnology]] = {}
-        central_techs_per_region: dict[int, dict[str, CentralTechnology]] = {region_id: {} for region_id in region_ids}
         region_groups_per_grid_type: dict[str, list[set[int]]] = {}
+        # Total existing output capacity assigned to each (commodity, source_region).
+        source_capacity_per_commodity: dict[tuple[str, int], float] = {}
         for pipe_type_name in PipeTechnology.registered_type_names():
             pipes_per_type[pipe_type_name] = {}
             # build a pipe for each connection for each type
@@ -341,26 +420,17 @@ class EnergySystemBuilder:
             # For each region group, plan the pipes and modify the grids.
             pipe_commodity_out = PipeTechnology.get_type_defaults(pipe_type_name).get("commodity_out")
             for region_group in region_groups_per_grid_type[grid_type_name]:
-                # Determine the region in the group where the central technology is built
-                central_tech_region = self._determine_region_for_central_technology(commodity=pipe_commodity_out,
-                                                                                    region_group=region_group)
-                if central_tech_region is None:
-                    # Find the region in the group with the largest grid capacity
-                    central_tech_region = max(region_group, key=lambda region_id: grid_tech_per_region[region_id][
-                        grid_type_name].existing_capacity)
+                source_region = self._determine_source_region_for_group(
+                    commodity=pipe_commodity_out, region_group=region_group,
+                    effective_locations=effective_locations,
+                    grid_tech_per_region=grid_tech_per_region, grid_type_name=grid_type_name)
 
-                # add all central technologies to the central_tech_region
-                for central_tech_name in CentralTechnology.get_type_names_by_attribute("commodity_out",
-                                                                                       pipe_commodity_out):
-                    central_techs_per_region[central_tech_region][central_tech_name] = CentralTechnology.from_name(
-                        central_tech_name)
-
-                # From central tech region, find the minimum spanning tree in this group.
+                # From the source region, find the minimum spanning tree in this group.
                 sub_graph_in_region_group = region_graph.subgraph(region_group)
 
                 tree = nx.minimum_spanning_tree(sub_graph_in_region_group)
 
-                successors = nx.dfs_successors(tree, source=central_tech_region)
+                successors = nx.dfs_successors(tree, source=source_region)
 
                 def update_existing_capacities(start: int) -> float:
                     """
@@ -389,21 +459,14 @@ class EnergySystemBuilder:
                     grid_on_region.existing_capacity += capacity_from_children
                     return grid_on_region.existing_capacity
 
-                total_capacity = update_existing_capacities(central_tech_region)
-                central_type_name = self._config.default_central_technology_per_commodity.get(pipe_commodity_out, None)
-                if central_type_name is None:
-                    raise ValueError(
-                        f"Default central technology has to be configured for commodity {pipe_commodity_out} as "
-                        f"the model has build existing capacities. ")
-                if CentralTechnology.get_type_defaults(central_type_name).get("commodity_out") != pipe_commodity_out:
-                    raise ValueError(
-                        f"Default central technology {central_type_name} for commodity {pipe_commodity_out} has wrong commodity_out."
-                        f"Should be {CentralTechnology.get_type_defaults(central_type_name).get('commodity_out')}.")
-                central_techs_per_region[central_tech_region][central_type_name].existing_capacity = total_capacity/grid_tech_per_region[central_tech_region][grid_type_name].efficiency
+                total_grid_capacity = update_existing_capacities(source_region)
+                # Total output capacity at the central tech (= grid input) after dividing by the grid efficiency.
+                source_capacity_per_commodity[(pipe_commodity_out, source_region)] = (
+                    total_grid_capacity / grid_tech_per_region[source_region][grid_type_name].efficiency)
 
-        # Place central technologies in preferred locations
-        # If no preferred region for a commodity, place central technologies in all regions outside connected groups.
-        central_techs_per_region = self._build_central_technologies(region_ids, central_techs_per_region, region_groups_per_grid_type)
+        # Place central technologies in every effective location (filtered by per-tech street constraints) and
+        # distribute existing capacities from the source regions onto the configured (tech, share) tuples.
+        central_techs_per_region = self._build_central_technologies(effective_locations, source_capacity_per_commodity)
 
         # create regions
         regions = []
@@ -447,5 +510,40 @@ class EnergySystemBuilder:
             errors.append("At least one demand type must be added using set_demand_types() or add_demand_types().")
         if self._imports is None:
             errors.append("Imports must be set using set_imports() with a non-empty imports.yaml")
+
+        if isinstance(self._config, EnergySystemBuilderConfig):
+            if isinstance(self._system_topology, Topology):
+                region_ids = set(self._region_topologies().keys())
+                for commodity, regions in self._config.central_tech_locations_per_commodity.items():
+                    for region_id in regions:
+                        if region_id not in region_ids:
+                            errors.append(
+                                f"central_tech_locations_per_commodity[{commodity!r}] references region id "
+                                f"{region_id} which is not part of the topology (known: {sorted(region_ids)}).")
+
+            for commodity, by_region in self._config.central_tech_existing_capacities.items():
+                allowed_regions = set(self._config.central_tech_locations_per_commodity.get(commodity, []))
+                for region_key, share_list in by_region.items():
+                    where = f"central_tech_existing_capacities[{commodity!r}][{region_key!r}]"
+                    if region_key != "default" and region_key not in allowed_regions:
+                        errors.append(
+                            f"{where}: region {region_key} must be listed in "
+                            f"central_tech_locations_per_commodity[{commodity!r}] (got {sorted(allowed_regions)}).")
+                    if not isinstance(share_list, list) or not share_list:
+                        errors.append(f"{where} must be a non-empty list of (tech_name, share) tuples.")
+                        continue
+                    share_sum = sum(share for _, share in share_list)
+                    if not np.isclose(share_sum, 1.0):
+                        errors.append(f"{where}: shares sum to {share_sum}, must be 1.0.")
+                    for tech_name, _ in share_list:
+                        if not CentralTechnology.has_type(tech_name):
+                            errors.append(f"{where}: '{tech_name}' is not a registered CentralTechnology.")
+                            continue
+                        tech_commodity = CentralTechnology.get_type_defaults(tech_name).get("commodity_out")
+                        if tech_commodity != commodity:
+                            errors.append(
+                                f"{where}: tech '{tech_name}' has commodity_out='{tech_commodity}', "
+                                f"expected '{commodity}'.")
+
         if errors:
             raise ValueError("Errors in EnergySystemBuilder configuration:\n" + "\n".join(errors))

@@ -10,10 +10,5 @@ imports:
   - commodity_out: oil
     price_eur_per_mwh: 50.0
     co2_emissions_ton_per_mwh: 0.4
-  - commodity_out: hydrogen
-    price_eur_per_mwh: 180.0
-    co2_emissions_ton_per_mwh:
-      2020: 0.5
-      2030: 0
   - commodity_out: biomass
-    price_eur_per_mwh: 80.0
+    price_eur_per_mwh: 20.0

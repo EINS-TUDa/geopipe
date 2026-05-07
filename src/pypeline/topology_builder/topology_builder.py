@@ -149,6 +149,8 @@ class PolygonTopologyBuilder(TopologyBuilder):
                 raise ValueError("'polygons_geometry_column_name' does not exist")
 
     def _define_regions(self) -> None:
+        if self._polygons_data.crs != self._streets_data.crs:
+            self._polygons_data = self._polygons_data.to_crs(self._streets_data.crs)
         for street_index, street_geometry in zip(self._streets_data.index,
                                                  self._streets_data[self._streets_geometry_column_name]):
             street_geometry: shapely.MultiLineString
