@@ -75,15 +75,15 @@ class RegionConnections:
             raise ValueError("Same region")
         return (region_id_1, region_id_2) if region_id_1 < region_id_2 else (region_id_2, region_id_1)
 
-    def add_connection(self, region_id_1: int, region_id_2: int, length_m: float) -> None:
-        self._connections[self._connection_id(region_id_1, region_id_2)] = length_m
+    def add_connection(self, region_id_1: int, region_id_2: int, length_m: float, connection_graph: nx.Graph) -> None:
+        self._connections[self._connection_id(region_id_1, region_id_2)] = (length_m, connection_graph)
 
-    def check_connection(self, region_id_1: int, region_id_2: int) -> Optional[float]:
+    def check_connection(self, region_id_1: int, region_id_2: int) -> Optional[tuple[float, nx.Graph]]:
         return self._connections.get(self._connection_id(region_id_1, region_id_2), None)
 
-    def __iter__(self) -> Iterator[Region]:
-        for (region_id_1, region_id_2), length_m in self._connections.items():
-            yield region_id_1, region_id_2, length_m
+    def __iter__(self) -> Iterator[tuple[tuple[int, int], tuple[float, nx.Graph]]]:
+        for (region_id_1, region_id_2), data in self._connections.items():
+            yield (region_id_1, region_id_2), data
 
 
 def _legal_pair_network(full_network: nx.Graph,
@@ -107,7 +107,8 @@ def _legal_pair_network(full_network: nx.Graph,
 
 def compute_region_connections(region_to_topology: dict[int, 'Topology'],
                                full_topology: Topology,
-                               region_id_column: str) -> RegionConnections:
+                               region_id_column: str,
+                               connection_over_other_region: bool = False) -> RegionConnections:
     region_connections: RegionConnections = RegionConnections()
 
     edge_owner_map = {(u, v): data.get(region_id_column) for u, v, data in full_topology.graph.edges(data=True)}
@@ -119,31 +120,44 @@ def compute_region_connections(region_to_topology: dict[int, 'Topology'],
 
             nodes_a = set(topology_a.graph.nodes)
             nodes_b = set(topology_b.graph.nodes)
-            touching = bool(nodes_a.intersection(nodes_b))
 
-            if touching:
+            if not nodes_a or not nodes_b:  # Empty topology
+                continue
+
+            intersection = nodes_a.intersection(nodes_b)
+
+            if intersection:
                 length_m = 0.0
+                connection_graph = nx.Graph()
+                connection_graph.add_nodes_from(nodes_a)
             else:
-                if not nodes_a or not nodes_b:
-                    continue
-
-                legal_network = _legal_pair_network(full_topology.graph,
-                                                    region_a_id=region_id_a,
-                                                    region_b_id=region_id_b,
-                                                    edge_owner_by_pair=edge_owner_map, )
-
-                dist = nx.multi_source_dijkstra_path_length(legal_network,
+                (length, path) = nx.multi_source_dijkstra(full_topology.graph,
                                                             sources=nodes_a,
                                                             weight="length")
 
-                distances_between_regions = {dist.get(node_b) for node_b in nodes_b}
-                distances_between_regions.discard(None)
-
-                if not distances_between_regions:  # Distances is empty -> regions are not connected
+                length: dict  # key: node, value: minimum length from source nodes to this node. No entry means there is no connection
+                length_to_nodes_b = {node_b: length.get(node_b) for node_b in nodes_b if length.get(node_b) is not None}
+                if not length_to_nodes_b:  # No connection
                     continue
 
-                length_m = min(distances_between_regions)
+                target_node = min(length_to_nodes_b, key=length_to_nodes_b.get)
+                length_m = length_to_nodes_b[target_node]
+                connection_graph = nx.Graph()
+                shortest_path = path[target_node]
+                assert len(shortest_path) >= 2  # == 1 would mean touching and this is handled in the previous case
+                edges_on_shortest_path = tuple(zip(shortest_path[:-1], shortest_path[1:]))
+                if not connection_over_other_region:
+                    permitted_regions = {None, region_id_a, region_id_b}
+                    other_region_used = False
+                    for edge in edges_on_shortest_path:
+                        if edge_owner_map[edge] not in permitted_regions:
+                            other_region_used = True
+                            break
+                    if other_region_used:  # not allowed
+                        continue
 
-            region_connections.add_connection(region_id_a, region_id_b, length_m)
+                connection_graph.add_edges_from(zip(shortest_path[:-1], shortest_path[1:]))
+
+            region_connections.add_connection(region_id_a, region_id_b, length_m, connection_graph)
 
     return region_connections
