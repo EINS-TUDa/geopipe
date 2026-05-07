@@ -46,6 +46,14 @@ def commodity_name(name: str, region_id: int) -> str:
         return f"{name}_D{region_id}"
     return name
 
+def _rebase_relative_years(value: float | dict[int, float | None] | None,
+                           start_year: int) -> float | dict[int, float | None] | None:
+    """Shift dict keys from years-relative-to-start to absolute years; pass through scalars and None."""
+    if value is None or isinstance(value, (int, float)):
+        return value
+    return {start_year + int(rel_year): v for rel_year, v in value.items()}
+
+
 def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None) -> float | str | None:
     if value is None:
         return None
@@ -83,15 +91,16 @@ def _df_scenario(resolved: ResolvedSystem) -> pd.DataFrame:
         }]
     )
 
-def _import_to_conversion_sub_process(imp: Import, scenario_name: str) -> ConversionSubProcess:
+def _import_to_conversion_sub_process(imp: Import, scenario_name: str, start_year: int) -> ConversionSubProcess:
     return ConversionSubProcess(
         conversion_process_name=imp.name,
         commodity_in="Dummy",
         commodity_out=imp.commodity_out,
         scenario=scenario_name,
-        opex_cost_energy=year_dep_value_to_cesm_string(imp.price_eur_per_mwh),
-        spec_co2=year_dep_value_to_cesm_string(imp.co2_emissions_ton_per_mwh),
-        cap_max=year_dep_value_to_cesm_string(imp.max_capacity_mw),
+        opex_cost_energy=year_dep_value_to_cesm_string(_rebase_relative_years(imp.price_eur_per_mwh, start_year)),
+        spec_co2=year_dep_value_to_cesm_string(_rebase_relative_years(imp.co2_emissions_ton_per_mwh, start_year)),
+        cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_cap_per_year, start_year)),
+        max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_energy_out_per_year, start_year)),
     )
 
 def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, start_year: int) -> ConversionSubProcess:
@@ -228,7 +237,7 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
 
     # imports
     for imp in resolved.imports:
-        cs_list.append(_import_to_conversion_sub_process(imp, scenario_name))
+        cs_list.append(_import_to_conversion_sub_process(imp, scenario_name, start_year))
 
     # pipes
     for pipe in resolved.pipe_connections:

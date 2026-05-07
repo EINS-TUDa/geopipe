@@ -2,8 +2,8 @@ imports:
   - commodity_out: electricity
     price_eur_per_mwh: 80.0
     co2_emissions_ton_per_mwh:
-      2020: 0.5
-      2030: 0
+      0: 0.5
+      10: 0
   - commodity_out: gas
     price_eur_per_mwh: 40.0
     co2_emissions_ton_per_mwh: 0.4
@@ -12,3 +12,7 @@ imports:
     co2_emissions_ton_per_mwh: 0.4
   - commodity_out: biomass
     price_eur_per_mwh: 20.0
+    max_cap_per_year: 100 # kW, can also be year dependent dict
+    max_energy_out_per_year: # MWh, can also be year dependent dict
+        0: 500
+        10: 1000
