@@ -2,7 +2,6 @@ import sqlite3
 from pathlib import Path
 
 from compare_techmaps import compare_techmaps
-from examples.test_case_bensheim.input_data.data_reg import case1_data_registry
 from pypeline.data.dataset import CensusTechnology
 from pypeline.energy_system.demand import DemandType
 from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
@@ -15,6 +14,9 @@ from pypeline.topology_builder.topology_build_utils import modify_streets_data
 from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
 from cesm.core.plotter import Plotter as CesmPlotter, PlotType
 from cesm.core.data_access import DAO
+
+
+from input_data.data_reg import case1_data_registry
 
 import logging
 
