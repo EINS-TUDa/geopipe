@@ -65,8 +65,8 @@ class Solution:
             output_path=Path(output_path)
         )
 
-    def plot_grid(self, grid_name: str, year: int, output_path: Optional[Path | str] = None) -> Any:
-        return plot_grid(self, grid_name=grid_name, year=year, output_path=output_path)
+    def plot_grid(self, grid_name: str, year: int, metric: str = "capacity", output_path: Optional[Path | str] = None) -> Any:
+        return plot_grid(self, grid_name=grid_name, year=year, metric=metric, output_path=output_path)
 
     def plot_decentral_shares(
         self,

@@ -389,13 +389,13 @@ class EnergySystemBuilder:
         for pipe_type_name in PipeTechnology.registered_type_names():
             pipes_per_type[pipe_type_name] = {}
             # build a pipe for each connection for each type
-            for region_1_id, region_2_id, length in region_connections:
+            for(region_1_id, region_2_id), (length_m, connection_graph) in region_connections:
                 pipes_per_type[pipe_type_name][(region_1_id, region_2_id)] = PipeTechnology(
                     pipe_type_name, region_id_in=region_1_id,
-                    region_id_out=region_2_id, pipe_length_km=length)
+                    region_id_out=region_2_id, pipe_length_km=length_m/1000.0, topology=connection_graph)
                 pipes_per_type[pipe_type_name][(region_2_id, region_1_id)] = PipeTechnology(
                     pipe_type_name, region_id_in=region_2_id,
-                    region_id_out=region_1_id, pipe_length_km=length)
+                    region_id_out=region_1_id, pipe_length_km=length_m / 1000.0, topology=connection_graph)
 
             # The grid type name that works with the same commodities as the current pipe technology
             grid_type_name = self._find_grid_type_from_pipe_type(pipe_type_name)
@@ -406,9 +406,9 @@ class EnergySystemBuilder:
             region_graph = nx.Graph()
             nodes_in_graph = [region_id for region_id in region_ids
                               if grid_tech_per_region[region_id][grid_type_name].existing_capacity > 0]
-            edges_in_graph = [(region_1_id, region_2_id, {"len": length}) for region_1_id, region_2_id, length in
+            edges_in_graph = [(region_1_id, region_2_id, {"len": length_m}) for (region_1_id, region_2_id), (length_m, topology) in
                               region_connections
-                              if length <= self._config.considered_connected_region_distance_m
+                              if length_m <= self._config.considered_connected_region_distance_m
                               if region_1_id in nodes_in_graph and region_2_id in nodes_in_graph]
             region_graph.add_nodes_from(nodes_in_graph)
             region_graph.add_edges_from(edges_in_graph)
@@ -448,11 +448,6 @@ class EnergySystemBuilder:
                         capacity_from_children += child_pipe.existing_capacity/child_pipe.efficiency
 
                     grid_on_region: GridTechnology = grid_tech_per_region[start][grid_type_name]
-                    logger.info(
-                        "Applying additional grid capacity factor for region %s and grid type %s. Original existing capacity: %s, "
-                        "capacity from children: %s, factor: %s",
-                        start, grid_type_name, grid_on_region.existing_capacity, capacity_from_children,
-                        self._config.additional_grid_capacity_factor.get(grid_type_name, 1.0))
                     grid_on_region.existing_capacity *= self._config.additional_grid_capacity_factor.get(grid_type_name,
                                                                                                          1.0)
                     grid_on_region.existing_capacity += capacity_from_children

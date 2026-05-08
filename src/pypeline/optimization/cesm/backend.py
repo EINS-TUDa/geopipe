@@ -62,7 +62,6 @@ class CESMOptimizationBackend(OptimizationBackend):
     def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path, run_name: str, lp_file: bool) -> None:
         start = time.perf_counter()
         logger.info("Running CESM optimization for energy system '%s', scenario '%s'", energy_system_name, scenario_name)
-        logger.info("CESM techmap input directory: %s", self.output_dir)
         conn = sqlite3.connect(":memory:")
         parser = Parser(run_name, techmap_dir_path=self.output_dir, ts_dir_path=self.timeseries_dir, db_conn=conn, scenario=scenario_name)
         parser.parse()

@@ -4,10 +4,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+import math
+
 import contextily as ctx
 import geopandas as gpd
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+import networkx as nx
 import pandas as pd
 from matplotlib.patches import Circle
 from shapely import voronoi_polygons
@@ -25,8 +28,10 @@ if TYPE_CHECKING:
 
 
 _INACTIVE_COLOR = "#787a7d"
-_PIPE_COLOR = "#8b4513"  # brown
+_PIPE_COLOR = "#eac282"  # brown
 _REGION_FILL_COLOR = "#656870"
+
+_ACTIVE_THRESHOLD = 1e-3  # values <= this are considered inactive for plotting purposes
 
 _DECENTRAL_METRIC_COLUMNS: dict[str, str] = {
     "energy_output": "energy_output",
@@ -40,23 +45,50 @@ _DECENTRAL_METRIC_DISPLAY: dict[str, tuple[str, str]] = {
     "active_capacity": ("Active capacity", "power"),
 }
 
+_GRID_METRIC_COLUMNS: dict[str, str] = {
+    "capacity": "capacity",
+    "energy_output": "energy_output",
+}
+_GRID_METRIC_DISPLAY: dict[str, tuple[str, str]] = {
+    "capacity": ("Active capacity", "power"),
+    "energy_output": ("Energy output", "energy"),
+}
 
-def plot_grid(solution: "Solution", grid_name: str, year: int, output_path: Optional[str | Path] = None) -> None:
+
+def plot_grid(
+    solution: "Solution",
+    grid_name: str,
+    year: int,
+    metric: str = "capacity",
+    output_path: Optional[str | Path] = None,
+) -> None:
     """
-    Plot the energy_system._system_topology on a map. Color the edges of region where grid_name has active capacity.
-    Each region should be colored differently.
-    Color pipes with active capacity connecting regions in brown. The direction of the pipe/energy flow should be indicated by an arrow.
-    Regions and pipes without active capacity can be colored in a light gray.
-    In regions with active capacity for central technologies, add a text box with the name of the technology and its active capacity.
-    Each region with demands supplied by this grid should have a text box with the name of the demand and the amount of energy supplied by the grid.
+    Plot the energy_system._system_topology on a map for ``grid_name`` in ``year``.
 
+    The numerical annotations (active filter, region text boxes, pipe labels) are
+    driven by ``metric``:
+
+    - ``"capacity"`` — active capacity of grids/centrals/decentrals/pipes (power unit).
+    - ``"energy_output"`` — total yearly energy output (energy unit).
+
+    Regions and pipes whose chosen metric is zero are drawn in light grey; active
+    ones are coloured per region (edges) and brown (pipes).
     """
     if solution.energy_system is None or solution.results is None:
         raise ValueError("solution must have both energy_system and results set")
+    if metric not in _GRID_METRIC_COLUMNS:
+        raise ValueError(
+            f"Unknown metric '{metric}'. Choose from {sorted(_GRID_METRIC_COLUMNS)}."
+        )
     es = solution.energy_system
     results = solution.results
     if es.system_topology is None:
         raise ValueError("energy_system.system_topology is None — nothing to plot")
+
+    column = _GRID_METRIC_COLUMNS[metric]
+    metric_label, unit_kind = _GRID_METRIC_DISPLAY[metric]
+    unit = results.unit
+    metric_unit = unit.power if unit_kind == "power" else unit.energy
 
     grid_tech = _find_grid(es.regions, grid_name)
     grid_commodity_in = grid_tech.commodity_in
@@ -67,10 +99,10 @@ def plot_grid(solution: "Solution", grid_name: str, year: int, output_path: Opti
         year=year, technology=grid_name,
     )
     active_regions: set[int] = {
-        int(row["region_id"]) for _, row in grid_slice.iterrows() if float(row["capacity"]) > 0
+        int(row["region_id"]) for _, row in grid_slice.iterrows() if float(row[column]) > _ACTIVE_THRESHOLD
     }
-    grid_energy_by_region: dict[int, float] = {
-        int(row["region_id"]): float(row["energy_output"]) for _, row in grid_slice.iterrows()
+    grid_value_by_region: dict[int, float] = {
+        int(row["region_id"]): float(row[column]) for _, row in grid_slice.iterrows()
     }
 
     central_slice = _slice_df(
@@ -79,51 +111,53 @@ def plot_grid(solution: "Solution", grid_name: str, year: int, output_path: Opti
     )
     central_by_region: dict[int, list[tuple[str, float]]] = {}
     for _, row in central_slice.iterrows():
-        cap = float(row["capacity"])
-        if cap > 0:
-            central_by_region.setdefault(int(row["region_id"]), []).append((str(row["technology"]), cap))
+        val = float(row[column])
+        if val > _ACTIVE_THRESHOLD:
+            central_by_region.setdefault(int(row["region_id"]), []).append((str(row["technology"]), val))
 
     pipes_slice = _slice_df(
         results.pipes_per_commodity_out.get(grid_commodity_in, pd.DataFrame()),
         year=year,
     )
     active_pipes: list[tuple[int, int, float]] = [
-        (int(row["region_id_from"]), int(row["region_id_to"]), float(row["capacity"]))
-        for _, row in pipes_slice.iterrows() if float(row["capacity"]) > 0
+        (int(row["region_id_from"]), int(row["region_id_to"]), float(row[column]))
+        for _, row in pipes_slice.iterrows() if float(row[column]) > _ACTIVE_THRESHOLD
     ]
 
     region_color_map = _build_color_map(sorted(active_regions))
-    unit = results.unit
 
-    decentral_supplied = _decentral_supplied_per_region(es, results, demand_commodity, year)
+    decentral_supplied = _decentral_supplied_per_region(
+        es, results, demand_commodity, year, column=column,
+    )
     demand_values = _demand_values_per_region(es, demand_commodity, solution.scenario, year)
     grid_length_per_region = _grid_length_per_region(es, grid_name)
 
     fig, ax = plt.subplots(figsize=(12, 12))
     _draw_system_edges(ax, es.system_topology, active_regions=active_regions, color_map=region_color_map)
-    _draw_pipes(ax, es, active_pipes=active_pipes, unit_power=unit.power)
+    _draw_pipes(ax, es, active_pipes=active_pipes, value_unit=metric_unit)
     _draw_region_text_boxes(
         ax,
         regions=es.regions,
         active_regions=active_regions,
         central_by_region=central_by_region,
-        grid_energy_by_region=grid_energy_by_region,
+        grid_value_by_region=grid_value_by_region,
         decentral_supplied=decentral_supplied,
         demand_values=demand_values,
         grid_length_per_region=grid_length_per_region,
-        unit_power=unit.power,
+        metric_label=metric_label,
+        metric_unit=metric_unit,
         unit_energy=unit.energy,
     )
 
     legend_handles = [mpatches.Patch(color=color, label=f"region {rid}") for rid, color in region_color_map.items()]
     legend_handles.append(mpatches.Patch(color=_INACTIVE_COLOR, label="inactive"))
-    legend_handles.append(mpatches.Patch(color=_PIPE_COLOR, label="active pipe"))
+    legend_handles.append(mpatches.Patch(color=_PIPE_COLOR, label=f"active pipe ({metric_label.lower()})"))
     ax.legend(handles=legend_handles, loc="upper right", fontsize=8)
 
     ax.set_aspect("equal", adjustable="box")
     _zoom_to_regions(ax, es.regions)
     _add_basemap(ax, es)
-    ax.set_title(f"Grid '{grid_name}' — {year}")
+    ax.set_title(f"Grid '{grid_name}' — {year} — {metric_label}")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     fig.tight_layout()
@@ -555,22 +589,13 @@ def _draw_system_edges(ax, system_topology, *, active_regions: set[int], color_m
         )
 
 
-def _region_centroids(regions: Iterable[Region]) -> dict[int, tuple[float, float]]:
-    centroids: dict[int, tuple[float, float]] = {}
-    for region in regions:
-        c = region.boundary.centroid
-        centroids[int(region.id)] = (float(c.x), float(c.y))
-    return centroids
-
-
 def _draw_pipes(
     ax,
     energy_system,
     *,
     active_pipes: list[tuple[int, int, float]],
-    unit_power: str,
+    value_unit: str,
 ) -> None:
-    centroids = _region_centroids(energy_system.regions)
     active_pairs: set[tuple[int, int]] = {(a, b) for a, b, _ in active_pipes}
     pipe_by_pair: dict[tuple[int, int], Any] = {
         (int(p.region_id_in), int(p.region_id_out)): p for p in energy_system.pipes
@@ -584,32 +609,29 @@ def _draw_pipes(
         canonical: tuple[int, int] = (a, b) if a <= b else (b, a)
         if canonical in drawn_inactive:
             continue
-        if a not in centroids or b not in centroids:
-            continue
-        xa, ya = centroids[a]
-        xb, yb = centroids[b]
-        ax.plot([xa, xb], [ya, yb], color=_INACTIVE_COLOR, linewidth=1.0, linestyle="--", zorder=2)
+        _draw_pipe_path(
+            ax, pipe, energy_system,
+            color=_INACTIVE_COLOR, linestyle="--", linewidth=1.0,
+            with_arrow=False, zorder=2,
+        )
         drawn_inactive.add(canonical)
 
-    for region_in, region_out, capacity in active_pipes:
-        if region_in not in centroids or region_out not in centroids:
-            continue
-        xa, ya = centroids[region_in]
-        xb, yb = centroids[region_out]
-        ax.annotate(
-            "",
-            xy=(xb, yb),
-            xytext=(xa, ya),
-            arrowprops={"arrowstyle": "->", "color": _PIPE_COLOR, "lw": 2.0, "shrinkA": 10, "shrinkB": 10},
-            zorder=4,
-        )
+    for region_in, region_out, value in active_pipes:
         pipe = pipe_by_pair.get((region_in, region_out))
         if pipe is None:
             continue
+        ordered = _draw_pipe_path(
+            ax, pipe, energy_system,
+            color=_PIPE_COLOR, linestyle="-", linewidth=2.0,
+            with_arrow=True, zorder=4,
+        )
+        label_xy = _path_midpoint(ordered)
+        if label_xy is None:
+            continue
         ax.text(
-            (xa + xb) / 2.0,
-            (ya + yb) / 2.0,
-            f"{pipe.name}\n{pipe.pipe_length_km:.2f} km\n{capacity:.2f} {unit_power}",
+            label_xy[0],
+            label_xy[1],
+            f"{pipe.name}\n{pipe.pipe_length_km:.2f} km\n{value:.2f} {value_unit}",
             ha="center",
             va="center",
             fontsize=7,
@@ -619,17 +641,138 @@ def _draw_pipes(
         )
 
 
+def _ordered_pipe_path(pipe, energy_system) -> list[tuple]:
+    """Return nodes of pipe.topology ordered from region_id_in towards region_id_out.
+
+    Falls back to the topology's nodes in arbitrary order if a clean ordering
+    cannot be determined. Touching pipes (no edges) keep their node list as is.
+    """
+    topology = getattr(pipe, "topology", None)
+    if topology is None:
+        return []
+    nodes = list(topology.nodes())
+    if not nodes or topology.number_of_edges() == 0:
+        return nodes
+
+    region_in = next((r for r in energy_system.regions if int(r.id) == int(pipe.region_id_in)), None)
+    region_out = next((r for r in energy_system.regions if int(r.id) == int(pipe.region_id_out)), None)
+    if (region_in is None or region_out is None
+            or region_in.topology is None or region_out.topology is None):
+        return nodes
+
+    in_nodes = set(region_in.topology.graph.nodes)
+    out_nodes = set(region_out.topology.graph.nodes)
+    start_candidates = [n for n in nodes if n in in_nodes]
+    end_candidates = [n for n in nodes if n in out_nodes]
+    if not start_candidates or not end_candidates:
+        return nodes
+
+    try:
+        return nx.shortest_path(topology, source=start_candidates[0], target=end_candidates[0])
+    except nx.NetworkXNoPath:
+        return nodes
+
+
+def _draw_pipe_path(
+    ax,
+    pipe,
+    energy_system,
+    *,
+    color,
+    linestyle: str = "-",
+    linewidth: float = 2.0,
+    with_arrow: bool,
+    zorder: int,
+) -> list[tuple]:
+    """Draw a single pipe along its actual topology.
+
+    Returns the ordered list of nodes that was drawn (useful for placing labels).
+    For touching regions (topology has no edges), highlights the touching
+    node(s) with a marker so the connection remains visible.
+    """
+    topology = getattr(pipe, "topology", None)
+    if topology is None or topology.number_of_nodes() == 0:
+        return []
+
+    nodes = list(topology.nodes())
+    if topology.number_of_edges() == 0:
+        for node in nodes:
+            ax.plot(
+                float(node[0]),
+                float(node[1]),
+                marker="o",
+                markersize=10,
+                markerfacecolor=color,
+                markeredgecolor="white",
+                markeredgewidth=1.5,
+                linestyle="none",
+                zorder=zorder + 1,
+            )
+        return nodes
+
+    for u, v in topology.edges():
+        ax.plot(
+            [float(u[0]), float(v[0])],
+            [float(u[1]), float(v[1])],
+            color=color,
+            linewidth=linewidth,
+            linestyle=linestyle,
+            zorder=zorder,
+        )
+
+    ordered = _ordered_pipe_path(pipe, energy_system)
+    if with_arrow and len(ordered) >= 2:
+        u = ordered[-2]
+        v = ordered[-1]
+        ax.annotate(
+            "",
+            xy=(float(v[0]), float(v[1])),
+            xytext=(float(u[0]), float(u[1])),
+            arrowprops={"arrowstyle": "->", "color": color, "lw": linewidth, "shrinkA": 0, "shrinkB": 0},
+            zorder=zorder + 1,
+        )
+    return ordered
+
+
+def _path_midpoint(nodes) -> tuple[float, float] | None:
+    """Geometric midpoint along a polyline expressed as a list of (x, y) nodes."""
+    if not nodes:
+        return None
+    if len(nodes) == 1:
+        return float(nodes[0][0]), float(nodes[0][1])
+    cum = [0.0]
+    for i in range(len(nodes) - 1):
+        a = nodes[i]
+        b = nodes[i + 1]
+        cum.append(cum[-1] + math.hypot(float(b[0]) - float(a[0]), float(b[1]) - float(a[1])))
+    total = cum[-1]
+    if total <= 0:
+        return float(nodes[0][0]), float(nodes[0][1])
+    half = total / 2.0
+    for i in range(1, len(cum)):
+        if cum[i] >= half:
+            t = (half - cum[i - 1]) / (cum[i] - cum[i - 1])
+            a = nodes[i - 1]
+            b = nodes[i]
+            return (
+                float(a[0]) + t * (float(b[0]) - float(a[0])),
+                float(a[1]) + t * (float(b[1]) - float(a[1])),
+            )
+    return float(nodes[-1][0]), float(nodes[-1][1])
+
+
 def _draw_region_text_boxes(
     ax,
     *,
     regions: Iterable[Region],
     active_regions: set[int],
     central_by_region: dict[int, list[tuple[str, float]]],
-    grid_energy_by_region: dict[int, float],
+    grid_value_by_region: dict[int, float],
     decentral_supplied: dict[int, dict[str, float]],
     demand_values: dict[int, dict[str, float]],
     grid_length_per_region: dict[int, float],
-    unit_power: str,
+    metric_label: str,
+    metric_unit: str,
     unit_energy: str,
 ) -> None:
     for region in regions:
@@ -643,24 +786,21 @@ def _draw_region_text_boxes(
         demands = demand_values.get(rid, {})
         if demands:
             lines.append("Demand:")
-            grid_energy = grid_energy_by_region.get(rid)
             for name, val in sorted(demands.items()):
-                supplied = (
-                    f", from grid: {grid_energy:.2f} {unit_energy}"
-                    if grid_energy is not None
-                    else ""
-                )
-                lines.append(f"  {name}: {val:.2f} {unit_energy}{supplied}")
+                lines.append(f"  {name}: {val:.2f} {unit_energy}")
+        grid_value = grid_value_by_region.get(rid)
+        if grid_value is not None:
+            lines.append(f"Grid {metric_label.lower()}: {grid_value:.2f} {metric_unit}")
         centrals = sorted(central_by_region.get(rid, []), key=lambda kv: kv[0])
         if centrals:
             lines.append("Central:")
-            for tech_name, capacity in centrals:
-                lines.append(f"  {tech_name}: {capacity:.2f} {unit_power}")
+            for tech_name, value in centrals:
+                lines.append(f"  {tech_name}: {value:.2f} {metric_unit}")
         decentrals = decentral_supplied.get(rid, {})
         if decentrals:
             lines.append("Decentral (from grid):")
-            for tech_name, capacity in sorted(decentrals.items()):
-                lines.append(f"  {tech_name}: {capacity:.2f} {unit_power}")
+            for tech_name, value in sorted(decentrals.items()):
+                lines.append(f"  {tech_name}: {value:.2f} {metric_unit}")
         if len(lines) == 1:
             continue
         c = region.boundary.centroid
@@ -691,6 +831,8 @@ def _decentral_supplied_per_region(
     results,
     demand_commodity: str,
     year: int,
+    *,
+    column: str = "capacity",
 ) -> dict[int, dict[str, float]]:
     grid_supplied_names_per_region: dict[int, set[str]] = {
         int(r.id): {t.name for t in r.decentral_techs if t.commodity_in == demand_commodity}
@@ -704,11 +846,11 @@ def _decentral_supplied_per_region(
             tech = str(row["technology"])
             if tech not in grid_supplied_names_per_region.get(rid, set()):
                 continue
-            cap = float(row["capacity"])
-            if cap <= 0:
+            value = float(row[column])
+            if value <= 0:
                 continue
-            region_caps = out.setdefault(rid, {})
-            region_caps[tech] = region_caps.get(tech, 0.0) + cap
+            region_values = out.setdefault(rid, {})
+            region_values[tech] = region_values.get(tech, 0.0) + value
     return out
 
 

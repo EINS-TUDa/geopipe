@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional, Any
-import pandas as pd
+
+import networkx as nx
 import yaml
 
 
@@ -314,6 +315,7 @@ class PipeTechnology(Technology):
                  region_id_in: int,
                  region_id_out: int,
                  pipe_length_km: float,
+                 topology: nx.Graph,
                  existing_capacity: float = 0.0):
         super().__init__(name)
         registered_type = type(self)._get_registered_type(name)
@@ -331,6 +333,7 @@ class PipeTechnology(Technology):
         self.region_id_in = region_id_in
         self.region_id_out = region_id_out
         self.pipe_length_km = pipe_length_km
+        self.topology = topology
         self.existing_capacity = existing_capacity
 
         # Years from model start at which existing_capacity drops abruptly to 0 (no linear decay).

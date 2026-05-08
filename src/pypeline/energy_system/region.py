@@ -129,7 +129,7 @@ def compute_region_connections(region_to_topology: dict[int, 'Topology'],
             if intersection:
                 length_m = 0.0
                 connection_graph = nx.Graph()
-                connection_graph.add_nodes_from(nodes_a)
+                connection_graph.add_nodes_from(intersection)
             else:
                 (length, path) = nx.multi_source_dijkstra(full_topology.graph,
                                                             sources=nodes_a,
@@ -149,8 +149,9 @@ def compute_region_connections(region_to_topology: dict[int, 'Topology'],
                 if not connection_over_other_region:
                     permitted_regions = {None, region_id_a, region_id_b}
                     other_region_used = False
-                    for edge in edges_on_shortest_path:
-                        if edge_owner_map[edge] not in permitted_regions:
+                    for u, v in edges_on_shortest_path:
+                        owner = edge_owner_map.get((u, v), edge_owner_map.get((v, u)))
+                        if owner not in permitted_regions:
                             other_region_used = True
                             break
                     if other_region_used:  # not allowed

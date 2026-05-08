@@ -10,11 +10,11 @@ import matplotlib.pyplot as plt
 from shapely.geometry import MultiPoint
 
 from ..energy_system.region import Region
-from .solution_plotter import _add_basemap, _save_figure, _zoom_to_regions
+from .solution_plotter import _add_basemap, _draw_pipe_path, _save_figure, _zoom_to_regions
 
 
 _INACTIVE_EDGE_COLOR = "#787a7d"
-_PIPE_COLOR = "#8b4513"  # brown
+_PIPE_COLOR = "#eac282"  # brown
 
 
 def plot_system_topology(energy_system, output_path: Optional[str | Path] = None) -> None:
@@ -48,7 +48,7 @@ def plot_system_topology(energy_system, output_path: Optional[str | Path] = None
 
     fig, ax = plt.subplots(figsize=(14, 14))
     _draw_topology_edges_by_region(ax, energy_system.system_topology, color_map=color_map)
-    _draw_pipes(ax, energy_system, region_anchors=region_anchors)
+    _draw_pipes(ax, energy_system)
     _draw_region_id_labels(ax, regions, anchors=region_anchors)
 
     legend_handles = [
@@ -72,8 +72,12 @@ def plot_system_topology(energy_system, output_path: Optional[str | Path] = None
     ax.set_ylabel("y", fontsize=14)
     ax.tick_params(axis="both", labelsize=12)
 
-    fig.subplots_adjust(bottom=0.22)
-    _add_region_summary_table(fig, regions, energy_system=energy_system, color_map=color_map)
+    fig.subplots_adjust(bottom=0.28)
+    _add_region_summary_table(
+        fig, regions, energy_system=energy_system, color_map=color_map,
+        rect=(0.04, 0.04, 0.55, 0.20),
+    )
+    _add_pipes_summary_table(fig, energy_system, rect=(0.62, 0.04, 0.34, 0.20))
 
     _save_figure(fig, output_path)
     plt.show()
@@ -137,25 +141,19 @@ def _draw_region_id_labels(ax, regions: Iterable[Region], *, anchors: dict[int, 
         txt.set_path_effects([pe.Stroke(linewidth=3.0, foreground="white"), pe.Normal()])
 
 
-def _draw_pipes(ax, energy_system, *, region_anchors: dict[int, tuple[float, float]]) -> None:
+def _draw_pipes(ax, energy_system) -> None:
     pipes = getattr(energy_system, "pipes", None) or []
     drawn: set[tuple[int, int]] = set()
     for pipe in pipes:
         a = int(pipe.region_id_in)
         b = int(pipe.region_id_out)
-        if a not in region_anchors or b not in region_anchors:
-            continue
         canonical = (a, b) if a <= b else (b, a)
         if canonical in drawn:
             continue
-        xa, ya = region_anchors[a]
-        xb, yb = region_anchors[b]
-        ax.plot(
-            [xa, xb],
-            [ya, yb],
-            color=_PIPE_COLOR,
-            linewidth=2.0,
-            zorder=3,
+        _draw_pipe_path(
+            ax, pipe, energy_system,
+            color=_PIPE_COLOR, linestyle="-", linewidth=4.0,
+            with_arrow=False, zorder=3,
         )
         drawn.add(canonical)
 
@@ -166,6 +164,7 @@ def _add_region_summary_table(
     *,
     energy_system,
     color_map: dict[int, Any],
+    rect: tuple[float, float, float, float] = (0.05, 0.04, 0.9, 0.16),
 ) -> None:
     units = getattr(energy_system, "units", None)
     energy_unit = getattr(units, "energy", "")
@@ -197,7 +196,7 @@ def _add_region_summary_table(
 
     col_labels = ["Region", "Grid length [km]"] + [f"{name}{unit_suffix}" for name in demand_names]
 
-    table_ax = fig.add_axes((0.05, 0.04, 0.9, 0.16))
+    table_ax = fig.add_axes(rect)
     table_ax.axis("off")
     table = table_ax.table(
         cellText=rows,
@@ -222,3 +221,51 @@ def _add_region_summary_table(
         id_text = table[(row_idx, 0)].get_text()
         id_text.set_color(color_map.get(rid, "black"))
         id_text.set_fontweight("bold")
+
+
+def _add_pipes_summary_table(
+    fig,
+    energy_system,
+    *,
+    rect: tuple[float, float, float, float] = (0.05, 0.04, 0.9, 0.16),
+) -> None:
+    pipes = getattr(energy_system, "pipes", None) or []
+    seen: set[tuple[int, int, str]] = set()
+    rows: list[list[str]] = []
+    for pipe in pipes:
+        a = int(pipe.region_id_in)
+        b = int(pipe.region_id_out)
+        lo, hi = (a, b) if a <= b else (b, a)
+        key = (lo, hi, str(pipe.name))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append([
+            str(pipe.name),
+            f"{lo} ↔ {hi}",
+            f"{pipe.pipe_length_km:.2f}",
+        ])
+    if not rows:
+        return
+    rows.sort(key=lambda r: (r[0], r[1]))
+
+    table_ax = fig.add_axes(rect)
+    table_ax.axis("off")
+    table = table_ax.table(
+        cellText=rows,
+        colLabels=["Pipe", "Regions", "Length [km]"],
+        cellLoc="center",
+        colLoc="center",
+        loc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.0, 1.4)
+    for (r, _c), cell in table.get_celld().items():
+        cell.set_edgecolor("#bdbdbd")
+        cell.set_linewidth(0.8)
+        if r == 0:
+            cell.set_text_props(fontweight="bold", ha="center", va="center")
+            cell.set_facecolor("#f7f7f7")
+        else:
+            cell.set_text_props(ha="center", va="center")
