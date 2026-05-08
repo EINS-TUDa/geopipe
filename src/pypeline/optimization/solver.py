@@ -27,7 +27,7 @@ class Results:
     emissions_by_year: pd.DataFrame  # Columns: year, amount
 
     decentral_technologies_per_demand: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity
-    central_technologies_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity, installed_units
+    central_technologies_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity, newly_installed_units
     grids_per_commodity_in: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity
     pipes_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id_from, region_id_to, capacity, energy_output, new_capacity
     imports_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, capacity, energy_output, new_capacity

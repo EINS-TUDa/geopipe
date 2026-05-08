@@ -42,7 +42,6 @@ class CESMResultsParser:
                     vals["cap_active"] /= factors["power"]
                     vals["cap_new"] /= factors["power"]
                     vals["eouttot"] /= factors["energy"]
-                    # installed_units is a count, not scaled.
         opex /= factors["money"]
         capex /= factors["money"]
         totex /= factors["money"]
@@ -73,7 +72,7 @@ class CESMResultsParser:
     def _fetch_subprocess_outputs(
         con: sqlite3.Connection,
     ) -> dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]]:
-        """Return ``{conversion_process_name: {(commodity_in, commodity_out): {year: {cap_active, cap_new, eouttot, installed_units}}}}``.
+        """Return ``{conversion_process_name: {(commodity_in, commodity_out): {year: {cap_active, cap_new, eouttot, newly_installed_units}}}}``.
 
         Subprocesses are kept distinct so a conversion_process that maps to several subprocesses
         (e.g. a CHP, which has separate subprocesses for each output commodity) can be split apart
@@ -94,7 +93,7 @@ class CESMResultsParser:
                    COALESCE(o.cap_active, 0.0) AS cap_active,
                    COALESCE(o.cap_new, 0.0) AS cap_new,
                    COALESCE(o.eouttot, 0.0) AS eouttot,
-                   COALESCE(o.installed_units, 0.0) AS installed_units
+                   COALESCE(o.newly_installed_units, 0.0) AS newly_installed_units
             FROM output_cs_y AS o
             JOIN conversion_subprocess AS cs ON cs.id = o.cs_id
             JOIN conversion_process AS cp ON cp.id = cs.cp_id
@@ -104,12 +103,12 @@ class CESMResultsParser:
             """
         )
         result: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]] = {}
-        for name, cin, cout, year, cap_active, cap_new, eouttot, installed_units in cur.fetchall():
+        for name, cin, cout, year, cap_active, cap_new, eouttot, newly_installed_units in cur.fetchall():
             result.setdefault(str(name), {}).setdefault((str(cin), str(cout)), {})[int(year)] = {
                 "cap_active": cap_active,
                 "cap_new": cap_new,
                 "eouttot": eouttot,
-                "installed_units": installed_units,
+                "newly_installed_units": newly_installed_units,
             }
         return result
 
@@ -217,12 +216,12 @@ class CESMResultsParser:
                             "capacity": vals["cap_active"],
                             "energy_output": vals["eouttot"],
                             "new_capacity": vals["cap_new"],
-                            "installed_units": vals["installed_units"],
+                            "newly_installed_units": vals["newly_installed_units"],
                         })
 
         return _frames(
             rows,
-            ["year", "technology", "region_id", "capacity", "energy_output", "new_capacity", "installed_units"],
+            ["year", "technology", "region_id", "capacity", "energy_output", "new_capacity", "newly_installed_units"],
         )
 
     def _build_grids(
