@@ -13,7 +13,7 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    "cesm",
+    "cesm @ git+https://github.com/EINS-TUDa/CESM.git@397c405",
     "certifi>=2025.4.26",
     "charset-normalizer>=3.4.2",
     "colorama>=0.4.6",
@@ -62,6 +62,9 @@ dev = [
 
 [tool.uv.sources]
 cesm = { path = "CESM", editable = true }
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 python_functions = ["test_*", "*_test"]
