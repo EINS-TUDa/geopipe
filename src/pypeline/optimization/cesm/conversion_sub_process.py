@@ -24,7 +24,7 @@ class ConversionSubProcess:
     capex_cost_base: Optional[float | str] = None
 
     cap_active: Optional[float | str] = None
-    max_units: Optional[int] = None
+    cap_max_unit: Optional[float] = None
 
     max_eout: Optional[float | str] = None
     min_eout: Optional[float | str] = None

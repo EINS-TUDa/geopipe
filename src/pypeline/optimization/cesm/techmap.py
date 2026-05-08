@@ -179,12 +179,12 @@ def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: 
         opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
         capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
         capex_cost_base=year_dep_value_to_cesm_string(tech.capex_cost_base),
-        cap_max=year_dep_value_to_cesm_string(tech.max_allowed_capacity_per_unit_per_year(start_year)),
+        cap_max_unit=tech.max_capacity_per_unit,
+        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
         cap_res_min=year_dep_value_to_cesm_string(tech.existing_capacity_per_year(start_year)),
         cap_res_max=year_dep_value_to_cesm_string(tech.existing_capacity_per_year(start_year)),
         output_profile=tech.output_profile_name,
-        availability_profile=tech.availability_profile_name,
-        max_units=tech.max_units,
+        availability_profile=tech.availability_profile_name
     )]
 
 def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_name: str, start_year) -> list[ConversionSubProcess]:
@@ -214,12 +214,12 @@ def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_
         opex_cost_power=year_dep_value_to_cesm_string(chp.opex_cost_power),
         capex_cost_power=year_dep_value_to_cesm_string(chp.capex_cost_power),
         capex_cost_base=year_dep_value_to_cesm_string(chp.capex_cost_base),
-        cap_max=year_dep_value_to_cesm_string(chp.max_allowed_capacity_per_unit_per_year(start_year)),
+        cap_max_unit=chp.max_capacity_per_unit,
+        cap_max=year_dep_value_to_cesm_string(chp.max_capacity_per_year(start_year)),
         cap_res_max=year_dep_value_to_cesm_string(chp.existing_capacity_per_year(start_year)),
         cap_res_min=year_dep_value_to_cesm_string(chp.existing_capacity_per_year(start_year)),
         output_profile=chp.output_profile_name,
         availability_profile=chp.availability_profile_name,
-        max_units=chp.max_units,
     )
     cs_commodity_out_2 = ConversionSubProcess(
         conversion_process_name=chp_name,

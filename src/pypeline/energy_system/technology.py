@@ -167,8 +167,8 @@ class CentralTechnology(Technology):
             self.opex_cost_power: float = registered_type["opex_cost_power"]
             self.capex_cost_power: float = registered_type["capex_cost_power"]
             self.capex_cost_base: float = registered_type["capex_cost_base"]
-            self.max_capacity_per_year_per_unit: Optional[float | dict[int, float]] = registered_type.get("max_capacity_per_year_per_unit", None)
-            self.max_units: Optional[int | dict[int, int]] = registered_type.get("max_units")
+            self.max_capacity_per_unit: Optional[float] = registered_type.get("max_capacity_per_unit")
+            self._max_capacity: Optional[float | dict[int, float]] = registered_type.get("max_capacity")
             self.constrain_location_to_streets: list[str] = registered_type.get("constrain_location_to_streets", [])
             if self.availability_profile_name is None:
                 self.availability_profile = registered_type.get("availability_profile")
@@ -198,31 +198,20 @@ class CentralTechnology(Technology):
                 f"'existing_capacity_retirement_years' is not defined."
             )
         if capacity:
-            max_per_unit = self.max_capacity_per_year_per_unit
-            if isinstance(max_per_unit, (int, float)):
-                year0_max = max_per_unit
-            elif isinstance(max_per_unit, dict):
-                year0_max = max_per_unit.get(0)
+            max_cap = self._max_capacity
+            if isinstance(max_cap, (int, float)):
+                year0_max = max_cap
+            elif isinstance(max_cap, dict):
+                years = sorted(max_cap.keys())
+                year0_max = max_cap.get(years[0]) # earliest year
             else:
                 year0_max = None
             if year0_max is not None and capacity > year0_max:
                 raise ValueError(
-                    f"Technology '{self.name}' has existing_capacity={capacity} which "
-                    f"exceeds max_capacity_per_year_per_unit={year0_max} for year 0."
+                    f"Cannot set existing_capacity={capacity} for technology {self.name} as it "
+                    f"exceeds max_capacity {year0_max} ."
                 )
         self._existing_capacity = capacity
-
-    def max_allowed_capacity_per_unit_per_year(self, start_year: int) -> dict[int, float | None]:
-        max_per_unit = self.max_capacity_per_year_per_unit
-        if max_per_unit is None:
-            return {start_year: self.existing_capacity,
-                    start_year + 1: None}
-        if isinstance(max_per_unit, (int, float)):
-            return {start_year: self.existing_capacity,
-                    start_year + 1: max_per_unit}
-        result = {start_year + rel_year: value for rel_year, value in max_per_unit.items()}
-        result[start_year] = self.existing_capacity
-        return result
 
     def existing_capacity_per_year(self, start_year: int) -> dict[int, float] | None:
         if not self.existing_capacity:
@@ -230,6 +219,14 @@ class CentralTechnology(Technology):
         return {start_year: self.existing_capacity,
                 start_year + self.existing_capacity_retirement_years - 1: self.existing_capacity,
                 start_year + self.existing_capacity_retirement_years: 0.0}
+
+    def max_capacity_per_year(self, start_year: int) -> float | dict[int, float] | None:
+        if self._max_capacity is None:
+            return None
+        if isinstance(self._max_capacity, (int, float)):
+            return self._max_capacity
+        if isinstance(self._max_capacity, dict):
+            return {start_year + year: cap for year, cap in self._max_capacity.items()}
 
 class CHPTechnology(CentralTechnology):
 
