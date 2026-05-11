@@ -9,7 +9,7 @@
 
 ### Clone (with submodules) 
 ```bash
-git clone --recurse-submodules -b pypeline git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
+git clone git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
 cd data_pipeline_esm
 ```
 
