@@ -1,33 +1,33 @@
 # Getting started
 
-## Setup with CESM
+## Quickstart
 
-1. Clone the repository
-   ```
-   git clone https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/
-   ```
-2. Change into the directory 
-    ```
-    cd data_pipeline_esm
-    ```
-3. Initialize and update submodules (make sure to be on correct branch which contains the submodule)
-   ```
-   git submodule update --init --recursive
-   ```
-4. Setup environment using uv (recommended). Make sure uv is installed (https://docs.astral.sh/uv/getting-started/installation/).
-   ```
-   uv sync
-   ```
-   
-## Run the first example
-1. Change into the example directory
-   ```
-   cd examples/neuburg
-   ```
-2. Run the example
-   ```
-   uv run python neuburg.py
-   ```
+### Prerequisites
+- Python 3.11
+- (Recommended) uv for environment management, https://docs.astral.sh/uv/getting-started/installation/
+- Gurobi
+
+### Clone (with submodules) 
+```bash
+git clone --recurse-submodules -b pypeline git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
+cd data_pipeline_esm
+```
+
+### Environment. 
+```bash
+uv sync
+```
+
+### Verify setup
+```bash
+uv run python -c "import pypeline; print('OK')"
+```
+
+### Run first examples
+Run examples in `examples/` to verify that everything is working. For example:
+```bash
+uv run python examples/test_case_bensheim/bensheim_test_main.py
+```
       
 
    

@@ -12,15 +12,6 @@ schema in `CESM/src/cesm/core/init_queries.sql`.
 
 ## Motivation
 
-The upstream model treats new capacity `Cap_new[cs, y]` as a continuous
-variable with a single linear cost coefficient `capex_cost_power`. That
-is appropriate for technologies where capacity scales smoothly (e.g.
-PV fields, onshore wind), but mis-prices technologies that come in
-**discrete units** with a non-trivial fixed cost per unit (e.g. a
-single CCGT block, an electrolyser stack, a battery container). For
-those, the marginal cost of going from 0 MW to 1 MW is not the same as
-going from 100 MW to 101 MW.
-
 The pypeline branch adds an explicit per-unit investment decision so
 that:
 
@@ -29,8 +20,7 @@ that:
 2. the size of each newly built unit is **capped from above**
    (`cap_max_unit`), so building 1 GW of a technology that comes in
    100 MW blocks requires 10 units, and
-3. the per-unit decision is **integer** (or binary, see below), so
-   the optimiser cannot "buy half a CCGT".
+3. the per-unit decision is **integer** (or binary, see below)
 
 ## Inputs
 
