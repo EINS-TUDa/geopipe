@@ -1,59 +1,44 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from pydantic import BaseModel, field_validator
+
+YearDep = float | dict[int, float] | None
 
 
-@dataclass
-class Import:
+class Import(BaseModel):
     commodity_out: str
-    price_eur_per_mwh: float | dict[int, float] | None = None
-    co2_emissions_ton_per_mwh: float | dict[int, float] | None = None
-    max_cap_per_year: float | dict[int, float] | None = None
-    max_energy_out_per_year: float | dict[int, float] | None = None
+    price_eur_per_mwh: float | dict[int, float]
+    co2_emissions_ton_per_mwh: YearDep = None
+    max_cap_per_year: YearDep = None
+    max_energy_out_per_year: YearDep = None
+
+    @field_validator(
+        "price_eur_per_mwh",
+        "co2_emissions_ton_per_mwh",
+        "max_cap_per_year",
+        "max_energy_out_per_year",
+    )
+    @classmethod
+    def _years_relative(cls, v: YearDep) -> YearDep:
+        if isinstance(v, dict):
+            bad = [y for y in v if y > 100]
+            if bad:
+                raise ValueError(
+                    f"year {bad[0]} > 100; years must be relative to the model start year"
+                )
+        return v
 
     @property
     def name(self) -> str:
-        return  f"Import{self.commodity_out.capitalize()}"
+        return f"Import{self.commodity_out.capitalize()}"
 
 
-def _parse_year_dep(raw: object, field_name: str, commodity_out: str) -> float | dict[int, float] | None:
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        parsed = {int(k): float(v) for k, v in raw.items()}
-        for year in parsed:
-            if year > 100:
-                raise ValueError(
-                    f"imports ({commodity_out}).{field_name}: year {year} > {100}. "
-                    f"Years must be relative to the model start year."
-                )
-        return parsed
-    return float(raw)
+class _ImportsFile(BaseModel):
+    imports: list[Import] = []
 
 
 def load_imports_from_yaml(path: str | Path) -> list[Import]:
     with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
-    entries = data.get("imports", [])
-    if not isinstance(entries, list):
-        raise ValueError(f"imports.yaml must have a top-level 'imports' list, got {type(entries).__name__}")
-    result: list[Import] = []
-    for i, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            raise ValueError(f"imports[{i}] must be a mapping, got {type(entry).__name__}")
-        commodity_out = entry.get("commodity_out")
-        if not commodity_out:
-            raise ValueError(f"imports[{i}] is missing required field 'commodity_out'")
-        if entry.get("price_eur_per_mwh") is None:
-            raise ValueError(f"imports[{i}] ({commodity_out}) is missing required field 'price_eur_per_mwh'")
-        result.append(Import(
-            commodity_out=str(commodity_out),
-            price_eur_per_mwh=_parse_year_dep(entry["price_eur_per_mwh"], "price_eur_per_mwh", commodity_out),
-            co2_emissions_ton_per_mwh=_parse_year_dep(entry.get("co2_emissions_ton_per_mwh"), "co2_emissions_ton_per_mwh", commodity_out),
-            max_cap_per_year=_parse_year_dep(entry.get("max_cap_per_year"), "max_cap_per_year", commodity_out),
-            max_energy_out_per_year=_parse_year_dep(entry.get("max_energy_out_per_year"), "max_energy_out_per_year", commodity_out),
-        ))
-    return result
+        data = yaml.safe_load(f) or {}
+    return _ImportsFile.model_validate(data).imports

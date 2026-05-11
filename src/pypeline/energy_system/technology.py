@@ -1,13 +1,79 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, cast
 
 import networkx as nx
 import yaml
+from pydantic import BaseModel, ConfigDict
+
+
+class _TechType(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class DecentralTechType(_TechType):
+    commodity_in: str
+    commodity_out: str
+    efficiency: float
+    technical_lifetime: int
+    opex_cost_energy: float
+    opex_cost_power: float
+    capex_cost_power: float
+    existing_capacity_phase_out_years: float | None = None
+
+
+class CentralTechType(_TechType):
+    commodity_in: str
+    commodity_out: str
+    efficiency: float
+    technical_lifetime: int
+    opex_cost_energy: float
+    opex_cost_power: float
+    capex_cost_power: float
+    capex_cost_base: float
+    max_capacity_per_unit: float | None = None
+    max_capacity: float | dict[int, float] | None = None
+    constrain_location_to_streets: list[str] = []
+    availability_profile_name: str | None = None
+    output_profile_name: str | None = None
+    existing_capacity_retirement_years: float | None = None
+
+
+class CHPTechType(CentralTechType):
+    commodity_out_2: str
+    loss: float
+
+
+class GridTechType(_TechType):
+    commodity_in: str
+    commodity_out: str
+    efficiency: float
+    capex_per_km: float
+    technical_lifetime: int
+    existing_capacity_retirement_years: float | None = None
+
+
+class PipeTechType(_TechType):
+    commodity_in: str
+    commodity_out: str
+    efficiency: float
+    technical_lifetime: int
+    capex_per_km: float
+    distance_threshold_m: float
+    existing_capacity_retirement_years: float | None = None
+
+
+class TechnologyCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decentralized: dict[str, DecentralTechType] = {}
+    central: dict[str, CentralTechType] = {}
+    chp: dict[str, CHPTechType] = {}
+    grids: dict[str, GridTechType] = {}
+    pipes: dict[str, PipeTechType] = {}
 
 
 class Technology(ABC):
-    _registered_types: dict[str, dict[str, Any]] = {}
+    _registered_types: dict[str, _TechType] = {}
     _region_scoped_commodities: set[str] = set() # Populated by GridTechnology.register; shared across all subclasses.
 
     @abstractmethod
@@ -23,17 +89,17 @@ class Technology(ABC):
         cls._registered_types = {}
 
     @classmethod
-    def register(cls, name: str,  **kwargs):
+    def register(cls, name: str, type_: _TechType):
         if name in cls._registered_types:
             raise ValueError(f"Type {name} already exists")
-        cls._registered_types[name] = kwargs
+        cls._registered_types[name] = type_
 
     @classmethod
     def clear_registered_types(cls):
         cls._registered_types.clear()
 
     @classmethod
-    def _get_registered_type(cls, name: str):
+    def _get_registered_type(cls, name: str) -> _TechType:
         # Strict per-class lookup. Direct construction (cls(name=...)) goes
         # through this and must fail when the name belongs to a subclass —
         # otherwise the instance would be missing subclass-specific fields.
@@ -58,7 +124,7 @@ class Technology(ABC):
     @classmethod
     def get_type_defaults(cls, name: str) -> dict[str, Any]:
         if name in cls._registered_types:
-            return cls._registered_types[name].copy()
+            return cls._registered_types[name].model_dump()
         for subclass in cls.__subclasses__():
             if subclass.has_type(name):
                 return subclass.get_type_defaults(name)
@@ -67,7 +133,8 @@ class Technology(ABC):
     @classmethod
     def get_type_names_by_attribute(cls, attribute: str, value: Any) -> tuple[str, ...]:
         """Return the names of registered types whose default ``attribute`` equals ``value``."""
-        names = tuple(name for name, data in cls._registered_types.items() if data.get(attribute) == value)
+        names = tuple(name for name, t in cls._registered_types.items()
+                      if getattr(t, attribute, None) == value)
         for subclass in cls.__subclasses__():
             names = names + subclass.get_type_names_by_attribute(attribute, value)
         return names
@@ -81,33 +148,30 @@ class Technology(ABC):
 class DecentralTechnology(Technology):
 
     @classmethod
-    def register(cls, name: str, **kwargs):
-        super().register(name, **kwargs)
-        if (c := kwargs.get("commodity_out")) is not None: Technology._region_scoped_commodities.add(c)
+    def register(cls, name: str, type_: DecentralTechType):
+        super().register(name, type_)
+        Technology._region_scoped_commodities.add(type_.commodity_out)
 
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
                  output_profile_name: Optional[str] = None):
         super().__init__(name)
-        registered_type = type(self)._get_registered_type(name)
+        t = cast(DecentralTechType, type(self)._get_registered_type(name))
 
-        try:
-            self.commodity_in: str = registered_type["commodity_in"]
-            self.commodity_out: str = registered_type["commodity_out"]
-            self.efficiency: float = registered_type["efficiency"]
-            self.technical_lifetime: int = registered_type["technical_lifetime"]
-            self.opex_cost_energy: float = registered_type["opex_cost_energy"]
-            self.opex_cost_power: float = registered_type["opex_cost_power"]
-            self.capex_cost_power: float = registered_type["capex_cost_power"]
-        except KeyError:
-            raise KeyError(f"The registered type '{name}' does not provide all the data for")
+        self.commodity_in = t.commodity_in
+        self.commodity_out = t.commodity_out
+        self.efficiency = t.efficiency
+        self.technical_lifetime = t.technical_lifetime
+        self.opex_cost_energy = t.opex_cost_energy
+        self.opex_cost_power = t.opex_cost_power
+        self.capex_cost_power = t.capex_cost_power
 
         self.existing_capacity = existing_capacity
         self.output_profile_name = output_profile_name
 
         # Years from model start by which existing_capacity has decreased linearly to 0.
         # Only required when existing_capacity is non-zero.
-        self.existing_capacity_phase_out_years: float = registered_type.get("existing_capacity_phase_out_years")
+        self.existing_capacity_phase_out_years = t.existing_capacity_phase_out_years
         if existing_capacity and self.existing_capacity_phase_out_years is None:
             raise ValueError(
                 f"Technology '{name}' has existing_capacity={existing_capacity} but the "
@@ -154,32 +218,24 @@ class CentralTechnology(Technology):
                  availability_profile_name: Optional[str] = None):
         super().__init__(name)
 
-        self.output_profile_name = output_profile_name
-        self.availability_profile_name = availability_profile_name
-
-        registered_type = type(self)._get_registered_type(name)
-        try:
-            self.commodity_in: str = registered_type["commodity_in"]
-            self.commodity_out: str = registered_type["commodity_out"]
-            self.efficiency: float = registered_type["efficiency"]
-            self.technical_lifetime: int = registered_type["technical_lifetime"]
-            self.opex_cost_energy: float = registered_type["opex_cost_energy"]
-            self.opex_cost_power: float = registered_type["opex_cost_power"]
-            self.capex_cost_power: float = registered_type["capex_cost_power"]
-            self.capex_cost_base: float = registered_type["capex_cost_base"]
-            self.max_capacity_per_unit: Optional[float] = registered_type.get("max_capacity_per_unit")
-            self._max_capacity: Optional[float | dict[int, float]] = registered_type.get("max_capacity")
-            self.constrain_location_to_streets: list[str] = registered_type.get("constrain_location_to_streets", [])
-            if self.availability_profile_name is None:
-                self.availability_profile = registered_type.get("availability_profile")
-            if self.output_profile_name is None:
-                self.output_profile = registered_type.get("output_profile")
-        except KeyError:
-            raise KeyError(f"The registered type '{name}' does not provide all the data for")
+        t = cast(CentralTechType, type(self)._get_registered_type(name))
+        self.commodity_in = t.commodity_in
+        self.commodity_out = t.commodity_out
+        self.efficiency = t.efficiency
+        self.technical_lifetime = t.technical_lifetime
+        self.opex_cost_energy = t.opex_cost_energy
+        self.opex_cost_power = t.opex_cost_power
+        self.capex_cost_power = t.capex_cost_power
+        self.capex_cost_base = t.capex_cost_base
+        self.max_capacity_per_unit = t.max_capacity_per_unit
+        self._max_capacity = t.max_capacity
+        self.constrain_location_to_streets = list(t.constrain_location_to_streets)
+        self.output_profile_name = output_profile_name if output_profile_name is not None else t.output_profile_name
+        self.availability_profile_name = availability_profile_name if availability_profile_name is not None else t.availability_profile_name
 
         # Years from model start by which existing_capacity has decreased linearly to 0.
         # Only required when existing_capacity is non-zero.
-        self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
+        self.existing_capacity_retirement_years = t.existing_capacity_retirement_years
 
         # Can only be set after setting max_capacity_per_year_per_unit because of validation logic in the setter.
         self.existing_capacity = existing_capacity
@@ -235,45 +291,38 @@ class CHPTechnology(CentralTechnology):
                  output_profile_name: Optional[str] = None,
                  availability_profile_name: Optional[str] = None):
         super().__init__(name, existing_capacity, output_profile_name, availability_profile_name)
-        registered_type = type(self)._get_registered_type(name)
-
-        try:
-            self.commodity_out_2: str = registered_type["commodity_out_2"]
-            self.loss: float = registered_type["loss"]
-        except KeyError:
-            raise KeyError(f"The registered type '{name}' does not provide all the data for")
+        t = cast(CHPTechType, type(self)._get_registered_type(name))
+        self.commodity_out_2 = t.commodity_out_2
+        self.loss = t.loss
 
 
 class GridTechnology(Technology):
     """A GridType instantiated in a specific region."""
 
     @classmethod
-    def register(cls, name: str, **kwargs):
-        super().register(name, **kwargs)
-        if (c := kwargs.get("commodity_in"))  is not None: Technology._region_scoped_commodities.add(c)
-        if (c := kwargs.get("commodity_out")) is not None: Technology._region_scoped_commodities.add(c)
+    def register(cls, name: str, type_: GridTechType):
+        super().register(name, type_)
+        Technology._region_scoped_commodities.add(type_.commodity_in)
+        Technology._region_scoped_commodities.add(type_.commodity_out)
 
     def __init__(self, name: str,
                  length_km: float,
                  existing_capacity: float = 0.0,):
         super().__init__(name)
-        registered_type = type(self)._get_registered_type(name)
+        t = cast(GridTechType, type(self)._get_registered_type(name))
 
-        try:
-            self.commodity_in: str = registered_type["commodity_in"]
-            self.commodity_out: str = registered_type["commodity_out"]
-            self.efficiency: float = registered_type["efficiency"]
-            self.capex_per_km: float = registered_type["capex_per_km"]
-            self.technical_lifetime: int = registered_type["technical_lifetime"]
-        except KeyError:
-            raise KeyError(f"The registered type '{name}' does not provide all the data for")
+        self.commodity_in = t.commodity_in
+        self.commodity_out = t.commodity_out
+        self.efficiency = t.efficiency
+        self.capex_per_km = t.capex_per_km
+        self.technical_lifetime = t.technical_lifetime
 
         self.existing_capacity = existing_capacity
         self._grid_length_km = length_km
 
         # Years from model start at which existing_capacity drops abruptly to 0 (no linear decay).
         # Only required when existing_capacity is non-zero.
-        self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
+        self.existing_capacity_retirement_years = t.existing_capacity_retirement_years
 
     @property
     def length_km(self) -> float:
@@ -315,17 +364,14 @@ class PipeTechnology(Technology):
                  topology: nx.Graph,
                  existing_capacity: float = 0.0):
         super().__init__(name)
-        registered_type = type(self)._get_registered_type(name)
+        t = cast(PipeTechType, type(self)._get_registered_type(name))
 
-        try:
-            self.commodity_in: str = registered_type["commodity_in"]
-            self.commodity_out: str = registered_type["commodity_out"]
-            self.efficiency: float = registered_type["efficiency"]
-            self.technical_lifetime: int = registered_type["technical_lifetime"]
-            self.capex_per_km: float = registered_type["capex_per_km"]
-            self.distance_threshold_m: float = registered_type["distance_threshold_m"] # costs are 0 if length is below this threshold to reduce binary variables
-        except KeyError:
-            raise KeyError(f"The registered type '{name}' does not provide all the data for")
+        self.commodity_in = t.commodity_in
+        self.commodity_out = t.commodity_out
+        self.efficiency = t.efficiency
+        self.technical_lifetime = t.technical_lifetime
+        self.capex_per_km = t.capex_per_km
+        self.distance_threshold_m = t.distance_threshold_m  # costs are 0 if length is below this threshold to reduce binary variables
 
         self.region_id_in = region_id_in
         self.region_id_out = region_id_out
@@ -335,7 +381,7 @@ class PipeTechnology(Technology):
 
         # Years from model start at which existing_capacity drops abruptly to 0 (no linear decay).
         # Only required when existing_capacity is non-zero.
-        self.existing_capacity_retirement_years: float = registered_type.get("existing_capacity_retirement_years")
+        self.existing_capacity_retirement_years = t.existing_capacity_retirement_years
 
     @property
     def below_distance_threshold(self):
@@ -378,41 +424,21 @@ def register_technologies(path: str | Path, clear_registry: bool = True) -> None
     if not file_path.exists():
         raise FileNotFoundError(f"Technology catalog not found: {file_path}")
 
-    raw = yaml.safe_load(file_path.read_text(encoding="utf-8"))
-    if raw is None:
-        return
-
-    if not isinstance(raw, dict):
-        raise ValueError(f"{file_path}: top-level YAML must be a mapping of sections, got {type(raw).__name__}")
-
-    unknown_sections = set(raw) - set(_SECTION_TO_CLASS)
-    if unknown_sections:
-        raise ValueError(f"{file_path}: unknown section(s) {sorted(unknown_sections)}. "
-                         f"Valid sections: {sorted(_SECTION_TO_CLASS)}")
+    raw = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+    catalog = TechnologyCatalog.model_validate(raw)
 
     if clear_registry:
         Technology._region_scoped_commodities.clear()
         for section_cls in _SECTION_TO_CLASS.values():
             section_cls.clear_registered_types()
 
-    for section_name, section_cls in _SECTION_TO_CLASS.items():
-        entries = raw.get(section_name)
-        if entries is None:
-            continue
-        if not isinstance(entries, dict):
-            raise ValueError(f"{file_path}: section '{section_name}' must be a mapping, "
-                             f"got {type(entries).__name__}")
-
-        for name, entry in entries.items():
-            section_cls.register(name, **entry)
-
-
-if __name__ == '__main__':
-    yml_path = Path(
-        "src/pypeline/energy_technology/configs/technologies_new.yaml")
-    register_technologies(yml_path)
-
-    ind_heat_pump = DecentralTechnology(name="ind_heat_pump", existing_capacity=0)
-    CentralTechnology(name="cen_heat_pump", existing_capacity=0)
-    GridTechnology(name="heat_grid", existing_capacity=0)
-    PipeTechnology(name="heat_pipe", region_id_in=0, region_id_out=1, pipe_length_km=10)
+    sections: list[tuple[type[Technology], dict[str, _TechType]]] = [
+        (DecentralTechnology, catalog.decentralized),
+        (CentralTechnology, catalog.central),
+        (CHPTechnology, catalog.chp),
+        (GridTechnology, catalog.grids),
+        (PipeTechnology, catalog.pipes),
+    ]
+    for section_cls, types in sections:
+        for name, type_ in types.items():
+            section_cls.register(name, type_)

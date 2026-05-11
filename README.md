@@ -12,10 +12,10 @@ PYthon-based data piPELINe for Energy system modeling
 - Gurobi
 
 ### Clone (with submodules) 
-   ```bash
-   git clone --recurse-submodules -b pypeline git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
-   cd data_pipeline_esm
-   ```
+```bash
+git clone git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
+cd data_pipeline_esm
+```
 ### Environment. 
 ```bash
 uv sync

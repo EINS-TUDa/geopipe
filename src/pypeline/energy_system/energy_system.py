@@ -1,5 +1,4 @@
 # coding=utf-8
-import math
 import time
 from dataclasses import dataclass, field
 from typing import Optional
