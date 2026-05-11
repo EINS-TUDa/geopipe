@@ -81,22 +81,22 @@ def main():
                        default_decentral_supply_technology="ind_oil_boiler",
                        decrease_percent_per_year=0)
 
-    # builder = EnergySystemBuilder(energy_system_name="Case1")
-    # builder.set_system_topology(topology_result.network)
-    # builder.set_data_registry(data_reg)
-    # builder.set_config(esb_cfg)
-    # builder.set_demand_types([residential_heat_demand])
-    # builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
-    # builder.set_unit(UnitEnum.KW)
-    #
-    # energy_system = builder.build()
-    # energy_system.plot_system_topology()
-    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
-    # backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
-    # solution = backend.solve(energy_system, scenario, lp_file=True)
+    builder = EnergySystemBuilder(energy_system_name="Case1")
+    builder.set_system_topology(topology_result.network)
+    builder.set_data_registry(data_reg)
+    builder.set_config(esb_cfg)
+    builder.set_demand_types([residential_heat_demand])
+    builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
+    builder.set_unit(UnitEnum.KW)
 
-    # solution.save(path=CASE_DIR / "output_data")
-    solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
+    energy_system = builder.build()
+    energy_system.plot_system_topology()
+    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
+    backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
+    solution = backend.solve(energy_system, scenario, lp_file=True)
+
+    solution.save(path=CASE_DIR / "output_data")
+    # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
     # compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.energy_system.plot_system_topology()
@@ -106,14 +106,11 @@ def main():
     # --- 3) Sankey diagrams via CESM plot module ---
     cesm_plotter = CesmPlotter(solution=solution)
     for year in scenario.years:
-        # System-wide Sankey
         cesm_plotter.plot_sankey(year=year)
-        # Per-region Sankey (pipes between regions appear as 'to/from Region X' nodes)
         for region_id in cesm_plotter.regions:
             cesm_plotter.plot_sankey(year=year, region=region_id)
 
     # --- 4) Active / new capacity for residential_heat ---
-    # Total across all regions and per region, using the *base* commodity name.
     cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
                            commodity="residential_heat",
                            region=CesmPlotter.ALL_REGIONS)
