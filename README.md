@@ -11,7 +11,7 @@ PYthon-based data piPELINe for Energy system modeling
 - (Recommended) uv for environment management, https://docs.astral.sh/uv/getting-started/installation/
 - Gurobi
 
-### Clone (with submodules) 
+### Clone 
 ```bash
 git clone git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
 cd data_pipeline_esm

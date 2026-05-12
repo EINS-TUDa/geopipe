@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pypeline"
-version = "1.0.0"
+version = "1.0.1"
 description = "PYthon-based data piPELINe for Energy system modeling"
 authors = [
     {name = "Carolin Ayasse", email = "carolin.ayasse@eins.tu-darmstadt.de"},

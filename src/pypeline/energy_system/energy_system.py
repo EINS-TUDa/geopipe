@@ -40,6 +40,33 @@ class EnergySystem:
     def plot_system_topology(self, output_path: Optional[str | Path] = None) -> None:
         plot_system_topology(self, output_path=output_path)
 
+def validate_energy_system(es: EnergySystem):
+    errors = []
+    # also do
+    for imp in es.imports:
+        max_cap_per_year = imp.max_cap_per_year
+        supplied_capacity = 0
+        if max_cap_per_year is not None:
+            if isinstance(max_cap_per_year, dict):
+                max_cap_per_year = max_cap_per_year.get(0, None)
+            for region in es.regions:
+                for tech in region.central_techs:
+                    if tech.commodity_in == imp.commodity_out:
+                        supplied_capacity += tech.existing_capacity / tech.efficiency
+                for tech in region.decentral_techs:
+                    if tech.commodity_in == imp.commodity_out:
+                        supplied_capacity += tech.existing_capacity / tech.efficiency
+            if supplied_capacity > max_cap_per_year:
+                errors.append(
+                    f"Inconsistent data input. Import {imp.name} has max_cap_per_year {max_cap_per_year} but existing capacity of "
+                    f"technologies consuming {imp.commodity_out} is {supplied_capacity}. This will lead to "
+                    f"infeasibility. Consider increasing max_cap_per_year or reducing existing capacities.")
+    if errors:
+        error_message = "Energy system validation failed with the following errors:\n" + "\n".join(errors)
+        raise ValueError(error_message)
+
+
+
 
 class EnergySystemBuilderConfig(BaseSettings):
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
@@ -482,6 +509,7 @@ class EnergySystemBuilder:
                                      imports=self._imports,
                                      pipes=pipes
                                      )
+        validate_energy_system(energy_system)
         logger.info("EnergySystemBuilder.build() took %.3f s", time.perf_counter() - start)
         return energy_system
 

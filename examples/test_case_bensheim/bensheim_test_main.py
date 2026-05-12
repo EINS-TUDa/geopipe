@@ -44,7 +44,7 @@ def main():
     topology_builder.set_streets_data(streets_data)
     topology_builder.set_region_id_column("id")
     topology_builder.set_extensive_columns(["waerme_mwh"])
-    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "4_polygone_bensheim.geojson")
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "8_polygons.geojson")
     topology_result = topology_builder.build()
 
     esb_cfg = EnergySystemBuilderConfig(
@@ -104,24 +104,24 @@ def main():
     solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    cesm_plotter = CesmPlotter(solution=solution)
-    for year in scenario.years:
-        cesm_plotter.plot_sankey(year=year)
-        for region_id in cesm_plotter.regions:
-            cesm_plotter.plot_sankey(year=year, region=region_id)
+    # cesm_plotter = CesmPlotter(solution=solution)
+    # for year in scenario.years:
+    #     cesm_plotter.plot_sankey(year=year)
+    #     for region_id in cesm_plotter.regions:
+    #         cesm_plotter.plot_sankey(year=year, region=region_id)
 
     # --- 4) Active / new capacity for residential_heat ---
-    cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
-                           commodity="residential_heat",
-                           region=CesmPlotter.ALL_REGIONS)
-    cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
-                           commodity="residential_heat",
-                           region=CesmPlotter.ALL_REGIONS)
-    for region_id in cesm_plotter.regions:
-        cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
-                               commodity="residential_heat", region=region_id)
-        cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
-                               commodity="residential_heat", region=region_id)
+    # cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
+    #                        commodity="residential_heat",
+    #                        region=CesmPlotter.ALL_REGIONS)
+    # cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
+    #                        commodity="residential_heat",
+    #                        region=CesmPlotter.ALL_REGIONS)
+    # for region_id in cesm_plotter.regions:
+    #     cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
+    #                            commodity="residential_heat", region=region_id)
+    #     cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
+    #                            commodity="residential_heat", region=region_id)
 
 
 if __name__ == '__main__':

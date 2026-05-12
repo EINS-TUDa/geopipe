@@ -12,7 +12,7 @@ imports:
     co2_emissions_ton_per_mwh: 0.4
   - commodity_out: biomass
     price_eur_per_mwh: 20.0
-    max_cap_per_year: 100 # kW, can also be year dependent dict
+    max_cap_per_year: 1000 # kW, can also be year dependent dict
     max_energy_out_per_year: # MWh, can also be year dependent dict
         0: 500
         10: 1000
