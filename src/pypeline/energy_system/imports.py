@@ -2,8 +2,8 @@ from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, field_validator
+from .utils import YearDep
 
-YearDep = float | dict[int, float] | None
 
 
 class Import(BaseModel):
@@ -13,12 +13,8 @@ class Import(BaseModel):
     max_cap_per_year: YearDep = None
     max_energy_out_per_year: YearDep = None
 
-    @field_validator(
-        "price_eur_per_mwh",
-        "co2_emissions_ton_per_mwh",
-        "max_cap_per_year",
-        "max_energy_out_per_year",
-    )
+    @field_validator("price_eur_per_mwh","co2_emissions_ton_per_mwh", "max_cap_per_year",
+        "max_energy_out_per_year")
     @classmethod
     def _years_relative(cls, v: YearDep) -> YearDep:
         if isinstance(v, dict):

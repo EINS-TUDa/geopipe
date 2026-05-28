@@ -17,6 +17,7 @@ from .imports import Import, load_imports_from_yaml
 from .technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
 from .region import compute_region_connections, RegionConnections
 from .demand import DemandType
+from ._year_dep import get_earliest_year_value
 from ..data.data_registry import DataRegistry
 from .region import Demand, Region
 from .units import Unit, UnitEnum
@@ -27,6 +28,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+class EnergySystemValidationError(ValueError):
+    pass
 
 @dataclass(slots=True)
 class EnergySystem:
@@ -41,31 +44,52 @@ class EnergySystem:
         plot_system_topology(self, output_path=output_path)
 
 def validate_energy_system(es: EnergySystem):
-    errors = []
-    # also do
+    errors, warnings = [], []
     for imp in es.imports:
-        max_cap_per_year = imp.max_cap_per_year
-        supplied_capacity = 0
-        if max_cap_per_year is not None:
-            if isinstance(max_cap_per_year, dict):
-                max_cap_per_year = max_cap_per_year.get(0, None)
-            for region in es.regions:
-                for tech in region.central_techs:
-                    if tech.commodity_in == imp.commodity_out:
-                        supplied_capacity += tech.existing_capacity / tech.efficiency
-                for tech in region.decentral_techs:
-                    if tech.commodity_in == imp.commodity_out:
-                        supplied_capacity += tech.existing_capacity / tech.efficiency
-            if supplied_capacity > max_cap_per_year:
-                errors.append(
-                    f"Inconsistent data input. Import {imp.name} has max_cap_per_year {max_cap_per_year} but existing capacity of "
-                    f"technologies consuming {imp.commodity_out} is {supplied_capacity}. This will lead to "
-                    f"infeasibility. Consider increasing max_cap_per_year or reducing existing capacities.")
+        if imp.max_cap_per_year is None and imp.max_energy_out_per_year is None:
+            continue
+        max_cap_y0 = get_earliest_year_value(imp.max_cap_per_year)
+        max_energy_y0 = get_earliest_year_value(imp.max_energy_out_per_year)
+        supplied_capacity = 0.0
+        supplied_energy = 0.0
+        central_with_existing: list[str] = []
+        for region in es.regions:
+            for tech in region.central_techs:
+                if tech.commodity_in != imp.commodity_out:
+                    continue
+                supplied_capacity += tech.existing_capacity / tech.efficiency
+                if tech.existing_capacity > 0 and max_energy_y0 is not None:
+                    central_with_existing.append(
+                        f"{tech.name}@region{region.id} (existing_capacity={tech.existing_capacity})"
+                    )
+            for tech in region.decentral_techs:
+                if tech.commodity_in != imp.commodity_out:
+                    continue
+                supplied_capacity += tech.existing_capacity / tech.efficiency
+                supplied_energy += tech.existing_energy_output / tech.efficiency  # central techs don't have existing_energy_output
+        if central_with_existing:
+            warnings.append(
+                f"Import {imp.name} has max_energy_out_per_year={max_energy_y0} and must serve "
+                f"central technologies with existing capacity: {', '.join(central_with_existing)}. "
+                f"If max_energy_out_per_year is not sufficiently high, this will lead to infeasibility."
+            )
+        if max_cap_y0 is not None and supplied_capacity > max_cap_y0:
+            errors.append(
+                f"Inconsistent data input. Import {imp.name} has max_cap_per_year {max_cap_y0} but existing capacity of "
+                f"technologies consuming {imp.commodity_out} is {supplied_capacity}. This will lead to "
+                f"infeasibility. Consider increasing max_cap_per_year or reducing existing capacities.")
+        if max_energy_y0 is not None and supplied_energy > max_energy_y0:
+            errors.append(
+                f"Inconsistent data input. Import {imp.name} has max_energy_out_per_year {max_energy_y0} but the "
+                f"existing energy output of decentralized technologies, not considering central technologies, "
+                f"consuming {imp.commodity_out} is {supplied_energy}. This will lead to "
+                f"infeasibility. Consider increasing max_energy_out_per_year or reducing existing energy outputs.")
+    if warnings:
+        warning_message = "Energy system validation raised the following warnings:\n" + "\n".join(warnings)
+        logger.warning(warning_message)
     if errors:
         error_message = "Energy system validation failed with the following errors:\n" + "\n".join(errors)
-        raise ValueError(error_message)
-
-
+        raise EnergySystemValidationError(error_message)
 
 
 class EnergySystemBuilderConfig(BaseSettings):
@@ -203,7 +227,7 @@ class EnergySystemBuilder:
             if share < self._config.minimum_decentral_technology_share.get(name, -1):
                 region_id = next(iter(
                     data.get("id") for _, _, data in topology.graph.edges(data=True) if data.get("id") is not None),
-                                 "unknown")
+                    "unknown")
                 logger.info("Share of technology %s for demand %s in region_id %s is below "
                             "the minimum threshold. Skipping.", name, demand.demand_type.name, region_id)
 
@@ -230,7 +254,9 @@ class EnergySystemBuilder:
                 share = technology_shares_data.get(name, 0.0)
                 existing_capacity = share * demand.peak(
                     year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
+                existing_energy_output = share * demand.value(0)
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
+                                                                  existing_energy_output=existing_energy_output,
                                                                   output_profile_name=demand.profile_name))
                 shares_seen.add(name)
             for name, share in technology_shares_data.items():
@@ -415,10 +441,10 @@ class EnergySystemBuilder:
         for pipe_type_name in PipeTechnology.registered_type_names():
             pipes_per_type[pipe_type_name] = {}
             # build a pipe for each connection for each type
-            for(region_1_id, region_2_id), (length_m, connection_graph) in region_connections:
+            for (region_1_id, region_2_id), (length_m, connection_graph) in region_connections:
                 pipes_per_type[pipe_type_name][(region_1_id, region_2_id)] = PipeTechnology(
                     pipe_type_name, region_id_in=region_1_id,
-                    region_id_out=region_2_id, pipe_length_km=length_m/1000.0, topology=connection_graph)
+                    region_id_out=region_2_id, pipe_length_km=length_m / 1000.0, topology=connection_graph)
                 pipes_per_type[pipe_type_name][(region_2_id, region_1_id)] = PipeTechnology(
                     pipe_type_name, region_id_in=region_2_id,
                     region_id_out=region_1_id, pipe_length_km=length_m / 1000.0, topology=connection_graph)
@@ -432,7 +458,8 @@ class EnergySystemBuilder:
             region_graph = nx.Graph()
             nodes_in_graph = [region_id for region_id in region_ids
                               if grid_tech_per_region[region_id][grid_type_name].existing_capacity > 0]
-            edges_in_graph = [(region_1_id, region_2_id, {"len": length_m}) for (region_1_id, region_2_id), (length_m, topology) in
+            edges_in_graph = [(region_1_id, region_2_id, {"len": length_m}) for
+                              (region_1_id, region_2_id), (length_m, topology) in
                               region_connections
                               if length_m <= self._config.considered_connected_region_distance_m
                               if region_1_id in nodes_in_graph and region_2_id in nodes_in_graph]
@@ -470,8 +497,9 @@ class EnergySystemBuilder:
                         # on edge = (start,child)
                         existing_capacity_of_child_grid = update_existing_capacities(child)
                         child_pipe: PipeTechnology = pipes_per_type[pipe_type_name][(start, child)]
-                        child_pipe.existing_capacity += existing_capacity_of_child_grid/grid_tech_per_region[child][grid_type_name].efficiency
-                        capacity_from_children += child_pipe.existing_capacity/child_pipe.efficiency
+                        child_pipe.existing_capacity += existing_capacity_of_child_grid / grid_tech_per_region[child][
+                            grid_type_name].efficiency
+                        capacity_from_children += child_pipe.existing_capacity / child_pipe.efficiency
 
                     grid_on_region: GridTechnology = grid_tech_per_region[start][grid_type_name]
                     grid_on_region.existing_capacity *= self._config.additional_grid_capacity_factor.get(grid_type_name,
@@ -482,7 +510,7 @@ class EnergySystemBuilder:
                 total_grid_capacity = update_existing_capacities(source_region)
                 # Total output capacity at the central tech (= grid input) after dividing by the grid efficiency.
                 source_capacity_per_commodity[(pipe_commodity_out, source_region)] = (
-                    total_grid_capacity / grid_tech_per_region[source_region][grid_type_name].efficiency)
+                        total_grid_capacity / grid_tech_per_region[source_region][grid_type_name].efficiency)
 
         # Place central technologies in every effective location (filtered by per-tech street constraints) and
         # distribute existing capacities from the source regions onto the configured (tech, share) tuples.
@@ -514,7 +542,7 @@ class EnergySystemBuilder:
         return energy_system
 
     def verify(self):
-        errors=[]
+        errors = []
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
             errors.append(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
         if not isinstance(self.base_crs, str) or not self.base_crs:

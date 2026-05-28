@@ -6,6 +6,7 @@ import networkx as nx
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from ._year_dep import get_earliest_year_value
 
 class _TechType(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -256,14 +257,7 @@ class CentralTechnology(Technology):
                 f"'existing_capacity_retirement_years' is not defined."
             )
         if capacity:
-            max_cap = self._max_capacity
-            if isinstance(max_cap, (int, float)):
-                year0_max = max_cap
-            elif isinstance(max_cap, dict):
-                years = sorted(max_cap.keys())
-                year0_max = max_cap.get(years[0]) # earliest year
-            else:
-                year0_max = None
+            year0_max = get_earliest_year_value(self._max_capacity)
             if year0_max is not None and capacity > year0_max:
                 raise ValueError(
                     f"Cannot set existing_capacity={capacity} for technology {self.name} as it "
