@@ -4,7 +4,7 @@ from typing import Optional, Any, cast
 
 import networkx as nx
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PositiveFloat
 
 from ._year_dep import get_earliest_year_value
 
@@ -15,7 +15,7 @@ class _TechType(BaseModel):
 class DecentralTechType(_TechType):
     commodity_in: str
     commodity_out: str
-    efficiency: float
+    efficiency: PositiveFloat
     technical_lifetime: int
     opex_cost_energy: float
     opex_cost_power: float
@@ -26,7 +26,7 @@ class DecentralTechType(_TechType):
 class CentralTechType(_TechType):
     commodity_in: str
     commodity_out: str
-    efficiency: float
+    efficiency: PositiveFloat
     technical_lifetime: int
     opex_cost_energy: float
     opex_cost_power: float
@@ -48,7 +48,7 @@ class CHPTechType(CentralTechType):
 class GridTechType(_TechType):
     commodity_in: str
     commodity_out: str
-    efficiency: float
+    efficiency: PositiveFloat
     capex_per_km: float
     technical_lifetime: int
     existing_capacity_retirement_years: float | None = None
@@ -57,7 +57,7 @@ class GridTechType(_TechType):
 class PipeTechType(_TechType):
     commodity_in: str
     commodity_out: str
-    efficiency: float
+    efficiency: PositiveFloat
     technical_lifetime: int
     capex_per_km: float
     distance_threshold_m: float
