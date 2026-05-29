@@ -13,6 +13,6 @@ def streets_data_path():
 
 @pytest.fixture
 def polygons_data_path():
-    path = Path(__file__).parent / 'test_data' / 'bensheim_polygons.geojson'
+    path = Path(__file__).parent / 'test_data' / '4_polygone_bensheim.geojson'
     assert path.exists()
     return path
