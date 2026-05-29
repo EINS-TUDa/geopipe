@@ -15,7 +15,7 @@ later.
 | `clear_registry` | `bool` | `True` | If `True`, wipes all previously registered technology types before loading. Set to `False` to merge into an existing registry. |
 
 ```python
-from pypeline.energy_system import register_technologies
+from geopipe.energy_system import register_technologies
 
 register_technologies("input/technologies.yaml", clear_registry=True)
 ```

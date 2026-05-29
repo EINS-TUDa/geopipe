@@ -1,33 +1,36 @@
 from pathlib import Path
 
 from compare_techmaps import compare_techmaps
-from pypeline.data.dataset import CensusTechnology
-from pypeline.energy_system.demand import DemandType
-from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
-from pypeline.energy_system import Scenario
-from pypeline.energy_system import register_technologies
-from pypeline.energy_system.units import UnitEnum
-from pypeline.optimization import CESMOptimizationBackend, Solution
-# from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.topology_build_utils import modify_streets_data
-from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
-from pypeline.optimization.cesm import CesmPlotter, PlotType
+from geopipe.data.dataset import CensusTechnology
+from geopipe.energy_system.demand import DemandType
+from geopipe.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
+from geopipe.energy_system import Scenario
+from geopipe.energy_system import register_technologies
+from geopipe.energy_system.units import UnitEnum
+from geopipe.optimization import CESMOptimizationBackend, Solution
+# from geopipe.plot.plotter import EnergySystemPlotter
+from geopipe.topology_builder.topology_build_utils import modify_streets_data
+from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
+from geopipe.optimization.cesm import CesmPlotter, PlotType
 
 
 from input_data.data_reg import case1_data_registry
 
 import logging
 
+CASE_DIR = Path(__file__).resolve().parent
+project_root = CASE_DIR.parents[1]
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+    handlers=[logging.FileHandler(filename=str(CASE_DIR / "output_data" / "output.log"), mode="a"),
+        logging.StreamHandler()])
 
-logging.getLogger("pypeline").setLevel(logging.INFO)
+logging.getLogger("geopipe").setLevel(logging.INFO)
 logging.getLogger("cesm").setLevel(logging.INFO)
 
-CASE_DIR = Path(__file__).resolve().parent
-project_root = CASE_DIR.parents[1]
+
 
 def main():
     streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
@@ -44,7 +47,7 @@ def main():
     topology_builder.set_streets_data(streets_data)
     topology_builder.set_region_id_column("id")
     topology_builder.set_extensive_columns(["waerme_mwh"])
-    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "4_polygone_bensheim.geojson")
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "8_polygons.geojson")
     topology_result = topology_builder.build()
 
     esb_cfg = EnergySystemBuilderConfig(
@@ -54,6 +57,8 @@ def main():
         central_tech_existing_capacities={"district_heat_in": {0: [("cen_waste_heat_langnese", 0.6),("cen_gas_boiler", 0.4)],
                                                                "default": [("chp_gas", 0.8),("cen_gas_boiler", 0.2)]}},
         additional_grid_capacity_factor={"heat_grid": 1.1},
+        forced_decentral_technology_share_per_region={2: {"heat_exchanger": 0.8,
+                                                          "ind_oil_boiler": 0.2}},
     )
 
     data_reg = case1_data_registry()
@@ -86,14 +91,14 @@ def main():
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
     builder.set_demand_types([residential_heat_demand])
-    builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
+    builder.set_imports_exports(CASE_DIR / "input_data" / "imports_exports.yaml")
     builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()
     energy_system.plot_system_topology()
     scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
-    solution = backend.solve(energy_system, scenario, lp_file=True)
+    solution = backend.solve(energy_system, scenario, lp_file=False)
 
     solution.save(path=CASE_DIR / "output_data")
     # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
@@ -104,24 +109,24 @@ def main():
     solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output")
 
     # --- 3) Sankey diagrams via CESM plot module ---
-    cesm_plotter = CesmPlotter(solution=solution)
-    for year in scenario.years:
-        cesm_plotter.plot_sankey(year=year)
-        for region_id in cesm_plotter.regions:
-            cesm_plotter.plot_sankey(year=year, region=region_id)
+    # cesm_plotter = CesmPlotter(solution=solution)
+    # for year in scenario.years:
+    #     cesm_plotter.plot_sankey(year=year)
+    #     for region_id in cesm_plotter.regions:
+    #         cesm_plotter.plot_sankey(year=year, region=region_id)
 
     # --- 4) Active / new capacity for residential_heat ---
-    cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
-                           commodity="residential_heat",
-                           region=CesmPlotter.ALL_REGIONS)
-    cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
-                           commodity="residential_heat",
-                           region=CesmPlotter.ALL_REGIONS)
-    for region_id in cesm_plotter.regions:
-        cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
-                               commodity="residential_heat", region=region_id)
-        cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
-                               commodity="residential_heat", region=region_id)
+    # cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
+    #                        commodity="residential_heat",
+    #                        region=CesmPlotter.ALL_REGIONS)
+    # cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
+    #                        commodity="residential_heat",
+    #                        region=CesmPlotter.ALL_REGIONS)
+    # for region_id in cesm_plotter.regions:
+    #     cesm_plotter.plot_bars(PlotType.Bar.ACTIVE_CAPACITY,
+    #                            commodity="residential_heat", region=region_id)
+    #     cesm_plotter.plot_bars(PlotType.Bar.NEW_CAPACITY,
+    #                            commodity="residential_heat", region=region_id)
 
 
 if __name__ == '__main__':

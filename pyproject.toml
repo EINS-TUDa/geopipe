@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pypeline"
-version = "1.0.0"
-description = "PYthon-based data piPELINe for Energy system modeling"
+name = "geopipe"
+version = "1.1.0"
+description = "Geographical energy system modelling data Pipeline"
 authors = [
     {name = "Carolin Ayasse", email = "carolin.ayasse@eins.tu-darmstadt.de"},
     {name = "Alexander Christ", email = "alexchrist@outlook.com"},

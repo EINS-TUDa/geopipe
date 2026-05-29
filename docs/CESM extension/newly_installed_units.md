@@ -1,7 +1,7 @@
 # NewlyInstalledUnits, `cap_max_unit`, and base costs
 
 This page documents the integer-unit investment formulation that the
-**pypeline branch of CESM** adds on top of the continuous capacity
+**geopipe branch of CESM** adds on top of the continuous capacity
 expansion formulation in `CESM/main`. It is not part of upstream
 `CESM/main` — anyone reading the upstream model will not find the
 `NewlyInstalledUnits` variable, the `build_activation` constraint, or
@@ -12,7 +12,7 @@ schema in `CESM/src/cesm/core/init_queries.sql`.
 
 ## Motivation
 
-The pypeline branch adds an explicit per-unit investment decision so
+The geopipe branch adds an explicit per-unit investment decision so
 that:
 
 1. installing a new unit incurs a **fixed cost** (`capex_cost_base`)

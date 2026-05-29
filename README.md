@@ -1,8 +1,8 @@
 # README
 
-## PYPELINE
+## GeoPipe
 
-PYthon-based data piPELINe for Energy system modeling
+Geographical energy system modelling data Pipeline
 
 ## Quickstart
 
@@ -11,7 +11,7 @@ PYthon-based data piPELINe for Energy system modeling
 - (Recommended) uv for environment management, https://docs.astral.sh/uv/getting-started/installation/
 - Gurobi
 
-### Clone (with submodules) 
+### Clone 
 ```bash
 git clone git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
 cd data_pipeline_esm
@@ -23,7 +23,7 @@ uv sync
 
 ### Verify setup
 ```bash
-uv run python -c "import pypeline; print('OK')"
+uv run python -c "import geopipe; print('OK')"
 ```
 
 ### Run first examples
