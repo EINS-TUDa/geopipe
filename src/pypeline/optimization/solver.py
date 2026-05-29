@@ -2,6 +2,7 @@
 import pickle
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 import pandas as pd
@@ -32,6 +33,8 @@ class Results:
     pipes_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id_from, region_id_to, capacity, energy_output, new_capacity
     imports_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, capacity, energy_output, new_capacity
     exports_per_commodity_in: dict[str, pd.DataFrame]  # DF Columns: year, capacity, energy_input, new_capacity
+
+    calculated_at: datetime = field(default_factory=datetime.now)  # Timestamp of when these results were calculated.
 
 @dataclass
 class Solution:

@@ -112,6 +112,8 @@ def _run_metadata(solution: "Solution") -> dict[str, Any]:
         for attr in ("start_year", "end_year", "year_gap", "dt_hours", "tss"):
             if hasattr(scenario, attr):
                 md[attr] = getattr(scenario, attr)
+    if solution.results is not None and solution.results.calculated_at is not None:
+        md["calculated_at"] = solution.results.calculated_at.strftime("%Y-%m-%d %H:%M:%S")
     return md
 
 
