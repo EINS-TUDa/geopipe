@@ -30,13 +30,13 @@ import plotly.graph_objects as go
 from cesm.core.data_access import DAO
 from cesm.core.plotter import Plotter as _InnerPlotter, PlotType, PlotterExeption
 
-from pypeline.optimization.cesm.techmap import _color_from_name
+from geopipe.optimization.cesm.techmap import _color_from_name
 
 logger = logging.getLogger(__name__)
 
 
 
-# Suffix conventions are produced in `pypeline.optimization.cesm.techmap`:
+# Suffix conventions are produced in `geopipe.optimization.cesm.techmap`:
 #   <tech>_D<region>                 - decentralized/central/grid technology
 #   <pipe>_D<region_in>_D<region_out>- pipe between two regions
 #   <commodity>_D<region>            - region-scoped (grid) commodity

@@ -3,15 +3,15 @@ import networkx as nx
 import pandas as pd
 from shapely.geometry import MultiPoint
 from pathlib import Path
-from pypeline.data import (
+from geopipe.data import (
     DataRegistry,
     DatabaseConnection,
     PostgreSQLDataset, CSVDataset,
 )
 from sqlalchemy import text
 
-from pypeline.data.dataset import SimpleDataset, FileDataset, CensusTechnology
-from pypeline.units import UnitEnum
+from geopipe.data.dataset import SimpleDataset, FileDataset, CensusTechnology
+from geopipe.units import UnitEnum
 
 
 def ***REMOVED***_census_query(dataset: PostgreSQLDataset, query: dict) -> dict[str, float]:

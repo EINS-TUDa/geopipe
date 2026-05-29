@@ -5,10 +5,10 @@ import pandas as pd
 import geopandas as gpd
 from shapely.geometry.multipoint import MultiPoint
 
-from pypeline import DataRegistry
-from pypeline.data.data_registry import DataKeys
-from pypeline.data.data_utils import get_gdf_from_ags
-from pypeline.data.dataset import FileDataset, CensusTechnology
+from geopipe import DataRegistry
+from geopipe.data.data_registry import DataKeys
+from geopipe.data.data_utils import get_gdf_from_ags
+from geopipe.data.dataset import FileDataset, CensusTechnology
 
 
 def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query: dict) -> dict[CensusTechnology, float]:

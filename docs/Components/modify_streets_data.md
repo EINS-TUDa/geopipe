@@ -24,7 +24,7 @@ in place and also returned.
 
 ```python
 from pathlib import Path
-from pypeline.topology_builder.topology_build_utils import modify_streets_data
+from geopipe.topology_builder.topology_build_utils import modify_streets_data
 
 streets = modify_streets_data(
     streets_data=Path("input/streets.geojson"),

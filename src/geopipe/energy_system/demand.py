@@ -4,7 +4,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from pypeline.energy_system.units import UnitEnum
+from geopipe.energy_system.units import UnitEnum
 
 
 @dataclass(frozen=True)

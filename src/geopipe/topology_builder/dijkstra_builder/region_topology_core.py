@@ -264,7 +264,7 @@ class RegionTopologyDefaults:
 REGION_TOPOLOGY_DEFAULTS = RegionTopologyDefaults()
 
 
-from pypeline.topology_builder.region_topology_engine import (
+from geopipe.topology_builder.region_topology_engine import (
     RegionTopologyGeometry,
     count_disconnected_regions as _count_disconnected_regions,
     collapse_overloaded_junction_conflicts as _collapse_overloaded_junction_conflicts,

@@ -3,7 +3,7 @@ import geopandas as gpd
 import requests
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-HEADERS = {"User-Agent": "pypeline/1.0 (your@email.com)"}
+HEADERS = {"User-Agent": "geopipe/1.0 (your@email.com)"}
 
 def get_gdf_from_ags(ags_list: [str]):
     ags_list = [ags.strip().replace(" ", "") for ags in ags_list]

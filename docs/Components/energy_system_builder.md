@@ -34,8 +34,8 @@ passed to an optimisation backend.
 ## Minimal usage
 
 ```python
-from pypeline.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
-from pypeline.energy_system.units import UnitEnum
+from geopipe.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
+from geopipe.energy_system.units import UnitEnum
 
 builder = EnergySystemBuilder(energy_system_name="Case1")
 builder.set_system_topology(topology_result.network)

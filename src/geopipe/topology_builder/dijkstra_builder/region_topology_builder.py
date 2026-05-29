@@ -8,7 +8,7 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.topology_builder.region_topology_core import (
+from geopipe.topology_builder.region_topology_core import (
     REGION_TOPOLOGY_DEFAULTS,
     RegionCaps,
     RegionTopologyBase,

@@ -7,11 +7,11 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from pypeline.energy_system import EnergySystem, Scenario
-from pypeline.energy_system.technology import CHPTechnology
-from pypeline.optimization.cesm.techmap import commodity_name
-from pypeline.optimization.cesm.units import scale_factors
-from pypeline.optimization.solver import Results, Solution
+from geopipe.energy_system import EnergySystem, Scenario
+from geopipe.energy_system.technology import CHPTechnology
+from geopipe.optimization.cesm.techmap import commodity_name
+from geopipe.optimization.cesm.units import scale_factors
+from geopipe.optimization.solver import Results, Solution
 
 logger = logging.getLogger(__name__)
 

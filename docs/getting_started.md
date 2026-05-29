@@ -20,7 +20,7 @@ uv sync
 
 ### Verify setup
 ```bash
-uv run python -c "import pypeline; print('OK')"
+uv run python -c "import geopipe; print('OK')"
 ```
 
 ### Run first examples

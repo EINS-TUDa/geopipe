@@ -11,8 +11,8 @@ technologies. The `EnergySystemBuilder` consumes a list of
 
 ```python
 from pathlib import Path
-from pypeline.energy_system.demand import DemandType
-from pypeline.data.dataset import CensusTechnology
+from geopipe.energy_system.demand import DemandType
+from geopipe.data.dataset import CensusTechnology
 
 residential_heat = DemandType(
     name="residential_heat",
@@ -23,15 +23,15 @@ residential_heat = DemandType(
     technology_shares_query_params={
         "key": "heating_shares",
         "name_mapping": {
-            CensusTechnology.Gas:              "ind_gas_boiler",
-            CensusTechnology.Oil:              "ind_oil_boiler",
-            CensusTechnology.Wood:             "ind_biomass",
-            CensusTechnology.Renewable:        "ind_heat_pump",
+            CensusTechnology.Gas: "ind_gas_boiler",
+            CensusTechnology.Oil: "ind_oil_boiler",
+            CensusTechnology.Wood: "ind_biomass",
+            CensusTechnology.Renewable: "ind_heat_pump",
             CensusTechnology.District_Heating: "heat_exchanger",
-            CensusTechnology.Biomass:          None,
-            CensusTechnology.Electric:         None,
-            CensusTechnology.Coal:             None,
-            CensusTechnology.NoEnergyCarrier:  None,
+            CensusTechnology.Biomass: None,
+            CensusTechnology.Electric: None,
+            CensusTechnology.Coal: None,
+            CensusTechnology.NoEnergyCarrier: None,
         },
     },
     default_decentral_supply_technology="ind_oil_boiler",

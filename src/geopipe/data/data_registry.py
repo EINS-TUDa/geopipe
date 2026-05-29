@@ -15,7 +15,7 @@ import importlib
 
 from shapely.geometry.multipoint import MultiPoint
 
-from pypeline.data.dataset import Dataset
+from geopipe.data.dataset import Dataset
 
 class DataKeys(str, Enum):
     RESIDENTIAL_HEAT_DEMAND_PROFILE = "residential_heat_demand_profile"

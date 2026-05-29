@@ -1,17 +1,17 @@
 from pathlib import Path
 
 from compare_techmaps import compare_techmaps
-from pypeline.data.dataset import CensusTechnology
-from pypeline.energy_system.demand import DemandType
-from pypeline.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
-from pypeline.energy_system import Scenario
-from pypeline.energy_system import register_technologies
-from pypeline.energy_system.units import UnitEnum
-from pypeline.optimization import CESMOptimizationBackend, Solution
-# from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.topology_build_utils import modify_streets_data
-from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
-from pypeline.optimization.cesm import CesmPlotter, PlotType
+from geopipe.data.dataset import CensusTechnology
+from geopipe.energy_system.demand import DemandType
+from geopipe.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
+from geopipe.energy_system import Scenario
+from geopipe.energy_system import register_technologies
+from geopipe.energy_system.units import UnitEnum
+from geopipe.optimization import CESMOptimizationBackend, Solution
+# from geopipe.plot.plotter import EnergySystemPlotter
+from geopipe.topology_builder.topology_build_utils import modify_streets_data
+from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
+from geopipe.optimization.cesm import CesmPlotter, PlotType
 
 
 from input_data.data_reg import case1_data_registry
@@ -27,7 +27,7 @@ logging.basicConfig(
     handlers=[logging.FileHandler(filename=str(CASE_DIR / "output_data" / "output.log"), mode="a"),
         logging.StreamHandler()])
 
-logging.getLogger("pypeline").setLevel(logging.INFO)
+logging.getLogger("geopipe").setLevel(logging.INFO)
 logging.getLogger("cesm").setLevel(logging.INFO)
 
 

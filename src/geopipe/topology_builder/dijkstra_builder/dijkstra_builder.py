@@ -9,12 +9,12 @@ from pathlib import Path
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.topology_builder.region_topology_builder import (
+from geopipe.topology_builder.region_topology_builder import (
     RegionTopologyConfig,
     build_region_topology,
 )
-from pypeline.plot.plotter import EnergySystemPlotter
-from pypeline.topology_builder.core import (AbstractTopologyBuilder, TopologyBuildError, TopologyBuildResult, gdf_to_nx, gdf_to_region_topologies)
+from geopipe.plot.plotter import EnergySystemPlotter
+from geopipe.topology_builder.core import (AbstractTopologyBuilder, TopologyBuildError, TopologyBuildResult, gdf_to_nx, gdf_to_region_topologies)
 
 
 @dataclass(frozen=True)

@@ -6,7 +6,7 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 
-from pypeline.data.dataset import CensusTechnology, FileDataset
+from geopipe.data.dataset import CensusTechnology, FileDataset
 
 
 _CENSUS_COL_TO_TECH: dict[str, CensusTechnology] = {

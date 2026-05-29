@@ -1,8 +1,8 @@
 # README
 
-## PYPELINE
+## GeoPipe
 
-PYthon-based data piPELINe for Energy system modeling
+Geographical energy system modelling data Pipeline
 
 ## Quickstart
 
@@ -23,7 +23,7 @@ uv sync
 
 ### Verify setup
 ```bash
-uv run python -c "import pypeline; print('OK')"
+uv run python -c "import geopipe; print('OK')"
 ```
 
 ### Run first examples

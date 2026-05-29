@@ -1,4 +1,4 @@
-"""Optimization backends for pypeline.
+"""Optimization backends for geopipe.
 
 Architecture overview::
 
@@ -7,7 +7,7 @@ Architecture overview::
         ▼  OptimizationBackend.solve()            ← solver.py (ABC)
     Solution(results=Results)
 
-    CESM backend:  pypeline.optimization.cesm.CESMOptimizationBackend
+    CESM backend:  geopipe.optimization.cesm.CESMOptimizationBackend
 
 Public API
 ----------
@@ -16,8 +16,8 @@ Public API
 - :class:`Results`              — standardized results (DataFrames + costs)
 - :class:`CESMOptimizationBackend`   — CESM solver backend
 """
-from pypeline.optimization.solver import OptimizationBackend, Solution, Results
-from pypeline.optimization.cesm import CESMOptimizationBackend
+from geopipe.optimization.solver import OptimizationBackend, Solution, Results
+from geopipe.optimization.cesm import CESMOptimizationBackend
 
 __all__ = [
     "OptimizationBackend",

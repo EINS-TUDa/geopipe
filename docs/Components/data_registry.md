@@ -24,16 +24,16 @@ registered against the key.
 
 ```python
 import pathlib
-from pypeline import DataRegistry
-from pypeline.data.data_registry import DataKeys
-from pypeline.data.dataset import FileDataset
+from geopipe import DataRegistry
+from geopipe.data.data_registry import DataKeys
+from geopipe.data.dataset import FileDataset
 
 heating_shares = FileDataset(
     keys=[DataKeys.HEATING_SHARES],
     file_path=str(pathlib.Path(__file__).parent / "Census2022HeatingType.geojson"),
-    query_function=census_bensheim_query,   # see below
+    query_function=census_bensheim_query,  # see below
     priority=10,
-    regional_validity=None,                 # None = applies everywhere
+    regional_validity=None,  # None = applies everywhere
 )
 
 data_reg = DataRegistry()

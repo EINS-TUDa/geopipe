@@ -1,5 +1,5 @@
 """
-Redesigned data management system for pypeline.
+Redesigned data management system for geopipe.
 
 Main components:
 - DataRegistry: Central management of all Datasets
@@ -8,13 +8,13 @@ Main components:
 - DatabaseConnection: Manages shared database connections
 """
 
-from pypeline.data.data_registry import DataRegistry
-from pypeline.data.dataset import (
+from geopipe.data.data_registry import DataRegistry
+from geopipe.data.dataset import (
     Dataset,
     PostgreSQLDataset,
     CSVDataset,
 )
-from pypeline.data.database_connection import DatabaseConnection
+from geopipe.data.database_connection import DatabaseConnection
 
 
 __all__ = [

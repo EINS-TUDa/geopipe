@@ -14,7 +14,7 @@ import pandas as pd
 from shapely.geometry import Point
 from shapely.ops import substring, unary_union
 
-from pypeline.topology_builder.region_topology_core import RegionTopologyBase
+from geopipe.topology_builder.region_topology_core import RegionTopologyBase
 
 _JUNCTION_NEIGHBOR_ONLY_MIN_DEGREE = 4
 

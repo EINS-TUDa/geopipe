@@ -1,8 +1,8 @@
 # coding=utf-8
 """Tests for the polygon-based topology builder."""
 
-from pypeline.topology_builder import TopologyBuildResult
-from pypeline.topology_builder.topology_builder import PolygonTopologyBuilder
+from geopipe.topology_builder import TopologyBuildResult
+from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
 
 def test_polygon_topology_builder(streets_data_path, polygons_data_path):
     builder = PolygonTopologyBuilder()

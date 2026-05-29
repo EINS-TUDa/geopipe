@@ -4,10 +4,10 @@ from typing import Optional, Iterable, Iterator
 from shapely.geometry import MultiPoint
 import networkx as nx
 
-from pypeline.energy_system.demand import Demand
-from pypeline.energy_system.technology import (Technology, CentralTechnology, DecentralTechnology,
-                                               CHPTechnology, GridTechnology)
-from pypeline.topology_builder.topology import Topology
+from geopipe.energy_system.demand import Demand
+from geopipe.energy_system.technology import (Technology, CentralTechnology, DecentralTechnology,
+                                              CHPTechnology, GridTechnology)
+from geopipe.topology_builder.topology import Topology
 
 class Region:
     def __init__(self, id_: int, topology: Topology, demands: Iterable[Demand],

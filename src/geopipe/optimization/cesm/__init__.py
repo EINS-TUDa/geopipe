@@ -8,6 +8,6 @@ warnings.filterwarnings(
     message="pkg_resources is deprecated as an API",
 )
 
-from pypeline.optimization.cesm.backend import CESMOptimizationBackend
-from pypeline.optimization.cesm.cesm_plotter import CesmPlotter, PlotType
+from geopipe.optimization.cesm.backend import CESMOptimizationBackend
+from geopipe.optimization.cesm.cesm_plotter import CesmPlotter, PlotType
 

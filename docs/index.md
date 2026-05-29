@@ -1,21 +1,27 @@
 # Welcome
 
-**Pypeline** — *PYthon-based data piPELINe for Energy system modeling.*
+**GeoPipe** — *GEOgraphical energy system modelling data PIPEline*
 
-Pypeline is an automated, open-source data processing pipeline that transforms geospatial data on energy demand and supply and 
+GeoPipe is an automated, open-source data processing pipeline that transforms geospatial data on energy demand and supply and 
 techno-economic data into a structured energy system representation. The structured energy system representation
 can be passed to modern multi investment energy system models via lightweight Python interfaces. 
 
+## Idea
+![idea.png](idea.png)
+
+## Structured Representation of Energy System
+Per Region:
+![abstraction.png](abstraction.png)
 
 ## How the pieces fit together
 
 ```
-        streets.geojson                technologies.yaml                  │
+        streets.geojson                technologies.yaml                  
               │                               │
               ▼                               ▼
-      ┌────────────────┐            register_technologies()
+      ┌─────────────────┐            register_technologies()
       │ TopologyBuilder │                     │
-      │  (Simple │      │                     │   (loads the
+      │   (Simple       │                     │   (loads the
       │   Polygon)      │                     │    technology catalog)
       └────────┬────────┘                     │
                │ network (nx.Graph)           │

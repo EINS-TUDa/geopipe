@@ -3,7 +3,7 @@
 
 import pytest
 
-from pypeline.energy_system.technology import CentralTechnology, CentralTechType
+from geopipe.energy_system.technology import CentralTechnology, CentralTechType
 
 START_YEAR = 2025
 

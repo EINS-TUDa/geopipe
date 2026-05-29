@@ -42,7 +42,7 @@ and want full control without relying on geometry.
 
 ```python
 from pathlib import Path
-from pypeline.topology_builder.topology_builder import SimpleTopologyBuilder
+from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder
 
 tb = SimpleTopologyBuilder()
 tb.set_streets_data(Path("input/streets.geojson"))
@@ -93,7 +93,7 @@ lists.
 
 ```python
 from pathlib import Path
-from pypeline.topology_builder.topology_builder import PolygonTopologyBuilder
+from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
 
 tb = PolygonTopologyBuilder()
 tb.set_streets_data(Path("input/streets.geojson"))

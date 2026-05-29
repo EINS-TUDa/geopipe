@@ -9,11 +9,11 @@ from gurobipy import GRB
 from cesm.core.input_parser import Parser
 from cesm.core.model import Model
 
-from pypeline.energy_system import EnergySystem, Scenario
-from pypeline.optimization.cesm.techmap import create_techmap
-from pypeline.optimization.cesm.result_parser import CESMResultsParser, CESMSolution
-from pypeline.optimization.solver import OptimizationBackend
-from pypeline.optimization.resolved_system import resolve_system
+from geopipe.energy_system import EnergySystem, Scenario
+from geopipe.optimization.cesm.techmap import create_techmap
+from geopipe.optimization.cesm.result_parser import CESMResultsParser, CESMSolution
+from geopipe.optimization.solver import OptimizationBackend
+from geopipe.optimization.resolved_system import resolve_system
 
 logger = logging.getLogger(__name__)
 
