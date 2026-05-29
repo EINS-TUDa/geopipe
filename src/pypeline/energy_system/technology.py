@@ -231,7 +231,7 @@ class CentralTechnology(Technology):
         self.capex_cost_power = t.capex_cost_power
         self.capex_cost_base = t.capex_cost_base
         self.max_capacity_per_unit = t.max_capacity_per_unit
-        self._max_capacity = t.max_capacity
+        self._max_capacity = t.max_capacity # is always overwritten by existing capacity for year 0
         self.constrain_location_to_streets = list(t.constrain_location_to_streets)
         self.output_profile_name = output_profile_name if output_profile_name is not None else t.output_profile_name
         self.availability_profile_name = availability_profile_name if availability_profile_name is not None else t.availability_profile_name
@@ -272,13 +272,22 @@ class CentralTechnology(Technology):
                 start_year + self.existing_capacity_retirement_years - 1: self.existing_capacity,
                 start_year + self.existing_capacity_retirement_years: 0.0}
 
-    def max_capacity_per_year(self, start_year: int) -> float | dict[int, float] | None:
+    def max_capacity_per_year(self, start_year: int) -> dict[int, float | None]:
         if self._max_capacity is None:
-            return None
-        if isinstance(self._max_capacity, (int, float)):
-            return self._max_capacity
-        if isinstance(self._max_capacity, dict):
-            return {start_year + year: cap for year, cap in self._max_capacity.items()}
+            return {start_year: self.existing_capacity,
+                    start_year + 1: None}
+        elif isinstance(self._max_capacity, (int, float)):
+            return {start_year: self.existing_capacity,
+                    start_year + 1: self._max_capacity}
+        elif isinstance(self._max_capacity, dict):
+            cap_per_year = {start_year: self.existing_capacity}
+            for year, cap in self._max_capacity.items():
+                if year == 0 and 1 in self._max_capacity:
+                    continue  # start_year+1 is owned by the explicit year-1 entry
+                cap_per_year[start_year + (1 if year == 0 else year)] = cap
+            return cap_per_year
+        else:
+            raise TypeError(f"Invalid type for max_capacity: {type(self._max_capacity)}")
 
 class CHPTechnology(CentralTechnology):
 
