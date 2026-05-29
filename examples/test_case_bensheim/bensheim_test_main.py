@@ -88,7 +88,7 @@ def main():
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
     builder.set_demand_types([residential_heat_demand])
-    builder.set_imports(CASE_DIR / "input_data" / "imports.yaml")
+    builder.set_imports_exports(CASE_DIR / "input_data" / "imports_exports.yaml")
     builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()

@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from ..energy_system.scenario import Scenario
-from ..energy_system.imports import Import
+from ..energy_system.imports_exports import Import, Export
 from ..energy_system.region import Demand
 from ..energy_system.units import Unit
 from ..energy_system.energy_system import EnergySystem
@@ -25,6 +25,7 @@ class ResolvedSystem:
     scenario: Scenario
     units: Unit
     imports: list[Import]
+    exports: list[Export]
     pipe_connections: list[PipeTechnology]
     decentralized_technologies: dict[int, tuple[DecentralTechnology, ...]]  # region id → decentral technologies
     grid_technologies: dict[int, tuple[GridTechnology, ...]]  # region id → grid technologies
@@ -50,6 +51,7 @@ def resolve_system(energy_system: EnergySystem, scenario: Scenario) -> ResolvedS
         scenario = scenario,
         units=energy_system.units,
         imports=energy_system.imports,
+        exports=energy_system.exports,
         pipe_connections=energy_system.pipes,
         decentralized_technologies=decentralized_technologies,
         grid_technologies=grid_technologies,

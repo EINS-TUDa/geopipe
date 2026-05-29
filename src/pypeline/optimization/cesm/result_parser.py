@@ -59,6 +59,7 @@ class CESMResultsParser:
             grids_per_commodity_in=self._build_grids(output_by_name_year),
             pipes_per_commodity_out=self._build_pipes(output_by_name_year),
             imports_per_commodity_out=self._build_imports(output_by_name_year),
+            exports_per_commodity_in=self._build_exports(output_by_name_year),
         )
 
         return CESMSolution(
@@ -290,6 +291,24 @@ class CESMResultsParser:
                 })
 
         return _frames(rows, ["year", "capacity", "energy_output", "new_capacity"])
+
+    def _build_exports(
+        self,
+        output_by_name_year: dict[str, dict[tuple[str, str], dict[int, dict[str, float]]]],
+    ) -> dict[str, pd.DataFrame]:
+        rows: dict[str, list[dict[str, Any]]] = {}
+        # Exports are global (commodity_in un-prefixed, commodity_out="Dummy"); there is no region.
+        for exp in self.energy_system.exports:
+            key = exp.commodity_in
+            for year, vals in self._rows_for(output_by_name_year, exp.name, exp.commodity_in, "Dummy").items():
+                rows.setdefault(key, []).append({
+                    "year": year,
+                    "capacity": vals["cap_active"],
+                    "energy_input": vals["eouttot"],
+                    "new_capacity": vals["cap_new"],
+                })
+
+        return _frames(rows, ["year", "capacity", "energy_input", "new_capacity"])
 
 
 def _frames(

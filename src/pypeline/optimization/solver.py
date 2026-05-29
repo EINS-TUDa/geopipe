@@ -31,6 +31,7 @@ class Results:
     grids_per_commodity_in: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id, capacity, energy_output, new_capacity
     pipes_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, technology, region_id_from, region_id_to, capacity, energy_output, new_capacity
     imports_per_commodity_out: dict[str, pd.DataFrame]  # DF Columns: year, capacity, energy_output, new_capacity
+    exports_per_commodity_in: dict[str, pd.DataFrame]  # DF Columns: year, capacity, energy_input, new_capacity
 
 @dataclass
 class Solution:

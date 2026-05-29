@@ -188,6 +188,13 @@ def write_html_report(
             key_label="Commodity Out",
             renames=renames,
         ),
+        "<h2>Exports (per commodity_in)</h2>",
+        _render_group_section(
+            "Exports",
+            frames=results.exports_per_commodity_in,
+            key_label="Commodity In",
+            renames=renames,
+        ),
         "</body></html>",
     ]
 

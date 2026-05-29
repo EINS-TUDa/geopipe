@@ -27,7 +27,7 @@ can be passed to modern multi investment energy system models via lightweight Py
    │   ◀── set_demand_types([DemandType]) │◀── residential_heat.txt
    │   ◀── set_data_registry(DataRegistry)│◀── heating_shares query
    │   ◀── set_config(ESBConfig)          │
-   │   ◀── set_imports("imports.yaml")    │
+   │   ◀── set_imports_exports(...)       │
    │   ◀── set_unit(UnitEnum.KW)          │
    └────────────────┬─────────────────────┘
                     │ EnergySystem

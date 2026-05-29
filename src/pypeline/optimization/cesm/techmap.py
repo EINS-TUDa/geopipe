@@ -5,13 +5,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from ...energy_system.imports_exports import Import, Export
 from ...energy_system.region import Demand
-from ...energy_system.imports import Import
 from ...energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
     DecentralTechnology, Technology
-from ...optimization.cesm.conversion_sub_process import ConversionSubProcess
-from ...optimization.cesm.units import df_units
-from ...optimization.resolved_system import ResolvedSystem
+from .conversion_sub_process import ConversionSubProcess
+from .units import df_units
+from ..resolved_system import ResolvedSystem
 
 import logging
 
@@ -101,6 +101,18 @@ def _import_to_conversion_sub_process(imp: Import, scenario_name: str, start_yea
         spec_co2=year_dep_value_to_cesm_string(_rebase_relative_years(imp.co2_emissions_ton_per_mwh, start_year)),
         cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_cap_per_year, start_year)),
         max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_energy_out_per_year, start_year)),
+    )
+
+def _export_to_conversion_sub_process(exp: Export, scenario_name: str, start_year: int) -> ConversionSubProcess:
+    return ConversionSubProcess(
+        conversion_process_name=exp.name,
+        commodity_in=exp.commodity_in,
+        commodity_out="Dummy",
+        scenario=scenario_name,
+        opex_cost_energy=year_dep_value_to_cesm_string(_rebase_relative_years(exp.price_eur_per_mwh, start_year)),
+        spec_co2=year_dep_value_to_cesm_string(_rebase_relative_years(exp.co2_emissions_ton_per_mwh, start_year)),
+        cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(exp.max_cap_per_year, start_year)),
+        max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(exp.max_energy_in_per_year, start_year)),
     )
 
 def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, start_year: int) -> ConversionSubProcess:
@@ -238,6 +250,10 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     # imports
     for imp in resolved.imports:
         cs_list.append(_import_to_conversion_sub_process(imp, scenario_name, start_year))
+
+    # exports
+    for exp in resolved.exports:
+        cs_list.append(_export_to_conversion_sub_process(exp, scenario_name, start_year))
 
     # pipes
     for pipe in resolved.pipe_connections:

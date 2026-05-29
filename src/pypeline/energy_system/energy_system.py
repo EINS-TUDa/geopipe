@@ -13,7 +13,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from .imports import Import, load_imports_from_yaml
+from .imports_exports import Import, load_imports_exports_from_yaml, Export
 from .technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
 from .region import compute_region_connections, RegionConnections
 from .demand import DemandType
@@ -41,6 +41,7 @@ class EnergySystem:
     units: Unit
     system_topology: nx.Graph | None = None
     imports: list[Import] = field(default_factory=list)
+    exports: list[Export] = field(default_factory=list)
     pipes: list[PipeTechnology] = field(default_factory=list)
 
     def plot_system_topology(self, output_path: Optional[str | Path] = None) -> None:
@@ -160,6 +161,7 @@ class EnergySystemBuilder:
         self._config: Optional[EnergySystemBuilderConfig] = None
         self._demand_types: list[DemandType] = []
         self._imports: Optional[list[Import]] = None
+        self._exports: Optional[list[Export]] = None
         self.__region_topologies: Optional[dict[int, Topology]] = None
 
     @property
@@ -194,8 +196,8 @@ class EnergySystemBuilder:
         self._demand_types = demand_types
         return self
 
-    def set_imports(self, import_yaml: str | Path):
-        self._imports = load_imports_from_yaml(import_yaml)
+    def set_imports_exports(self, import_yaml: str | Path):
+        self._imports, self._exports = load_imports_exports_from_yaml(import_yaml)
         return self
 
     def set_config(self, config: EnergySystemBuilderConfig):
@@ -582,6 +584,7 @@ class EnergySystemBuilder:
                                      units=self._unit,
                                      system_topology=self._system_topology,
                                      imports=self._imports,
+                                     exports=self._exports,
                                      pipes=pipes
                                      )
         validate_energy_system(energy_system)
@@ -605,7 +608,7 @@ class EnergySystemBuilder:
         if not self._demand_types:
             errors.append("At least one demand type must be added using set_demand_types() or add_demand_types().")
         if self._imports is None:
-            errors.append("Imports must be set using set_imports() with a non-empty imports.yaml")
+            errors.append("Imports must be set using set_imports_exports() with a non-empty imports_exports.yaml")
 
         if isinstance(self._config, EnergySystemBuilderConfig):
             if isinstance(self._system_topology, Topology):
