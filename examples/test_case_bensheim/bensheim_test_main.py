@@ -54,6 +54,8 @@ def main():
         central_tech_existing_capacities={"district_heat_in": {0: [("cen_waste_heat_langnese", 0.6),("cen_gas_boiler", 0.4)],
                                                                "default": [("chp_gas", 0.8),("cen_gas_boiler", 0.2)]}},
         additional_grid_capacity_factor={"heat_grid": 1.1},
+        forced_decentral_technology_share_per_region={2: {"heat_exchanger": 0.8,
+                                                          "ind_oil_boiler": 0.2}},
     )
 
     data_reg = case1_data_registry()

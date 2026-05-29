@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, field_validator
-from .utils import YearDep
+from ._year_dep import YearDep
 
 
 

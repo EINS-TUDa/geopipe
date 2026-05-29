@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import networkx as nx
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -29,6 +29,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 class EnergySystemValidationError(ValueError):
+    pass
+
+class EnergySystemBuilderError(ValueError):
     pass
 
 @dataclass(slots=True)
@@ -118,6 +121,21 @@ class EnergySystemBuilderConfig(BaseSettings):
     street_id_name: str = "street_id"
     #: Factor added to the grid capacity. Dict of grid name to factor. 10 % corresponds to 1.1
     additional_grid_capacity_factor: dict[str, float]
+    #: Forced tech share per region
+    #: region_id → {tech_name: forced_share}
+    #: Region existence, tech registration, commodity matching, and per-commodity sum (≤ 1) are
+    #: enforced in ``EnergySystemBuilder.verify()`` where the technology registry is available.
+    forced_decentral_technology_share_per_region: dict[int, dict[str, float]] = Field(default_factory=dict)
+
+    @field_validator("forced_decentral_technology_share_per_region")
+    @classmethod
+    def _check_forced_shares(cls, value: dict[int, dict[str, float]]) -> dict[int, dict[str, float]]:
+        for region_id, tech_shares in value.items():
+            for tech_name, share in tech_shares.items():
+                if not 0.0 <= share <= 1.0:
+                    raise ValueError(
+                        f"region {region_id} tech '{tech_name}' share {share} is not in [0, 1]")
+        return value
 
     @classmethod
     def settings_customise_sources(
@@ -209,45 +227,74 @@ class EnergySystemBuilder:
             collection.append(demand)
         return collection
 
-    def _process_technology_shares(self, technology_shares_data: dict[str, float], demand: Demand, topology: Topology) \
-            -> dict[str, float]:
+    def _get_forced_technology_shares_for_demand(self, demand: Demand, region_id: int) -> dict[str, float]:
+        """Filter ``forced_decentral_technology_share_per_region[region_id]`` to entries whose tech's ``commodity_out`` matches the demand's ``commodity_in``. Assumes the config has already been validated by ``verify()``."""
+        forced_shares = self._config.forced_decentral_technology_share_per_region.get(region_id, {})
+        return {
+            name: share for name, share in forced_shares.items()
+            if DecentralTechnology.has_type(name)
+            and DecentralTechnology.get_type_defaults(name).get("commodity_out") == demand.demand_type.commodity_in
+        }
+
+    def _process_technology_shares(self, technology_shares_data: dict[str, float],
+                                   demand: Demand, region_id: int) -> dict[str, float]:
         # If technology_shares_data is empty
         if np.isclose(sum(technology_shares_data.values()), 0.0):
             default_tech_name = demand.demand_type.default_decentral_supply_technology
             if default_tech_name is None:
-                raise ValueError(
+                raise EnergySystemBuilderError(
                     f"No default technology configured for demand commodity {demand.demand_type.commodity_in}")
             if not DecentralTechnology.has_type(default_tech_name):
-                raise ValueError(f"Default technology {default_tech_name} for demand commodity "
+                raise EnergySystemBuilderError(f"Default technology {default_tech_name} for demand commodity "
                                  f"{demand.demand_type.commodity_in} is not a valid DecentralTechnology")
             return {default_tech_name: 1.0}
 
         # Apply minimum share thresholds from config
         for name, share in technology_shares_data.items():
             if share < self._config.minimum_decentral_technology_share.get(name, -1):
-                region_id = next(iter(
-                    data.get("id") for _, _, data in topology.graph.edges(data=True) if data.get("id") is not None),
-                    "unknown")
                 logger.info("Share of technology %s for demand %s in region_id %s is below "
                             "the minimum threshold. Skipping.", name, demand.demand_type.name, region_id)
-
                 technology_shares_data[name] = 0
 
-        # Normalize shares to sum to 1 if they don't already
-        total_share = sum(technology_shares_data.values())
-        if not np.isclose(total_share, 1.0):
-            technology_shares_data = {name: share / total_share for name, share in technology_shares_data.items()}
+        # Forced shares from config, or plain normalize if none
+        forced_technology_shares = self._get_forced_technology_shares_for_demand(demand, region_id)
+        if forced_technology_shares:
+            logger.info("Applying forced technology shares for region_id %s: %s", region_id, forced_technology_shares)
+            for name, forced_share in forced_technology_shares.items():
+                technology_shares_data[name] = forced_share
+
+            # Fix forced shares and scale all other shares proportionally so total (forced + others) == 1
+            forced_keys = set(forced_technology_shares.keys())
+            forced_total = sum(technology_shares_data.get(name, 0.0) for name in forced_keys)
+            remaining = 1.0 - forced_total
+            non_forced_keys = [k for k in technology_shares_data.keys() if k not in forced_keys]
+            non_forced_sum = sum(technology_shares_data[k] for k in non_forced_keys)
+
+            if non_forced_sum > 0 and not np.isclose(remaining, 0.0):
+                scale = remaining / non_forced_sum
+                for k in non_forced_keys:
+                    technology_shares_data[k] = technology_shares_data[k] * scale
+            else:
+                # No non-forced share mass to distribute — set remaining non-forced shares to zero.
+                for k in non_forced_keys:
+                    technology_shares_data[k] = 0.0
+
+        else: # Normalize shares to sum to 1 if they don't already
+            total_share = sum(technology_shares_data.values())
+            if not np.isclose(total_share, 1.0):
+                technology_shares_data = {name: share / total_share for name, share in
+                                          technology_shares_data.items()}
 
         return technology_shares_data
 
-    def _build_decentral_technologies(self, topology: Topology, demands: list[Demand]) -> list[DecentralTechnology]:
+    def _build_decentral_technologies(self, topology: Topology, region_id: int, demands: list[Demand]) -> list[DecentralTechnology]:
         decentral_technologies = []
         base_query = {"region": topology.graph, "base_crs": self.base_crs}
         for demand in demands:
             technology_shares_data: dict[str, float] = self._data_registry.query(
                 demand.demand_type.technology_shares_query_params | base_query)
 
-            technology_shares_data = self._process_technology_shares(technology_shares_data, demand, topology)
+            technology_shares_data = self._process_technology_shares(technology_shares_data, demand, region_id)
 
             shares_seen = set()
             for name in DecentralTechnology.registered_type_names():
@@ -261,7 +308,7 @@ class EnergySystemBuilder:
                 shares_seen.add(name)
             for name, share in technology_shares_data.items():
                 if share > 0 and name not in shares_seen:
-                    raise ValueError(f"Non-zero share {share} for technology '{name}' in demand "
+                    raise EnergySystemBuilderError(f"Non-zero share {share} for technology '{name}' in demand "
                                      f"{demand.demand_type.name} cannot be assigned to any DecentralTechnology. "
                                      f"Ensure {demand.demand_type.name} contains valid mappings to a registered "
                                      f"DecentralTechnology. ")
@@ -419,7 +466,7 @@ class EnergySystemBuilder:
         grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
         for region_id, topology in self._region_topologies().items():
             demands_per_region[region_id] = self._build_demands(topology)
-            decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology,
+            decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology, region_id,
                                                                                           demands_per_region[region_id])
             grid_tech_per_region[region_id] = self._build_grids(topology, decentralized_tech_per_region[region_id])
 
@@ -593,6 +640,37 @@ class EnergySystemBuilder:
                             errors.append(
                                 f"{where}: tech '{tech_name}' has commodity_out='{tech_commodity}', "
                                 f"expected '{commodity}'.")
+
+            demand_commodities = {dt.commodity_in for dt in self._demand_types}
+            topology_region_ids = (
+                set(self._region_topologies().keys())
+                if isinstance(self._system_topology, Topology) else None
+            )
+            for region_id, tech_shares in self._config.forced_decentral_technology_share_per_region.items():
+                where = f"forced_decentral_technology_share_per_region[{region_id}]"
+                if topology_region_ids is not None and region_id not in topology_region_ids:
+                    errors.append(
+                        f"{where}: region {region_id} is not part of the topology "
+                        f"(known: {sorted(topology_region_ids)}).")
+                shares_per_commodity: dict[str, float] = {}
+                for tech_name, share in tech_shares.items():
+                    entry = f"{where}['{tech_name}']"
+                    if not DecentralTechnology.has_type(tech_name):
+                        errors.append(f"{entry}: '{tech_name}' is not a registered DecentralTechnology.")
+                        continue
+                    commodity_out = DecentralTechnology.get_type_defaults(tech_name).get("commodity_out")
+                    if commodity_out not in demand_commodities:
+                        errors.append(
+                            f"{entry}: tech has commodity_out='{commodity_out}', but no demand type with "
+                            f"commodity_in='{commodity_out}' is configured "
+                            f"(known: {sorted(demand_commodities)}).")
+                        continue
+                    shares_per_commodity[commodity_out] = shares_per_commodity.get(commodity_out, 0.0) + share
+                for commodity_out, total in shares_per_commodity.items():
+                    if total > 1.0 + 1e-9:
+                        errors.append(
+                            f"{where}: forced shares for commodity_out='{commodity_out}' sum to "
+                            f"{total} > 1.0.")
 
         if errors:
             raise ValueError("Errors in EnergySystemBuilder configuration:\n" + "\n".join(errors))
