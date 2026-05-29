@@ -1,12 +1,12 @@
 # coding=utf-8
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Annotated, Optional
 import numpy as np
 import pandas as pd
 from pathlib import Path
 import networkx as nx
-from pydantic import Field, field_validator
+from pydantic import Field, PositiveFloat
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -96,12 +96,18 @@ def validate_energy_system(es: EnergySystem):
         raise EnergySystemValidationError(error_message)
 
 
+#: A share constrained to the closed interval [0, 1].
+Share = Annotated[float, Field(ge=0.0, le=1.0)]
+#: A grid capacity factor; must be strictly greater than 1 (e.g. 1.1 == +10 %).
+GridCapacityFactor = Annotated[float, Field(gt=1.0)]
+
+
 class EnergySystemBuilderConfig(BaseSettings):
     #: A dict that maps the name of a decentral technology to the minimum share (between 0 and 1) of the total demand
-    minimum_decentral_technology_share: dict[str, float] = Field(default_factory=dict)
+    minimum_decentral_technology_share: dict[str, Share] = Field(default_factory=dict)
     #: Threshold to consider regions connected. Within a connected group, exactly one region acts as the
     #: source for existing-capacity propagation along the MST.
-    considered_connected_region_distance_m: float = np.inf
+    considered_connected_region_distance_m: PositiveFloat = np.inf
     #: Per commodity_out, the list of region ids where central technologies of that commodity are built.
     #: A central tech is instantiated in every listed region whose topology satisfies the tech's
     #: ``constrain_location_to_streets`` (if any). If a connected region group contains no listed region,
@@ -113,7 +119,7 @@ class EnergySystemBuilderConfig(BaseSettings):
     #: ``central_tech_locations_per_commodity`` for the same commodity. Lookup for a source region falls
     #: back to ``"default"``; if neither is configured and the source has positive capacity, an error is
     #: raised.
-    central_tech_existing_capacities: dict[str, dict[int | str, list[tuple[str, float]]]] = Field(
+    central_tech_existing_capacities: dict[str, dict[int | str, list[tuple[str, Share]]]] = Field(
         default_factory=dict)
     #: Name of the ID property on the edges of the topology Graph
     region_id_name: str = "id"
@@ -121,22 +127,12 @@ class EnergySystemBuilderConfig(BaseSettings):
     #: ``constrain_location_to_streets`` for central technologies.
     street_id_name: str = "street_id"
     #: Factor added to the grid capacity. Dict of grid name to factor. 10 % corresponds to 1.1
-    additional_grid_capacity_factor: dict[str, float]
+    additional_grid_capacity_factor: dict[str, GridCapacityFactor]
     #: Forced tech share per region
     #: region_id → {tech_name: forced_share}
     #: Region existence, tech registration, commodity matching, and per-commodity sum (≤ 1) are
     #: enforced in ``EnergySystemBuilder.verify()`` where the technology registry is available.
-    forced_decentral_technology_share_per_region: dict[int, dict[str, float]] = Field(default_factory=dict)
-
-    @field_validator("forced_decentral_technology_share_per_region")
-    @classmethod
-    def _check_forced_shares(cls, value: dict[int, dict[str, float]]) -> dict[int, dict[str, float]]:
-        for region_id, tech_shares in value.items():
-            for tech_name, share in tech_shares.items():
-                if not 0.0 <= share <= 1.0:
-                    raise ValueError(
-                        f"region {region_id} tech '{tech_name}' share {share} is not in [0, 1]")
-        return value
+    forced_decentral_technology_share_per_region: dict[int, dict[str, Share]] = Field(default_factory=dict)
 
     @classmethod
     def settings_customise_sources(
@@ -611,14 +607,39 @@ class EnergySystemBuilder:
             errors.append("Imports must be set using set_imports_exports() with a non-empty imports_exports.yaml")
 
         if isinstance(self._config, EnergySystemBuilderConfig):
-            if isinstance(self._system_topology, Topology):
-                region_ids = set(self._region_topologies().keys())
-                for commodity, regions in self._config.central_tech_locations_per_commodity.items():
+            topology_region_ids = (
+                set(self._region_topologies().keys())
+                if isinstance(self._system_topology, Topology) else None
+            )
+
+            # minimum_decentral_technology_share: keys must be registered DecentralTechnologies.
+            for tech_name in self._config.minimum_decentral_technology_share:
+                if not DecentralTechnology.has_type(tech_name):
+                    errors.append(
+                        f"minimum_decentral_technology_share references '{tech_name}' which is not a "
+                        f"registered DecentralTechnology.")
+
+            # additional_grid_capacity_factor: keys must be registered GridTechnologies.
+            for grid_name in self._config.additional_grid_capacity_factor:
+                if not GridTechnology.has_type(grid_name):
+                    errors.append(
+                        f"additional_grid_capacity_factor references '{grid_name}' which is not a "
+                        f"registered GridTechnology.")
+
+            # central_tech_locations_per_commodity: each commodity must be the commodity_out of some
+            # registered CentralTechnology, and every region id must be part of the topology.
+            for commodity, regions in self._config.central_tech_locations_per_commodity.items():
+                if not CentralTechnology.get_type_names_by_attribute("commodity_out", commodity):
+                    errors.append(
+                        f"central_tech_locations_per_commodity references commodity '{commodity}' which is "
+                        f"not the commodity_out of any registered CentralTechnology.")
+                if topology_region_ids is not None:
                     for region_id in regions:
-                        if region_id not in region_ids:
+                        if region_id not in topology_region_ids:
                             errors.append(
                                 f"central_tech_locations_per_commodity[{commodity!r}] references region id "
-                                f"{region_id} which is not part of the topology (known: {sorted(region_ids)}).")
+                                f"{region_id} which is not part of the topology "
+                                f"(known: {sorted(topology_region_ids)}).")
 
             for commodity, by_region in self._config.central_tech_existing_capacities.items():
                 allowed_regions = set(self._config.central_tech_locations_per_commodity.get(commodity, []))
@@ -645,10 +666,6 @@ class EnergySystemBuilder:
                                 f"expected '{commodity}'.")
 
             demand_commodities = {dt.commodity_in for dt in self._demand_types}
-            topology_region_ids = (
-                set(self._region_topologies().keys())
-                if isinstance(self._system_topology, Topology) else None
-            )
             for region_id, tech_shares in self._config.forced_decentral_technology_share_per_region.items():
                 where = f"forced_decentral_technology_share_per_region[{region_id}]"
                 if topology_region_ids is not None and region_id not in topology_region_ids:
