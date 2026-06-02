@@ -294,12 +294,10 @@ class EnergySystemBuilder:
         decentral_technologies = []
         base_query = {"region": topology.graph, "base_crs": self.base_crs}
         for demand in demands:
-            # Only technologies whose commodity_out matches the demand can supply it. If there are none,
-            # the demand is supplied directly by an import (e.g. electricity via the grid) and there is
-            # no decentral technology to build here.
             matching_tech_names = DecentralTechnology.get_type_names_by_attribute(
                 "commodity_out", demand.demand_type.commodity_in)
             if not matching_tech_names:
+                # directly supplied by import
                 logger.info("No decentral technology produces commodity '%s' for demand '%s' in region_id "
                             "%s; demand is supplied directly by import.",
                             demand.demand_type.commodity_in, demand.demand_type.name, region_id)
