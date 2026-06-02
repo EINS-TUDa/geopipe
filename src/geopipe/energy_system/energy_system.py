@@ -16,7 +16,7 @@ from pydantic_settings import (
 from .imports_exports import Import, load_imports_exports_from_yaml, Export
 from .technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
 from .region import compute_region_connections, RegionConnections
-from .demand import DemandType
+from .demand import DemandType, ExplicitDemandValue
 from ._year_dep import get_earliest_year_value
 from ..data.data_registry import DataRegistry
 from .region import Demand, Region
@@ -207,18 +207,21 @@ class EnergySystemBuilder:
             self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
         return self.__region_topologies
 
-    def _build_demands(self, topology: Topology) -> list[Demand]:
+    def _build_demands(self, topology: Topology, region_id: int) -> list[Demand]:
         collection = []
         for demand_type in self._demand_types:
-            # base_query = {"region": topology, "base_crs": self.base_crs}
+            # A None value means the demand does not exist in this region; the value source
+            # uses this to scope special demands to the regions where they are present.
+            value = demand_type.value_source.value_for_region(region_id, topology)
+            if value is None:
+                continue
+            if not isinstance(value, (int, float)):
+                raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
+
             profile = pd.read_csv(demand_type.profile_path, sep="\s+", decimal=".", header=None)
             if profile is None or profile.empty:
                 raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
             profile = pd.Series(profile.values.ravel())
-
-            value = float(np.nansum(topology.property_from_edges(demand_type.demand_column_name)))
-            if not isinstance(value, (int, float)):
-                raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
 
             # Create a RegionDemand instance
             demand = Demand(demand_type=demand_type, value=value, profile=profile, profile_name=demand_type.name)
@@ -236,16 +239,18 @@ class EnergySystemBuilder:
 
     def _process_technology_shares(self, technology_shares_data: dict[str, float],
                                    demand: Demand, region_id: int) -> dict[str, float]:
-        # If technology_shares_data is empty
+        # If technology_shares_data is empty, fall back to the demand's default supply mix
+        # (a single technology or a {tech: share} mix that sums to 1).
         if np.isclose(sum(technology_shares_data.values()), 0.0):
-            default_tech_name = demand.demand_type.default_decentral_supply_technology
-            if default_tech_name is None:
+            default_shares = demand.demand_type.default_supply_shares()
+            if not default_shares:
                 raise EnergySystemBuilderError(
                     f"No default technology configured for demand commodity {demand.demand_type.commodity_in}")
-            if not DecentralTechnology.has_type(default_tech_name):
-                raise EnergySystemBuilderError(f"Default technology {default_tech_name} for demand commodity "
-                                 f"{demand.demand_type.commodity_in} is not a valid DecentralTechnology")
-            return {default_tech_name: 1.0}
+            for default_tech_name in default_shares:
+                if not DecentralTechnology.has_type(default_tech_name):
+                    raise EnergySystemBuilderError(f"Default technology {default_tech_name} for demand commodity "
+                                     f"{demand.demand_type.commodity_in} is not a valid DecentralTechnology")
+            return dict(default_shares)
 
         # Apply minimum share thresholds from config
         for name, share in technology_shares_data.items():
@@ -289,13 +294,27 @@ class EnergySystemBuilder:
         decentral_technologies = []
         base_query = {"region": topology.graph, "base_crs": self.base_crs}
         for demand in demands:
-            technology_shares_data: dict[str, float] = self._data_registry.query(
-                demand.demand_type.technology_shares_query_params | base_query)
+            # Only technologies whose commodity_out matches the demand can supply it. If there are none,
+            # the demand is supplied directly by an import (e.g. electricity via the grid) and there is
+            # no decentral technology to build here.
+            matching_tech_names = DecentralTechnology.get_type_names_by_attribute(
+                "commodity_out", demand.demand_type.commodity_in)
+            if not matching_tech_names:
+                logger.info("No decentral technology produces commodity '%s' for demand '%s' in region_id "
+                            "%s; demand is supplied directly by import.",
+                            demand.demand_type.commodity_in, demand.demand_type.name, region_id)
+                continue
+
+            if demand.demand_type.technology_shares_query_params is None:
+                technology_shares_data: dict[str, float] = {}
+            else:
+                technology_shares_data = self._data_registry.query(
+                    demand.demand_type.technology_shares_query_params | base_query)
 
             technology_shares_data = self._process_technology_shares(technology_shares_data, demand, region_id)
 
             shares_seen = set()
-            for name in DecentralTechnology.registered_type_names():
+            for name in matching_tech_names:
                 share = technology_shares_data.get(name, 0.0)
                 existing_capacity = share * demand.peak(
                     year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
@@ -463,7 +482,7 @@ class EnergySystemBuilder:
         decentralized_tech_per_region: dict[int, list[DecentralTechnology]] = {}
         grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
         for region_id, topology in self._region_topologies().items():
-            demands_per_region[region_id] = self._build_demands(topology)
+            demands_per_region[region_id] = self._build_demands(topology, region_id)
             decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology, region_id,
                                                                                           demands_per_region[region_id])
             grid_tech_per_region[region_id] = self._build_grids(topology, decentralized_tech_per_region[region_id])
@@ -605,6 +624,51 @@ class EnergySystemBuilder:
             errors.append("At least one demand type must be added using set_demand_types() or add_demand_types().")
         if self._imports is None:
             errors.append("Imports must be set using set_imports_exports() with a non-empty imports_exports.yaml")
+
+        # DemandType validation: supplying technologies and explicit-value region scoping.
+        demand_region_ids = (
+            set(self._region_topologies().keys())
+            if isinstance(self._system_topology, Topology) else None
+        )
+        import_commodities = {imp.commodity_out for imp in self._imports} if self._imports else set()
+        for demand_type in self._demand_types:
+            where = f"DemandType '{demand_type.name}'"
+            # The demand commodity must be suppliable: either by a decentral technology
+            # (e.g. a boiler/heat exchanger) or directly by an import (e.g. electricity via the grid).
+            suppliable_by_tech = bool(
+                DecentralTechnology.get_type_names_by_attribute("commodity_out", demand_type.commodity_in))
+            suppliable_by_import = demand_type.commodity_in in import_commodities
+            if not suppliable_by_tech and not suppliable_by_import:
+                errors.append(
+                    f"{where}: commodity '{demand_type.commodity_in}' is neither the commodity_out of any "
+                    f"registered DecentralTechnology nor of any import, so the demand cannot be supplied.")
+            # When the demand is supplied by decentral technologies and has no census shares, a default
+            # supply mix is required to seed their existing capacity. Import-only demands (no matching
+            # decentral tech) need no default.
+            if (suppliable_by_tech and demand_type.technology_shares_query_params is None
+                    and not demand_type.default_supply_shares()):
+                errors.append(
+                    f"{where}: default_decentral_supply_technology is required when "
+                    f"technology_shares_query_params is None and the commodity is supplied by decentral "
+                    f"technologies.")
+            # Default supply technologies must be registered and match the demand commodity.
+            for tech_name in demand_type.default_supply_shares():
+                if not DecentralTechnology.has_type(tech_name):
+                    errors.append(f"{where}: default_decentral_supply_technology '{tech_name}' is not a "
+                                  f"registered DecentralTechnology.")
+                    continue
+                commodity_out = DecentralTechnology.get_type_defaults(tech_name).get("commodity_out")
+                if commodity_out != demand_type.commodity_in:
+                    errors.append(
+                        f"{where}: default supply tech '{tech_name}' has commodity_out='{commodity_out}', "
+                        f"expected '{demand_type.commodity_in}'.")
+            # ExplicitDemandValue region keys must exist in the topology.
+            if isinstance(demand_type.value_source, ExplicitDemandValue) and demand_region_ids is not None:
+                for region_id in demand_type.value_source.value_per_region:
+                    if region_id not in demand_region_ids:
+                        errors.append(
+                            f"{where}: value_source references region id {region_id} which is not part of the "
+                            f"topology (known: {sorted(demand_region_ids)}).")
 
         if isinstance(self._config, EnergySystemBuilderConfig):
             topology_region_ids = (

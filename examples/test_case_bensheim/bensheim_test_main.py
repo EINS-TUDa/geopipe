@@ -2,7 +2,7 @@ from pathlib import Path
 
 from compare_techmaps import compare_techmaps
 from geopipe.data.dataset import CensusTechnology
-from geopipe.energy_system.demand import DemandType
+from geopipe.energy_system.demand import DemandType, ColumnDemandValue, ExplicitDemandValue
 from geopipe.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
 from geopipe.energy_system import Scenario
 from geopipe.energy_system import register_technologies
@@ -68,7 +68,7 @@ def main():
                        commodity_in="residential_heat",
                        cooperation_of_technologies=False,
                        profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
-                       demand_column_name="waerme_mwh",
+                       value_source=ColumnDemandValue(column_name="waerme_mwh"),
                        technology_shares_query_params={
                            "key": "heating_shares",
                            "name_mapping": {
@@ -86,11 +86,25 @@ def main():
                        default_decentral_supply_technology="ind_oil_boiler",
                        decrease_percent_per_year=0)
 
+    # Special demand: a known swimming-pool heat demand that exists only in specific regions.
+    # Its value is given explicitly (per region), it has no census data, so the existing supply
+    # mix is given via default_decentral_supply_technology. The optimizer is still free to build
+    # any technology whose commodity_out is "pool_heat" (incl. the district route).
+    pool_heat_demand = DemandType(name="pool_heat",
+                       commodity_in="pool_heat",
+                       cooperation_of_technologies=False,
+                       profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
+                       value_source=ExplicitDemandValue(value_per_region={0: 800.0}),
+                       technology_shares_query_params=None,
+                       default_decentral_supply_technology=[("pool_heat_pump", 0.6),
+                                                            ("pool_gas_boiler", 0.4)],
+                       decrease_percent_per_year=0)
+
     builder = EnergySystemBuilder(energy_system_name="Case1")
     builder.set_system_topology(topology_result.network)
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
-    builder.set_demand_types([residential_heat_demand])
+    builder.set_demand_types([residential_heat_demand, pool_heat_demand])
     builder.set_imports_exports(CASE_DIR / "input_data" / "imports_exports.yaml")
     builder.set_unit(UnitEnum.KW)
 
@@ -101,8 +115,8 @@ def main():
     solution = backend.solve(energy_system, scenario, lp_file=False)
 
     solution.save(path=CASE_DIR / "output_data")
-    # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
-    # compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
+    solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
+    compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.energy_system.plot_system_topology()
     solution.plot_grid(grid_name="heat_grid", year=2030, metric="energy_output")

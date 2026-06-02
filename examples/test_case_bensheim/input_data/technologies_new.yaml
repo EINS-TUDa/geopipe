@@ -59,6 +59,38 @@ decentralized:
     capex_cost_power: 1930
     existing_capacity_phase_out_years: 15
 
+  # --- Technologies that can supply the special "pool_heat" demand ---
+  # A technology can supply the pool_heat demand iff its commodity_out is pool_heat.
+  pool_heat_pump:
+    commodity_in: electricity
+    commodity_out: pool_heat
+    efficiency: 4.2
+    technical_lifetime: 18
+    opex_cost_energy: 0
+    opex_cost_power: 13
+    capex_cost_power: 5200
+    existing_capacity_phase_out_years: 20
+
+  pool_gas_boiler:
+    commodity_in: gas
+    commodity_out: pool_heat
+    efficiency: 0.94
+    technical_lifetime: 20
+    opex_cost_energy: 0
+    opex_cost_power: 5
+    capex_cost_power: 1620
+    existing_capacity_phase_out_years: 10
+
+  heat_exchanger_pool:
+    commodity_in: district_heat_out
+    commodity_out: pool_heat
+    efficiency: 0.99
+    technical_lifetime: 25
+    opex_cost_energy: 0
+    opex_cost_power: 1
+    capex_cost_power: 1930
+    existing_capacity_phase_out_years: 15
+
 
 central:
 

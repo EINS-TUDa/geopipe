@@ -1,17 +1,47 @@
 # DemandType
 
 A `DemandType` describes **one demand commodity per region** — its
-hourly load shape, the column in `streets_data` that holds the annual
-total, and how the demand is split across decentralised supply
-technologies. The `EnergySystemBuilder` consumes a list of
-`DemandType`s; one `DemandType` typically covers a whole demand class
-(e.g. all residential heat) across all regions.
+hourly load shape, where its annual total comes from (a *value source*),
+and how the demand is split across decentralised supply technologies.
+The `EnergySystemBuilder` consumes a list of `DemandType`s; one
+`DemandType` typically covers a whole demand class (e.g. all residential
+heat). A demand is built in a region only where its value source yields a
+value there, so the same mechanism covers both system-wide demands and
+localised "special" demands (e.g. a single swimming pool).
+
+## Which technologies can supply a demand
+
+A technology can supply a demand **if its `commodity_out` equals the
+demand's `commodity_in`**. To add a special demand, give it its own
+commodity and register technologies that produce it:
+
+```yaml
+decentralized:
+  pool_heat_pump:      { commodity_in: electricity,       commodity_out: pool_heat, ... }
+  heat_exchanger_pool: { commodity_in: district_heat_out, commodity_out: pool_heat, ... }  # district route
+```
+
+The optimizer then chooses among all commodity-matched candidates
+(decentral units and, via shared grid commodities, the district route).
+A demand may also be satisfied directly by an `Import` whose
+`commodity_out` matches (e.g. electricity demand served from the grid).
+
+## Value sources
+
+The annual total per region is resolved by a `DemandValueSource`:
+
+- **`ColumnDemandValue(column_name=...)`** — sums an (extensive) column of
+  `streets_data` over the region's edges (the classic, data-driven case).
+- **`ExplicitDemandValue(value_per_region={region_id: value})`** — explicit
+  per-region values; the mapping keys also **scope** the demand to those
+  regions. Use this for special demands whose value is known up front; a
+  data-derived source can replace it later without changing the builder.
 
 ## Constructor
 
 ```python
 from pathlib import Path
-from geopipe.energy_system.demand import DemandType
+from geopipe.energy_system.demand import DemandType, ColumnDemandValue, ExplicitDemandValue
 from geopipe.data.dataset import CensusTechnology
 
 residential_heat = DemandType(
@@ -19,7 +49,7 @@ residential_heat = DemandType(
     commodity_in="residential_heat",
     cooperation_of_technologies=False,
     profile_path=Path("input/residential_heat.txt"),
-    demand_column_name="waerme_mwh",
+    value_source=ColumnDemandValue(column_name="waerme_mwh"),
     technology_shares_query_params={
         "key": "heating_shares",
         "name_mapping": {
@@ -37,17 +67,30 @@ residential_heat = DemandType(
     default_decentral_supply_technology="ind_oil_boiler",
     decrease_percent_per_year=0,
 )
+
+# A special demand: known value, no census data, served by a fixed share mix.
+pool_heat = DemandType(
+    name="pool_heat",
+    commodity_in="pool_heat",
+    cooperation_of_technologies=False,
+    profile_path=Path("input/pool_heat.txt"),
+    value_source=ExplicitDemandValue(value_per_region={0: 800.0}),  # MWh/yr; also the scope
+    technology_shares_query_params=None,                            # no census data
+    default_decentral_supply_technology=[("pool_heat_pump", 0.6),
+                                         ("pool_gas_boiler", 0.4)],
+    decrease_percent_per_year=0,
+)
 ```
 
 | Argument                              | Meaning                                                                                                                                                  |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`                                | Identifier; appears in plots and report output.                                                                                                          |
-| `commodity_in`                        | Commodity that satisfies the demand (must match a registered technology's `commodity_out`).                                                              |
+| `commodity_in`                        | Commodity that satisfies the demand (must match a registered technology's `commodity_out`, or an import's).                                              |
 | `cooperation_of_technologies`         | `True` → all decentralised techs share a common load shape; `False` → each tech sees its own profile.                                                    |
 | `profile_path`                        | Path to a normalised hourly profile (see below).                                                                                                         |
-| `demand_column_name`                  | Column in the `streets_data` GeoDataFrame that holds the **annual demand per street** (e.g. `waerme_mwh` in kWh).                                        |
-| `technology_shares_query_params`      | Dict forwarded to `DataRegistry.query()` to obtain the share of each tech in a region. Must include a `key` (e.g. `"heating_shares"`).                   |
-| `default_decentral_supply_technology` | Tech to fall back on when the data-registry query returns no usable shares.                                                                              |
+| `value_source`                        | `ColumnDemandValue` (sum of a `streets_data` column) or `ExplicitDemandValue` (per-region values, which also scope the demand).                          |
+| `technology_shares_query_params`      | Dict forwarded to `DataRegistry.query()` for per-tech shares (must include a `key`). `None` for demands without census data — see the default below.     |
+| `default_decentral_supply_technology` | Existing-mix fallback when no census shares are available: a single tech name, or a `[(tech_name, share), ...]` mix whose shares sum to 1. **Required when `technology_shares_query_params` is `None`** (Pydantic-validated). |
 | `decrease_percent_per_year`           | Linear annual decline applied to demand (e.g. `1` = −1 %/yr).                                                                                            |
 
 ### `profile_path` file
