@@ -317,9 +317,12 @@ class EnergySystemBuilder:
                 existing_capacity = share * demand.peak(
                     year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
                 existing_energy_output = share * demand.value(0)
+                output_profile_path = None
+                if not demand.demand_type.cooperation_of_technologies:
+                    output_profile_path = demand.demand_type.profile_path
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
                                                                   existing_energy_output=existing_energy_output,
-                                                                  output_profile_name=demand.profile_name))
+                                                                  output_profile_path=output_profile_path))
                 shares_seen.add(name)
             for name, share in technology_shares_data.items():
                 if share > 0 and name not in shares_seen:
