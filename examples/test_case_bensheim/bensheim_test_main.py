@@ -86,13 +86,9 @@ def main():
                        default_decentral_supply_technology="ind_oil_boiler",
                        decrease_percent_per_year=0)
 
-    # Special demand: a known swimming-pool heat demand that exists only in specific regions.
-    # Its value is given explicitly (per region), it has no census data, so the existing supply
-    # mix is given via default_decentral_supply_technology. The optimizer is still free to build
-    # any technology whose commodity_out is "pool_heat" (incl. the district route).
     pool_heat_demand = DemandType(name="pool_heat",
                        commodity_in="pool_heat",
-                       cooperation_of_technologies=False,
+                       cooperation_of_technologies=True,
                        profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
                        value_source=ExplicitDemandValue(value_per_region={0: 800.0}),
                        technology_shares_query_params=None,

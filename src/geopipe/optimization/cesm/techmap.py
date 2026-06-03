@@ -140,11 +140,12 @@ def _demand_to_conversion_sub_process(
         commodity_out="Dummy",
         scenario=scenario_name,
         min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years)),
-        output_profile=demand.profile_name,
+        output_profile=demand.demand_type.profile_path.stem,
     )
 
 def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str,
                                                   start_year: int) -> ConversionSubProcess:
+    output_profile = tech.output_profile_path.stem if tech.output_profile_path else None
     return ConversionSubProcess(
         conversion_process_name=f"{tech.name}_D{region_id}",
         commodity_in=commodity_name(tech.commodity_in, region_id),
@@ -158,7 +159,7 @@ def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, reg
         cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
         cap_res_max=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
         cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
-        output_profile=tech.output_profile_name,
+        output_profile=output_profile,
     )
 
 def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_name: str, start_year: int) -> ConversionSubProcess:
