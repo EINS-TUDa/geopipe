@@ -210,10 +210,10 @@ class EnergySystemBuilder:
     def _build_demands(self, topology: Topology, region_id: int) -> list[Demand]:
         collection = []
         for demand_type in self._demand_types:
-            # A None value means the demand does not exist in this region; the value source
-            # uses this to scope special demands to the regions where they are present.
+            # A None or zero value means the demand does not exist in this region; the value
+            # source uses this to scope special demands to the regions where they are present.
             value = demand_type.value_source.value_for_region(region_id, topology)
-            if value is None:
+            if value is None or value == 0:
                 continue
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")

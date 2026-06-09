@@ -90,7 +90,7 @@ pool_heat = DemandType(
 | `profile_path`                        | Path to a normalised hourly profile (see below).                                                                                                         |
 | `value_source`                        | `ColumnDemandValue` (sum of a `streets_data` column) or `ExplicitDemandValue` (per-region values, which also scope the demand).                          |
 | `technology_shares_query_params`      | Dict forwarded to `DataRegistry.query()` for per-tech shares (must include a `key`). `None` for demands without census data — see the default below.     |
-| `default_decentral_supply_technology` | Existing-mix fallback when no census shares are available: a single tech name, or a `[(tech_name, share), ...]` mix whose shares sum to 1. **Required when `technology_shares_query_params` is `None`** (Pydantic-validated). |
+| `default_decentral_supply_technology` | Existing-mix fallback when no census shares are available: a single tech name, or a `[(tech_name, share), ...]` mix whose shares sum to 1. **Required when `technology_shares_query_params` is `None` and the commodity is supplied by decentral technologies** (not needed for import-only demands). Validated at `.build()`. |
 | `decrease_percent_per_year`           | Linear annual decline applied to demand (e.g. `1` = −1 %/yr).                                                                                            |
 
 ### `profile_path` file

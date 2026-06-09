@@ -18,7 +18,7 @@ class DemandValueSource(BaseModel):
     """Resolves the annual demand value of a :class:`DemandType` in a given region.
 
     Subclasses implement :meth:`value_for_region`. Returning ``None`` (or a
-    non-positive value) means the demand does not exist in that region, so the
+    zero value) means the demand does not exist in that region, so the
     builder skips it there. This is what scopes a "special" demand to the
     regions where it is actually present.
     """
