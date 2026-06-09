@@ -6,6 +6,9 @@ file, and an `EnergySystemBuilderConfig`. The builder uses fluent setters and
 a final `.build()` that returns the assembled system, ready to be
 passed to an optimisation backend.
 
+## Logic
+![logic_energy_system_builder.svg](..%2Flogic_energy_system_builder.svg)
+
 ## API
 
 ### Constructor

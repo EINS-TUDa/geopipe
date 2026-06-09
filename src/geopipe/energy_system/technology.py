@@ -156,7 +156,7 @@ class DecentralTechnology(Technology):
     def __init__(self, name: str,
                  existing_capacity: float = 0.0,
                  existing_energy_output: float = 0.0,
-                 output_profile_name: Optional[str] = None):
+                 output_profile_path: Optional[Path] = None):
         super().__init__(name)
         t = cast(DecentralTechType, type(self)._get_registered_type(name))
 
@@ -170,7 +170,7 @@ class DecentralTechnology(Technology):
 
         self.existing_capacity = existing_capacity
         self.existing_energy_output = existing_energy_output
-        self.output_profile_name = output_profile_name
+        self.output_profile_path = output_profile_path
 
         # Years from model start by which existing_capacity has decreased linearly to 0.
         # Only required when existing_capacity is non-zero.

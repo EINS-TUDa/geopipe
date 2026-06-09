@@ -64,7 +64,6 @@ pygments==2.19.2
 pymdown-extensions==10.21
 pyogrio==0.11.1
 pyparsing==3.2.5
--e file:///C:/Users/Carolin%20Ayasse/Documents/mycode/data_pipeline_esm
 pyproj==3.7.2
 pyqt6==6.11.0
 pyqt6-qt6==6.11.0
