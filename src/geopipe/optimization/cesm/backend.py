@@ -3,6 +3,7 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
+from typing import Optional
 
 from gurobipy import GRB
 
@@ -48,7 +49,7 @@ class CESMOptimizationBackend(OptimizationBackend):
         self.timeseries_dir.mkdir(parents=True, exist_ok=True)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def solve(self, energy_system: EnergySystem, scenario: Scenario, lp_file: bool = False) -> CESMSolution:
+    def solve(self, energy_system: EnergySystem, scenario: Scenario, mip_gap: Optional[float] = None, lp_file: bool = False) -> CESMSolution:
         run_name = f"{energy_system.name}_{scenario.name}"
         db_path = self.output_dir / f"{run_name}.sqlite"
 
@@ -56,10 +57,10 @@ class CESMOptimizationBackend(OptimizationBackend):
         techmap = create_techmap(resolved)
         techmap.to_excel(self.output_dir / f"{run_name}.xlsx")
 
-        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path, run_name=run_name, lp_file=lp_file)
+        self._run_cesm(energy_system_name = energy_system.name, scenario_name=scenario.name, db_path=db_path, run_name=run_name, mip_gap=mip_gap, lp_file=lp_file)
         return CESMResultsParser(db_path=db_path, energy_system=energy_system, scenario=scenario).parse()
 
-    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path, run_name: str, lp_file: bool) -> None:
+    def _run_cesm(self, energy_system_name: str, scenario_name: str, db_path: Path, run_name: str, mip_gap: Optional[float], lp_file: bool) -> None:
         start = time.perf_counter()
         logger.info("Running CESM optimization for energy system '%s', scenario '%s'", energy_system_name, scenario_name)
         conn = sqlite3.connect(":memory:")
@@ -71,7 +72,7 @@ class CESMOptimizationBackend(OptimizationBackend):
             model.model.write(str(lp_path))
             logger.info("Wrote CESM model LP file: %s", lp_path)
 
-        model.solve()
+        model.solve(mip_gap=mip_gap)
 
         grb_model = getattr(model, "model", None)
         status = int(getattr(grb_model, "Status", -1))

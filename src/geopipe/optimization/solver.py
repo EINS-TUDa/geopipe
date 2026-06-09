@@ -92,6 +92,6 @@ class Solution:
 
 class OptimizationBackend(ABC):
     @abstractmethod
-    def solve(self, energy_system: EnergySystem, scenario: Scenario) -> Solution:
+    def solve(self, energy_system: EnergySystem, scenario: Scenario, mip_gap: Optional[float] = None) -> Solution:
         """Run the optimization and return a Solution."""
         ...

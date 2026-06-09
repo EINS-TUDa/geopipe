@@ -61,7 +61,7 @@ wheels = [
 [[package]]
 name = "cesm"
 version = "0.0.9"
-source = { git = "https://github.com/EINS-TUDa/CESM.git?rev=397c405#397c405a11d72bf1d7e26cd35ecf4c8306b17fd8" }
+source = { git = "https://github.com/EINS-TUDa/CESM.git?rev=418e122#418e122f086806b870a1b61d8a7c8cf5b416aa30" }
 dependencies = [
     { name = "click" },
     { name = "gurobipy" },
@@ -263,7 +263,7 @@ wheels = [
 
 [[package]]
 name = "geopipe"
-version = "1.1.0"
+version = "1.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -315,7 +315,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "certifi", specifier = ">=2025.4.26" },
-    { name = "cesm", git = "https://github.com/EINS-TUDa/CESM.git?rev=397c405" },
+    { name = "cesm", git = "https://github.com/EINS-TUDa/CESM.git?rev=418e122" },
     { name = "charset-normalizer", specifier = ">=3.4.2" },
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "contextily", specifier = ">=1.7.0" },

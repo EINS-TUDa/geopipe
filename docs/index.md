@@ -71,7 +71,7 @@ arguments, and the input-file format.
 | Build           | [`EnergySystemBuilder`][esb]                  | Fluent builder; `.build()` returns the `EnergySystem`.                          |
 | Build           | [`UnitEnum`][esb]                             | Energy-unit selector for the built system (e.g. `UnitEnum.KW`).                 |
 | Solve           | `Scenario`                                    | Years, time-step, time-series-set, CO₂ limit, year gap.                         |
-| Solve           | `CESMOptimizationBackend`                     | Wraps CESM/Gurobi. `.solve(energy_system, scenario)` → `Solution`.              |
+| Solve           | `CESMOptimizationBackend`                     | Wraps CESM/Gurobi. `.solve(energy_system, scenario, mip_gap=None, lp_file=False)` → `Solution`. `mip_gap` sets the relative MIP optimality gap (e.g. `0.01` = 1 %; `None` uses the solver default); `lp_file=True` writes the model `.lp` for debugging. |
 | Solve           | `Solution`                                    | `.save`, `.write_html_report`, `.plot_grid`, `.plot_decentral_shares`, …        |
 
 [tb]:   Components/topology_builder.md
