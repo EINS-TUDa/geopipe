@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The region-connectivity check now reports the number of connected segment groups and the street IDs not connected to the main group, and aggregates failures across all regions instead of raising on the first.
 - The polygon builder now collects and reports all streets that lie within multiple polygons (by street ID) instead of raising on the first one.
 - CESM solving: the techmap now writes a `UnitMW` units sheet, scaling power, energy, money and CO₂ down by a factor of 1000 to improve numerical conditioning and reduce solving times. Results are unscaled on parse, so reported values and units are unchanged.
+- CESM version: updated to new version with decreased big-M value
 
 [1.1.2]: https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/-/compare/1.1.1...1.1.2
 
