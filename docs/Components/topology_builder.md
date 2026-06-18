@@ -13,6 +13,14 @@ multiple segments (e.g. the heat demand of a 200 m segment cut into
 80 m + 120 m). Intensive columns (densities, temperatures) are left
 untouched.
 
+Before regions are assigned, streets are **divided at junctions** (on by
+default, see `set_divide_at_junctions`): where one street ends on the
+*interior* of another the crossed street gains a vertex at that point, so
+the two share a graph node instead of being geometrically touching but
+graph-disconnected. The crossed street's extensive columns are split
+across the resulting sub-segments by length share when the network is
+built.
+
 ### `streets.geojson` (shared input)
 
 User-supplied, required by both builders. Must contain a geometry
@@ -33,9 +41,10 @@ and want full control without relying on geometry.
 
 | Setter | Type | Default | Description |
 |---|---|---|---|
-| `set_streets_data` | `GeoDataFrame` or `Path` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. |
+| `set_streets_data` | `GeoDataFrame` or `Path`, `id_column: str` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. `id_column` names a stable per-street identifier used in diagnostics (the row index is reset during cleaning). |
 | `set_grouping` | `dict` or `Path` | — (required) | Region grouping (see `region_grouping.yaml` below). A `Path` is loaded as YAML. |
 | `set_extensive_columns` | `list[str]` | `[]` | Length-additive columns to rescale when streets are split. |
+| `set_divide_at_junctions` | `enabled: bool`, `tol: float` | `True`, `1e-6` | Split segments where another street's vertex meets their interior so the streets share a graph node. `tol` is the max distance (CRS units) for a vertex to count as on a segment. |
 | `set_region_id_column` | `str` | `"region"` | Name of the column written into `streets` carrying the region ID. |
 | `set_default_region` | `Any` | `None` | Value assigned to streets that match no group. |
 | `set_default_regions_in_topology` | `bool` | `False` | If `True`, edges in the default region are included in `region_topologies`. |
@@ -45,7 +54,7 @@ from pathlib import Path
 from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder
 
 tb = SimpleTopologyBuilder()
-tb.set_streets_data(Path("input/streets.geojson"))
+tb.set_streets_data(Path("input/streets.geojson"), id_column="street_id")
 tb.set_extensive_columns(["waerme_mwh"])
 tb.set_grouping(Path("input/region_grouping.yaml"))
 result = tb.build()
@@ -82,10 +91,11 @@ lists.
 
 | Setter | Type | Default | Description |
 |---|---|---|---|
-| `set_streets_data` | `GeoDataFrame` or `Path` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. |
+| `set_streets_data` | `GeoDataFrame` or `Path`, `id_column: str` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. `id_column` names a stable per-street identifier used in diagnostics (the row index is reset during cleaning). |
 | `set_polygons_data` | `GeoDataFrame` or `Path` | — (required) | Polygon layer defining the regions (see `polygons.geojson` below). |
 | `set_region_id_column` | `str` | `"region"` | Column on `polygons_data` carrying the region ID; also the column written into `streets`. |
 | `set_extensive_columns` | `list[str]` | `[]` | Length-additive columns to rescale when streets are split at polygon boundaries. |
+| `set_divide_at_junctions` | `enabled: bool`, `tol: float` | `True`, `1e-6` | Split segments where another street's vertex meets their interior so the streets share a graph node. `tol` is the max distance (CRS units) for a vertex to count as on a segment. |
 | `set_streets_geometry_column_name` | `str` | auto-detects `"geometry"` / `"geom"` | Geometry column name on `streets_data`. |
 | `set_polygons_geometry_column_name` | `str` | auto-detects `"geometry"` / `"geom"` | Geometry column name on `polygons_data`. |
 | `set_default_region` | `Any` | `None` | Value assigned to streets that fall in no polygon. |
@@ -96,7 +106,7 @@ from pathlib import Path
 from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
 
 tb = PolygonTopologyBuilder()
-tb.set_streets_data(Path("input/streets.geojson"))
+tb.set_streets_data(Path("input/streets.geojson"), id_column="street_id")
 tb.set_region_id_column("id")
 tb.set_extensive_columns(["waerme_mwh"])
 tb.set_polygons_data(Path("input/polygons.geojson"))
