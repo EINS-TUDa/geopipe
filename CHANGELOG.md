@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-06-18
+
+### Added
+- Street-network cleaning step in the topology builders, run before region assignment:
+  - **Junction division** (`set_divide_at_junctions(enabled, tol)`, off by default): where a street meets another at a T-junction or crosses it mid-segment — geometrically touching but graph-disconnected — the crossed street is split at the meeting point so the two share a graph node. Each piece becomes its own row and its extensive columns are split by length share.
+  - **Dead-end gap closing** (`set_gap_distance`, opt-in): bridge a dead-end to the nearest unconnected street within a search radius (CRS units).
+  - **Isolated-segment dropping** (`set_drop_isolated_null_segments`, opt-in): drop still-isolated segments whose extensive columns are all NULL (no demand).
+- `set_topology_connections_check(enabled)` to disable the per-region connectivity check.
+- `id_column` parameter on `set_streets_data`, naming a stable per-street identifier surfaced in diagnostics.
+
+### Changed
+- **Breaking:** `set_streets_data` now requires an `id_column` argument.
+- **Breaking:** building now raises (instead of warning) when no extensive columns are configured.
+- The region-connectivity check now reports the number of connected segment groups and the street IDs not connected to the main group, and aggregates failures across all regions instead of raising on the first.
+- The polygon builder now collects and reports all streets that lie within multiple polygons (by street ID) instead of raising on the first one.
+- CESM solving: the techmap now writes a `UnitMW` units sheet, scaling power, energy, money and CO₂ down by a factor of 1000 to improve numerical conditioning and reduce solving times. Results are unscaled on parse, so reported values and units are unchanged.
+
+[1.1.2]: https://git.rwth-aachen.de/carolin.ayasse/data_pipeline_esm/-/compare/1.1.1...1.1.2
+
 ## [1.1.1] - 2026-06-09
 
 ### Added

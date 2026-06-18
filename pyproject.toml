@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geopipe"
-version = "1.1.1"
+version = "1.1.2"
 description = "Geographical energy system modelling data Pipeline"
 authors = [
     {name = "Carolin Ayasse", email = "carolin.ayasse@eins.tu-darmstadt.de"},
