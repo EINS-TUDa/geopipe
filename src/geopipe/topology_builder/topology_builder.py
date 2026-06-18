@@ -83,7 +83,7 @@ class TopologyBuilder(ABC):
     def set_divide_at_junctions(self, enabled: bool, tol: float = 1e-6) -> Self:
         """Split segments at junctions and true mid-segment crossings.
 
-        Enabled by default. A street touching another at a T-junction, or crossing it
+        Disabled by default. A street touching another at a T-junction, or crossing it
         mid-segment, is geometrically connected but graph-disconnected; this cuts the
         crossed street at the meeting point so the streets share a graph node. Each
         resulting piece becomes its own row with a distinct id (``100<id>``, ``200<id>``,
@@ -123,9 +123,9 @@ class TopologyBuilder(ABC):
         """Divide segments at junctions, close dead-end gaps and drop demand-less
         isolated segments.
 
-        Junction division (:meth:`set_divide_at_junctions`, on by default) always runs
-        first so a street touching another at a T-/X-junction shares a graph node, and so
-        gap closing does not mistake such an already-connected endpoint for a dead-end.
+        Junction division (:meth:`set_divide_at_junctions`, off by default) runs first
+        when enabled, so a street touching another at a T-/X-junction shares a graph node,
+        and so gap closing does not mistake such an already-connected endpoint for a dead-end.
         Gap closing and isolated-segment dropping are opt-in (:meth:`set_gap_distance` and
         :meth:`set_drop_isolated_null_segments`). Runs before region assignment so regions
         are derived from the cleaned geometry.
