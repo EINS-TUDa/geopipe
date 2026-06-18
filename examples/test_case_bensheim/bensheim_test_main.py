@@ -24,7 +24,7 @@ project_root = CASE_DIR.parents[1]
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.FileHandler(filename=str(CASE_DIR / "output_data" / "output.log"), mode="a"),
+    handlers=[logging.FileHandler(filename=str(CASE_DIR / "output_data" / "output.log"), mode="w"),
         logging.StreamHandler()])
 
 logging.getLogger("geopipe").setLevel(logging.INFO)
@@ -33,7 +33,7 @@ logging.getLogger("cesm").setLevel(logging.INFO)
 
 
 def main():
-    streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand.geojson",
+    streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand_corrected.geojson",
                                        modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
 
     # topology_builder = SimpleTopologyBuilder()
@@ -44,10 +44,12 @@ def main():
     # topology_result = topology_builder.build()
 
     topology_builder = PolygonTopologyBuilder()
-    topology_builder.set_streets_data(streets_data)
+    topology_builder.set_streets_data(streets_data, id_column="fid")
     topology_builder.set_region_id_column("id")
     topology_builder.set_extensive_columns(["waerme_mwh"])
-    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "8_polygons.geojson")
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "Polygone_034.geojson")
+    topology_builder.set_topology_connections_check(False)
+
     topology_result = topology_builder.build()
 
     esb_cfg = EnergySystemBuilderConfig(
@@ -106,7 +108,7 @@ def main():
 
     energy_system = builder.build()
     energy_system.plot_system_topology()
-    scenario = Scenario(name=f"Base", start_year=2020, end_year=2030, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2030: 0})
+    scenario = Scenario(name=f"Base", start_year=2025, end_year=2045, year_gap=5, dt_hours=1, tss="8WeeksManual", co2_limit={2029: None, 2045: 0})
     backend = CESMOptimizationBackend(timeseries_dir=CASE_DIR / "input_data", output_dir=CASE_DIR / "output_data")
     solution = backend.solve(energy_system, scenario, mip_gap = 0.01, lp_file=False)
 

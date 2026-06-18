@@ -7,8 +7,9 @@ from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
 def test_polygon_topology_builder(streets_data_path, polygons_data_path):
     builder = PolygonTopologyBuilder()
     (builder
-         .set_streets_data(streets_data_path)
+         .set_streets_data(streets_data_path, id_column="fid")
          .set_polygons_data(polygons_data_path)
+         .set_extensive_columns(["waerme_mwh"])
          .set_region_id_column("id")
          .set_default_region(None)
          .set_streets_geometry_column_name("geometry")

@@ -9,7 +9,7 @@ import pandas as pd
 
 from geopipe.energy_system import EnergySystem, Scenario
 from geopipe.energy_system.technology import CHPTechnology
-from geopipe.optimization.cesm.techmap import commodity_name
+from geopipe.optimization.cesm.techmap import commodity_name, CONVERSION_FACTOR
 from geopipe.optimization.cesm.units import scale_factors
 from geopipe.optimization.solver import Results, Solution
 
@@ -36,17 +36,25 @@ class CESMResultsParser:
 
         unit = self.energy_system.units
         factors = scale_factors(unit)
+        # The techmap writes a UnitMW Units sheet but the EnergySystem is UnitKW, so every
+        # extensive value was first multiplied by CONVERSION_FACTOR before CESM's own scaling.
+        # CESM output therefore carries that extra factor on power/energy/money/CO2; divide it
+        # back out here so the parsed results stay in the EnergySystem's units (unchanged for users).
+        power_factor = factors["power"] * CONVERSION_FACTOR
+        energy_factor = factors["energy"] * CONVERSION_FACTOR
+        money_factor = factors["money"] * CONVERSION_FACTOR
+        co2_factor = factors["co2_emissions"] * CONVERSION_FACTOR
         for cs_map in output_by_name_year.values():
             for year_map in cs_map.values():
                 for vals in year_map.values():
-                    vals["cap_active"] /= factors["power"]
-                    vals["cap_new"] /= factors["power"]
-                    vals["eouttot"] /= factors["energy"]
-        opex /= factors["money"]
-        capex /= factors["money"]
-        totex /= factors["money"]
+                    vals["cap_active"] /= power_factor
+                    vals["cap_new"] /= power_factor
+                    vals["eouttot"] /= energy_factor
+        opex /= money_factor
+        capex /= money_factor
+        totex /= money_factor
         if not emissions_df.empty:
-            emissions_df = emissions_df.assign(amount=emissions_df["amount"] / factors["co2_emissions"])
+            emissions_df = emissions_df.assign(amount=emissions_df["amount"] / co2_factor)
 
         results = Results(
             unit=unit,

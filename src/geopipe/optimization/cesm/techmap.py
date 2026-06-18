@@ -2,6 +2,7 @@ import hashlib
 import re
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
@@ -15,7 +16,11 @@ from ..resolved_system import ResolvedSystem
 
 import logging
 
+from ...energy_system.units import UnitKW, UnitMW
+
 logger = logging.getLogger(__name__)
+
+CONVERSION_FACTOR = 0.001 # MWh to GWh, t to kilo t, EUR to k EUR, kW to MW
 
 @dataclass(frozen=True)
 class Techmap:
@@ -53,12 +58,18 @@ def _rebase_relative_years(value: float | dict[int, float | None] | None,
         return value
     return {start_year + int(rel_year): v for rel_year, v in value.items()}
 
+def _scale(value: Optional[float]) -> float | None:
+    if value is None:
+        return None
+    return value * CONVERSION_FACTOR
 
-def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None) -> float | str | None:
+def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None, scale: bool = False) -> float | str | None:
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        if scale:
+            return _scale(value)
+        return value
     if isinstance(value, dict):
         if all(v is None for v in value.values()): # if all values in dict are None, return None
             return None
@@ -68,7 +79,9 @@ def year_dep_value_to_cesm_string(value: float | dict[int, float | None] | None)
             if year_value is None:
                 segments.append(f"{year_i} NaN")
             else:
-                segments.append(f"{year_i} {float(year_value):.5g}")
+                if scale:
+                    year_value = _scale(year_value)
+                segments.append(f"{year_i} {year_value:.5g}")
         return "[" + ";".join(segments) + "]"
     raise TypeError(f"Unsupported type for year-dependent value: {type(value).__name__}")
 
@@ -86,7 +99,7 @@ def _df_scenario(resolved: ResolvedSystem) -> pd.DataFrame:
             "year_step": s.year_gap,
             "discount_rate": s.discount_rate,
             "TSS": s.tss,
-            "annual_co2_limit": year_dep_value_to_cesm_string(s.co2_limit),
+            "annual_co2_limit": year_dep_value_to_cesm_string(s.co2_limit, True),
             "co2_price": year_dep_value_to_cesm_string(s.co2_price),
         }]
     )
@@ -99,8 +112,8 @@ def _import_to_conversion_sub_process(imp: Import, scenario_name: str, start_yea
         scenario=scenario_name,
         opex_cost_energy=year_dep_value_to_cesm_string(_rebase_relative_years(imp.price_eur_per_mwh, start_year)),
         spec_co2=year_dep_value_to_cesm_string(_rebase_relative_years(imp.co2_emissions_ton_per_mwh, start_year)),
-        cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_cap_per_year, start_year)),
-        max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_energy_out_per_year, start_year)),
+        cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_cap_per_year, start_year), True),
+        max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(imp.max_energy_out_per_year, start_year), True),
     )
 
 def _export_to_conversion_sub_process(exp: Export, scenario_name: str, start_year: int) -> ConversionSubProcess:
@@ -111,8 +124,8 @@ def _export_to_conversion_sub_process(exp: Export, scenario_name: str, start_yea
         scenario=scenario_name,
         opex_cost_energy=year_dep_value_to_cesm_string(_rebase_relative_years(exp.price_eur_per_mwh, start_year)),
         spec_co2=year_dep_value_to_cesm_string(_rebase_relative_years(exp.co2_emissions_ton_per_mwh, start_year)),
-        cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(exp.max_cap_per_year, start_year)),
-        max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(exp.max_energy_in_per_year, start_year)),
+        cap_max=year_dep_value_to_cesm_string(_rebase_relative_years(exp.max_cap_per_year, start_year), True),
+        max_eout=year_dep_value_to_cesm_string(_rebase_relative_years(exp.max_energy_in_per_year, start_year), True),
     )
 
 def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, start_year: int) -> ConversionSubProcess:
@@ -123,10 +136,10 @@ def _pipe_to_conversion_sub_process(pipe: PipeTechnology, scenario_name: str, st
         scenario=scenario_name,
         efficiency=pipe.efficiency,
         technical_lifetime=pipe.technical_lifetime,
-        capex_cost_base=pipe.investment_costs_eur,
-        cap_max=year_dep_value_to_cesm_string(pipe.max_capacity_per_year(start_year)),
-        cap_res_min=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year)),
-        cap_res_max=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year)),
+        capex_cost_base=_scale(pipe.investment_costs_eur),
+        cap_max=year_dep_value_to_cesm_string(pipe.max_capacity_per_year(start_year), True),
+        cap_res_min=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year), True),
+        cap_res_max=year_dep_value_to_cesm_string(pipe.capacity_per_year(start_year), True),
     )
 
 def _demand_to_conversion_sub_process(
@@ -139,7 +152,7 @@ def _demand_to_conversion_sub_process(
         commodity_in=commodity_name(demand.demand_type.commodity_in, region_id),
         commodity_out="Dummy",
         scenario=scenario_name,
-        min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years)),
+        min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years), True),
         output_profile=demand.demand_type.profile_path.stem,
     )
 
@@ -156,9 +169,9 @@ def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, reg
         opex_cost_energy=year_dep_value_to_cesm_string(tech.opex_cost_energy),
         opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
         capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
-        cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
-        cap_res_max=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year)),
-        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
+        cap_res_min=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year), True),
+        cap_res_max=year_dep_value_to_cesm_string(tech.capacity_per_year(start_year), True),
+        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year), True),
         output_profile=output_profile,
     )
 
@@ -170,10 +183,10 @@ def _grid_to_conversion_sub_process(grid: GridTechnology, region_id, scenario_na
         scenario=scenario_name,
         efficiency=grid.efficiency,
         technical_lifetime=grid.technical_lifetime,
-        capex_cost_base=grid.investment_costs_eur,
-        cap_max=year_dep_value_to_cesm_string(grid.max_capacity_per_year(start_year)),
-        cap_res_min=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year)),
-        cap_res_max=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year)),
+        capex_cost_base=_scale(grid.investment_costs_eur),
+        cap_max=year_dep_value_to_cesm_string(grid.max_capacity_per_year(start_year), True),
+        cap_res_min=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year), True),
+        cap_res_max=year_dep_value_to_cesm_string(grid.capacity_per_year(start_year), True),
     )
 
 
@@ -191,11 +204,11 @@ def _central_tech_to_conversion_sub_process(tech: CentralTechnology, region_id: 
         opex_cost_energy=year_dep_value_to_cesm_string(tech.opex_cost_energy),
         opex_cost_power=year_dep_value_to_cesm_string(tech.opex_cost_power),
         capex_cost_power=year_dep_value_to_cesm_string(tech.capex_cost_power),
-        capex_cost_base=year_dep_value_to_cesm_string(tech.capex_cost_base),
-        cap_max_unit=tech.max_capacity_per_unit,
-        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year)),
-        cap_res_min=year_dep_value_to_cesm_string(tech.existing_capacity_per_year(start_year)),
-        cap_res_max=year_dep_value_to_cesm_string(tech.existing_capacity_per_year(start_year)),
+        capex_cost_base=year_dep_value_to_cesm_string(tech.capex_cost_base, True),
+        cap_max_unit=_scale(tech.max_capacity_per_unit),
+        cap_max=year_dep_value_to_cesm_string(tech.max_capacity_per_year(start_year), True),
+        cap_res_min=year_dep_value_to_cesm_string(tech.existing_capacity_per_year(start_year), True),
+        cap_res_max=year_dep_value_to_cesm_string(tech.existing_capacity_per_year(start_year), True),
         output_profile=tech.output_profile_name,
         availability_profile=tech.availability_profile_name
     )]
@@ -226,11 +239,11 @@ def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_
         opex_cost_energy=year_dep_value_to_cesm_string(chp.opex_cost_energy),
         opex_cost_power=year_dep_value_to_cesm_string(chp.opex_cost_power),
         capex_cost_power=year_dep_value_to_cesm_string(chp.capex_cost_power),
-        capex_cost_base=year_dep_value_to_cesm_string(chp.capex_cost_base),
-        cap_max_unit=chp.max_capacity_per_unit,
-        cap_max=year_dep_value_to_cesm_string(chp.max_capacity_per_year(start_year)),
-        cap_res_max=year_dep_value_to_cesm_string(chp.existing_capacity_per_year(start_year)),
-        cap_res_min=year_dep_value_to_cesm_string(chp.existing_capacity_per_year(start_year)),
+        capex_cost_base=year_dep_value_to_cesm_string(chp.capex_cost_base, True),
+        cap_max_unit=_scale(chp.max_capacity_per_unit),
+        cap_max=year_dep_value_to_cesm_string(chp.max_capacity_per_year(start_year), True),
+        cap_res_max=year_dep_value_to_cesm_string(chp.existing_capacity_per_year(start_year), True),
+        cap_res_min=year_dep_value_to_cesm_string(chp.existing_capacity_per_year(start_year), True),
         output_profile=chp.output_profile_name,
         availability_profile=chp.availability_profile_name,
     )
@@ -317,12 +330,18 @@ def _conversion_process_df(conversion_process_names: set[str]) -> pd.DataFrame:
     )
 
 def create_techmap(resolved: ResolvedSystem) -> Techmap:
+    # CONVERSION_FACTOR (0.001) converts the source values into the UnitMW Units sheet
+    # below; it is only valid if the EnergySystem is expressed in UnitKW (kW/MWh/t/EUR).
+    if not isinstance(resolved.units, UnitKW):
+        raise ValueError(
+            f"techmap scaling assumes UnitKW source data, got {type(resolved.units).__name__}"
+        )
     df_cs = _conversion_sub_process_df(resolved)
     df_co = _commodity_df(set(df_cs["commodity_in"]))
     df_cp = _conversion_process_df(set(df_cs["conversion_process_name"]))
 
     return Techmap(
-        Units=df_units(unit=resolved.units),
+        Units=df_units(unit=UnitMW()),
         Scenario=_df_scenario(resolved),
         Commodity=df_co,
         ConversionProcess=df_cp,
