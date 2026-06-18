@@ -31,7 +31,7 @@ class TopologyBuilder(ABC):
         self._gap_distance: float | None = None
         self._drop_isolated_null: bool = False
         self._streets_id_column: str | None = None
-        self._divide_at_junctions: bool = True
+        self._divide_at_junctions: bool = False
         self._junction_tol: float = 1e-6
         self._check_topology_connections: bool = True
 
