@@ -74,8 +74,9 @@ class CESMOptimizationBackend(OptimizationBackend):
 
         model.solve(mip_gap=mip_gap)
 
-        grb_model = getattr(model, "model", None)
-        status = int(getattr(grb_model, "Status", -1))
+        grb_model = model.model
+        logger.info(grb_model.printQuality())
+        status = int(grb_model.Status)
         if GRB is not None and status not in (GRB.OPTIMAL, GRB.SUBOPTIMAL):
             logger.error("CESM optimization did not produce a solution: %s", _status_text(status))
             if status == GRB.INFEASIBLE:

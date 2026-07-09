@@ -59,7 +59,13 @@ def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query:
 
     name_mapping = query.get("name_mapping", {})
     if name_mapping:
-        mapped_shares = {v: tech_shares[k] for k,v in name_mapping.items() if v is not None}
+        # accumulate so multiple census technologies mapped to the same
+        # target name are summed instead of overwriting each other
+        mapped_shares: dict[str, float] = {}
+        for k, v in name_mapping.items():
+            if v is None:
+                continue
+            mapped_shares[v] = mapped_shares.get(v, 0.0) + tech_shares[k]
         # ensure values sum to 1
         total_mapped = sum(mapped_shares.values())
         if total_mapped > 0:
