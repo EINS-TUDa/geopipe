@@ -3,15 +3,16 @@ import pathlib
 import networkx as nx
 import pandas as pd
 import geopandas as gpd
+from geopipe.data import PostgresConnection, PostgresDataset
 from shapely.geometry.multipoint import MultiPoint
 
 from geopipe import DataRegistry
 from geopipe.data.data_registry import DataKeys
 from geopipe.data.data_utils import get_gdf_from_ags
-from geopipe.data.dataset import FileDataset, CensusTechnology
+from geopipe.data.dataset import Dataset, FileDataset, CensusTechnology
 
 
-def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query: dict) -> dict[CensusTechnology, float]:
+def census_bensheim_query(dataset: Dataset, region: gpd.GeoDataFrame, query: dict) -> dict[CensusTechnology, float]:
     if query["key"] != "heating_shares":
         raise ValueError("census_neuburg_query only supports 'heating_shares' key")
 
@@ -25,19 +26,8 @@ def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query:
                        "Fernwaerme": CensusTechnology.District_Heating,
                        "kein_Energietraeger": CensusTechnology.NoEnergyCarrier}
 
-    if isinstance(region, gpd.GeoDataFrame):
-        boundary_gdf = gpd.GeoDataFrame(
-            geometry=[region.geometry.union_all()],
-            crs=region.crs)
-        region_crs = boundary_gdf.crs
-    else:
-        raise TypeError("query expects region as geodataframe ")
 
-    gdf = dataset.get_data()
-    if region_crs is not None and gdf.crs != region_crs:
-        gdf = gdf.to_crs(region_crs)
-
-    gdf_in_region = gpd.sjoin(gdf, boundary_gdf, predicate="intersects", how="inner")
+    gdf_in_region = dataset.fetch(region, query)
     gdf_in_region = gdf_in_region.rename(columns=census_names)
 
     technologies = list(census_names.values())
@@ -77,20 +67,74 @@ def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query:
 
     return tech_shares
 
+def heat_grid_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame:
+    street_segments: gpd.GeoDataFrame = query["segments"]
+    heat_grid_data: gpd.GeoDataFrame = dataset.get_data()
+    # 0. Align crs
+    if street_segments.crs != heat_grid_data.crs:
+        heat_grid_data = heat_grid_data.to_crs(street_segments.crs)
+    # guard: buffer distance is in CRS units, so require a metre-based projected CRS
+    crs = street_segments.crs
+    if crs is None or not crs.is_projected or crs.axis_info[0].unit_name not in ("metre", "meter"):
+        raise ValueError(
+            f"heat_grid_bensheim_query needs a projected metre CRS, got '{getattr(crs, 'name', None)}'.")
+    # 1. Buffer around the heat grid geometries
+    buffer_distance = 50  # meters
+    heat_grid_buffer = heat_grid_data.buffer(buffer_distance).union_all()
+    # 2. Street segments which are at least 60 percent covered by the buffer are considered to have an existing grid
+    existing_grid_ratio = 0.6 # if 60% of the street segment is covered by the buffer, it is considered to have an existing grid
+    covered = street_segments.geometry.intersection(heat_grid_buffer).length
+    seg_len = street_segments.geometry.length
+    result = street_segments[[]].copy()  # keep index, drop columns
+    result["existing_grid"] = (
+        (covered / seg_len.replace(0, pd.NA)) >= existing_grid_ratio
+    ).fillna(False).astype(bool)
+    return result
+
 
 def case1_data_registry() -> DataRegistry:
-    neuburg_heating_shares = FileDataset(
+    # db_conn = PostgresConnection.from_env("INFDBGAUSS")
+    # heating_shares = PostgresDataset(
+    #     keys=[DataKeys.HEATING_SHARES],
+    #     db_connection=db_conn,
+    #     query_function=census_bensheim_query,
+    #     sql =   """
+    #             SELECT
+    #                 SUM(c."gas")::float                          AS "Gas",
+    #                 SUM(c."heizoel")::float                      AS "Heizoel",
+    #                 SUM(c."holz_holzpellets")::float             AS "Holz_Holzpellets",
+    #                 SUM(c."biomasse_biogas")::float              AS "Biomasse_Biogas",
+    #                 SUM(c."solar_geothermie_waermepumpen")::float AS "Solar_Geothermie_Waermepumpen",
+    #                 SUM(c."strom")::float                        AS "Strom",
+    #                 SUM(c."kohle")::float                        AS "Kohle",
+    #                 SUM(c."fernwaerme")::float                   AS "Fernwaerme",
+    #                 SUM(c."kein_energietraeger")::float          AS "kein_Energietraeger"
+    #             FROM opendata.zensus_2022_100m_energietraeger_heizung AS c
+    #             WHERE ST_Intersects(
+    #                 c.geom,
+    #                 ST_Transform(ST_GeomFromText(:wkt, :epsg), ST_SRID(c.geom))
+    #             )
+    #             """
+    # )
+
+    heating_shares = FileDataset(
         keys=[DataKeys.HEATING_SHARES],
         file_path= str(pathlib.Path(__file__).parent / "Census2022HeatingType100mGrid_Polygons_southhessen.geojson"),
         query_function=census_bensheim_query,
+        )
+
+    heat_grid_bensheim = FileDataset(
+        keys=[DataKeys.EXISTING_HEAT_GRID],
+        file_path=str(pathlib.Path(__file__).parent / "heat_grid_bensheim.geojson"),
+        query_function=heat_grid_bensheim_query,
         priority=10,
         regional_validity=None
-        # get_gdf_from_ags(["09185149"]
-        )
+    )
 
 
     data_reg = DataRegistry()
-    data_reg.register(neuburg_heating_shares)
+    data_reg.register(heating_shares)
+    data_reg.register(heat_grid_bensheim)
     return data_reg
 
 if __name__ == "__main__":

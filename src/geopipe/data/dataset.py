@@ -6,7 +6,7 @@ import geopandas as gpd
 import pandas as pd
 from sqlalchemy import text
 
-from ..data.database_connection import DatabaseConnection
+from ..data.database_connection import PostgresConnection
 from ..energy_system.units import UnitEnum
 
 class CensusTechnology(Enum):
@@ -31,14 +31,6 @@ CENSUS_HEATING_CATEGORY_TO_TECH: dict[str, str | None] = {
     "Fernwaerme": "HeatExchanger",
     "kein_Energietraeger": None,
 }
-
-def census_category_to_tech(category: str | None) -> str | None:
-    if category is None:
-        return None
-    key = str(category).strip()
-    if not key:
-        return None
-    return CENSUS_HEATING_CATEGORY_TO_TECH.get(key)
 
 class Dataset(ABC):
     """
@@ -87,6 +79,24 @@ class Dataset(ABC):
             return self._custom_query_function(self, region, query)
         return self._default_query(query)
 
+    def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
+        """
+        Return this dataset's full contents. Subclasses that hold data
+        (file, in-memory value) override this; source-backed subclasses that
+        can only answer region-scoped questions override `fetch` instead.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement either get_data or fetch"
+        )
+
+    def fetch(self, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+        """
+        Returns data filtered for region.
+
+        Default is region agnostic. If region awareness is necessary, overwrite in subclasses.
+        """
+        return self.get_data()
+
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Default query logic. Subclasses should override this method
@@ -126,6 +136,9 @@ class SimpleDataset(Dataset):
         super().__init__(keys=keys, unit=unit, priority=priority, regional_validity=regional_validity)
         self.data = data
 
+    def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
+        return self.data
+
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
         return self.data
 
@@ -133,12 +146,13 @@ class SimpleDataset(Dataset):
         return True
 
 
-class PostgreSQLDataset(Dataset):
+class PostgresDataset(Dataset):
     def __init__(
         self,
         keys: list[str],
-        db_connection: DatabaseConnection,
+        db_connection: PostgresConnection,
         query_function: Optional[Callable],
+        sql: Optional[str] = None,
         unit: Optional[UnitEnum] = None,
         priority: int = 2,
         regional_validity: Optional[gpd.GeoDataFrame] = None,
@@ -160,11 +174,17 @@ class PostgreSQLDataset(Dataset):
             regional_validity=regional_validity,
             query_function=query_function,
         )
-        self.db_connection = db_connection
+        self.sql: str  = sql
+        self.db_connection: PostgresConnection = db_connection
 
     def is_available(self) -> bool:
         """Checks if the database is accessible."""
         return self.db_connection.is_available()
+
+    def fetch(self, region, query):
+        if self.sql is None:
+            raise ValueError("No sql query provided.")
+        return self.execute_spatial_query({**query, "region": region}, self.sql)
 
     def execute_spatial_query(self, query: dict, sql_query: text) -> pd.DataFrame:
         """
@@ -226,6 +246,17 @@ class FileDataset(Dataset):
     @property
     def file_path_str(self) -> str:
         return str(self.file_path)
+
+    def fetch(self, region, query):
+        data = self.get_data()
+        if not isinstance(data, gpd.GeoDataFrame):
+            # Non-spatial payload (CSV profiles, plain tables): nothing to
+            # filter on, so the region does not narrow the result.
+            return data
+        if region.crs is not None and data.crs != region.crs:
+            data = data.to_crs(region.crs)
+        boundary = gpd.GeoDataFrame(geometry=[region.geometry.union_all()], crs=region.crs)
+        return gpd.sjoin(data, boundary, predicate="intersects", how="inner")
 
     def _load_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
