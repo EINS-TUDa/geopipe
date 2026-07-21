@@ -67,7 +67,7 @@ list.
 ## Datasets
 
 Two built-ins are available out of the box: `FileDataset` (any file
-that pandas/geopandas can read) and `PostgreSQLDataset` (any Postgres
+that pandas/geopandas can read) and `PostgresDataset` (any Postgres
 connection). Both call the optional `query_function(dataset, region,
 query) -> Any` if supplied, otherwise return the loaded data as-is.
 
@@ -83,16 +83,109 @@ query) -> Any` if supplied, otherwise return the loaded data as-is.
 | `priority` | `int` | `10` | Higher = preferred when multiple datasets can answer the same key. |
 | `regional_validity` | `GeoDataFrame` or `None` | `None` | Validity polygon; `None` = applies everywhere. Lookups skip datasets whose polygon does not cover the queried region. |
 
-### `PostgreSQLDataset`
+### `PostgresDataset`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `keys` | `list[str]` | — (required) | Data keys this dataset can answer. |
-| `db_connection` | `DatabaseConnection` | — (required) | Connection used by `execute_spatial_query` / the query function. |
+| `db_connection` | `PostgresConnection` | — (required) | Connection used by `execute_spatial_query` / the query function. |
 | `query_function` | `Callable` or `None` | — (required) | Resolver with signature `(dataset, region, query) -> Any`. |
+| `sql` | `str` or `None` | `None` | SQL executed by `fetch()`, with `:wkt` / `:epsg` placeholders for the region. |
 | `unit` | `UnitEnum` or `None` | `None` | Optional unit annotation. |
 | `priority` | `int` | `2` | Lower default than `FileDataset` so files win on ties. |
 | `regional_validity` | `GeoDataFrame` or `None` | `None` | Validity polygon; `None` = applies everywhere. |
+
+## Adding a Postgres data source
+
+Wiring up a database source has three parts: credentials in `.env`, a
+`PostgresConnection`, and a `PostgresDataset` that carries the SQL.
+
+### 1. Credentials in `.env`
+
+Credentials never live in code. Each database is one **prefix**, and
+`PostgresConnection.from_env(prefix)` reads exactly five variables:
+`{PREFIX}_HOST`, `{PREFIX}_PORT`, `{PREFIX}_DATABASE`, `{PREFIX}_USER`,
+`{PREFIX}_PASSWORD`. All five are required; a missing one raises
+`RuntimeError: Missing env var …`.
+
+Copy `.env.template` to `.env` in the repository root and fill it in.
+`.env` is git-ignored; `.env.template` is the committed, value-free
+version — add a block there whenever you add a new database, so others
+know which variables to set.
+
+```dotenv
+# --- INFDBGAUSS ---
+INFDBGAUSS_HOST=db.example.org
+INFDBGAUSS_PORT=5432
+INFDBGAUSS_DATABASE=***REMOVED***
+INFDBGAUSS_USER=***REMOVED***
+INFDBGAUSS_PASSWORD=secret
+```
+
+Format rules — the file is parsed by `python-dotenv`, **not** by Python:
+
+- One `KEY=value` per line, no trailing comma, no `;`.
+- Do **not** quote values unless the value itself contains spaces or
+  `#`. Quotes are stripped, so `PORT="5432"` works but adds nothing.
+- No spaces around `=` (`KEY = value` is tolerated, but stick to the
+  plain form).
+- Lines starting with `#` are comments; blank lines are ignored.
+- A value already present in the real environment wins over the `.env`
+  entry — useful for overriding a single variable on a server or in CI.
+
+Malformed lines are skipped with a `python-dotenv could not parse
+statement starting at line N` warning, and the variable then shows up
+as missing — if you get that warning, look for a stray comma or quote
+on the reported line.
+
+### 2. Connection and dataset
+
+`from_env` locates the nearest `.env` starting from the current working
+directory, so scripts run from anywhere inside the repository pick it up.
+
+The `sql` string is executed by `fetch()` through
+`execute_spatial_query`, which binds two parameters for you: `:wkt`
+(the queried region as WKT) and `:epsg` (its EPSG code). Use them in a
+`ST_Intersects` clause so the database does the spatial filtering:
+
+```python
+from geopipe import DataRegistry
+from geopipe.data import PostgresConnection, PostgresDataset
+from geopipe.data.data_registry import DataKeys
+
+db_conn = PostgresConnection.from_env("INFDBGAUSS")
+
+heating_shares = PostgresDataset(
+    keys=[DataKeys.HEATING_SHARES],
+    db_connection=db_conn,
+    query_function=census_bensheim_query,  # see below
+    sql="""
+        SELECT
+            SUM(c."gas")::float     AS "Gas",
+            SUM(c."heizoel")::float AS "Heizoel"
+            -- … remaining carriers …
+        FROM opendata.zensus_2022_100m_energietraeger_heizung AS c
+        WHERE ST_Intersects(
+            c.geom,
+            ST_Transform(ST_GeomFromText(:wkt, :epsg), ST_SRID(c.geom))
+        )
+        """,
+)
+
+data_reg = DataRegistry()
+data_reg.register(heating_shares)
+```
+
+The same `db_conn` can back any number of datasets — it is shared, and
+the SQLAlchemy engine is created lazily on first query. `is_available()`
+opens a connection and runs `SELECT 1`, returning `False` instead of
+raising if the server is unreachable, so a database dataset that is
+temporarily down simply loses to a lower-priority `FileDataset`.
+
+The `query_function` receives the raw query result via
+`dataset.fetch(region, query)` and post-processes it exactly as it would
+for a file-backed dataset — the same function can therefore serve both a
+`FileDataset` and a `PostgresDataset` variant of the same data.
 
 ## Custom query function
 
