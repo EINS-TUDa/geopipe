@@ -30,12 +30,10 @@ class PostgresConnection:
 
     @classmethod
     def from_env(cls, prefix: str ) -> "PostgresConnection":
-        """Build a connection from {PREFIX}_HOST/_PORT/_DATABASE/_USER/_PASSWORD.
-
-        Values already present in the environment take precedence over the .env file.
         """
-        load_dotenv(find_dotenv(usecwd=True))
-
+        Build a connection from {PREFIX}_HOST/_PORT/_DATABASE/_USER/_PASSWORD.
+        """
+        load_dotenv()
         def req(name: str) -> str:
             val = os.environ.get(f"{prefix}_{name}")
             if not val:
