@@ -11,3 +11,6 @@ plots/*
 .claude
 *.log
 *.html
+.env
+.env.*.local
+!.env.template

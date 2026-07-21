@@ -10,8 +10,6 @@ from enum import Enum
 from typing import Optional
 import geopandas as gpd
 import networkx as nx
-import yaml
-import importlib
 
 from shapely.geometry.multipoint import MultiPoint
 
@@ -25,6 +23,7 @@ class DataKeys(str, Enum):
     HEATING_SHARES = "heating_shares"
     STREET_NETWORK = "street_network"
     LINEAR_HEAT_DENSITY = "linear_heat_density"
+    EXISTING_HEAT_GRID = "existing_heat_grid"
 
 """
 DataKeys.HEAT_DEMAND_PROFILE should return a pd.Series
@@ -34,6 +33,7 @@ DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residen
 DataKeys.HEATING_SHARES should return a dict[CensusTechnology, float], or dict[str, float] if a name_mapping is provided
 DataKeys.STREET_NETWORK should return a GeoDataFrame with the street network for the specified region, with columns 'geom' (LineString)
 DataKeys.LINEAR_HEAT_DENSITY should return a GeoDataFrame with the linear heat density for the specified region, with columns 'geom' (LineString) and 'heat_density_mwh_per_km'
+DataKeys.EXISTING_HEAT_GRID should return a GeoDataFrame with the existing heat grid for the specified region, with columns 'geom' (LineString)
 """
 
 
@@ -116,7 +116,11 @@ class DataRegistry:
             raise ValueError("'key' must be specified in the query.")
 
         region = query.pop("region")
-        if isinstance(region, nx.Graph):
+        if isinstance(region, gpd.GeoDataFrame):
+            boundary_gdf = gpd.GeoDataFrame(
+                geometry=[region.geometry.union_all().convex_hull],
+                crs=region.crs)
+        elif isinstance(region, nx.Graph):
             boundary_gdf = gpd.GeoDataFrame(
                 geometry=[MultiPoint(list(region.nodes)).convex_hull],
                 crs=region.graph.get("crs"))
