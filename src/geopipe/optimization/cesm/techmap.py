@@ -20,7 +20,7 @@ from ...energy_system.units import UnitKW, UnitMW
 
 logger = logging.getLogger(__name__)
 
-CONVERSION_FACTOR = 0.001 # MWh to GWh, t to kilo t, EUR to k EUR, kW to MW
+CONVERSION_FACTOR = 0.001 # MWh to GWh, EUR to k EUR, kW to MW
 
 @dataclass(frozen=True)
 class Techmap:
@@ -99,8 +99,8 @@ def _df_scenario(resolved: ResolvedSystem) -> pd.DataFrame:
             "year_step": s.year_gap,
             "discount_rate": s.discount_rate,
             "TSS": s.tss,
-            "annual_co2_limit": year_dep_value_to_cesm_string(s.co2_limit, True),
-            "co2_price": year_dep_value_to_cesm_string(s.co2_price),
+            "annual_co2_limit": year_dep_value_to_cesm_string(s.co2_limit),
+            "co2_price": year_dep_value_to_cesm_string(s.co2_price, True),
         }]
     )
 

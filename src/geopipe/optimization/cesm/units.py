@@ -36,10 +36,10 @@ def df_units(unit: Unit) -> pd.DataFrame:
         rows = [
             {"quantity": "power", "input": "MW", "scale_factor": 1, "output": "MW"},
             {"quantity": "energy", "input": "GWh", "scale_factor": 1000, "output": "MWh"},
-            {"quantity": "co2_emissions", "input": "kilo t", "scale_factor": 1, "output": "kilo t"},
+            {"quantity": "co2_emissions", "input": "t", "scale_factor": 1, "output": "t"},
             {"quantity": "cost_energy", "input": "EUR/MWh", "scale_factor": 0.001, "output": "k EUR/MWh"},
             {"quantity": "cost_power", "input": "EUR/kW", "scale_factor": 1, "output": "k EUR/MW"},
-            {"quantity": "co2_spec", "input": "kg/kWh", "scale_factor": 0.001, "output": "kilo t/MWh"},
+            {"quantity": "co2_spec", "input": "t/MWh", "scale_factor": 1, "output": "t/MWh"},
             {"quantity": "money", "input": "k EUR", "scale_factor": 1, "output": "k EUR"},
         ]
     else:

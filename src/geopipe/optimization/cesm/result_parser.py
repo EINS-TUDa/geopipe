@@ -36,14 +36,13 @@ class CESMResultsParser:
 
         unit = self.energy_system.units
         factors = scale_factors(unit)
-        # The techmap writes a UnitMW Units sheet but the EnergySystem is UnitKW, so every
-        # extensive value was first multiplied by CONVERSION_FACTOR before CESM's own scaling.
-        # CESM output therefore carries that extra factor on power/energy/money/CO2; divide it
-        # back out here so the parsed results stay in the EnergySystem's units (unchanged for users).
+        # The techmap writes a UnitMW Units sheet but the EnergySystem is UnitKW, so power,
+        # energy, and money were first multiplied by CONVERSION_FACTOR before CESM's own
+        # scaling. CO2 remains in tonnes throughout.
         power_factor = factors["power"] * CONVERSION_FACTOR
         energy_factor = factors["energy"] * CONVERSION_FACTOR
         money_factor = factors["money"] * CONVERSION_FACTOR
-        co2_factor = factors["co2_emissions"] * CONVERSION_FACTOR
+        co2_factor = factors["co2_emissions"]
         for cs_map in output_by_name_year.values():
             for year_map in cs_map.values():
                 for vals in year_map.values():
