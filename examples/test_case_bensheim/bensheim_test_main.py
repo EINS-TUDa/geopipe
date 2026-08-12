@@ -20,6 +20,7 @@ import logging
 
 CASE_DIR = Path(__file__).resolve().parent
 project_root = CASE_DIR.parents[1]
+(CASE_DIR / "output_data").mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.WARNING,
