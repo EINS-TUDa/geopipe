@@ -34,7 +34,7 @@ logging.getLogger("cesm").setLevel(logging.INFO)
 
 
 def main():
-    streets_data = modify_streets_data(streets_data=CASE_DIR / "input_data" / "bensheim_streets_heat_demand_corrected.geojson",
+    streets_data = modify_streets_data(streets_data=CASE_DIR / "private_data" / "bensheim_streets_heat_demand.geojson",
                                        modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
 
     # topology_builder = SimpleTopologyBuilder()
@@ -48,7 +48,7 @@ def main():
     topology_builder.set_streets_data(streets_data, id_column="fid")
     topology_builder.set_region_id_column("id")
     topology_builder.set_extensive_columns(["waerme_mwh"])
-    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "Polygone_034.geojson")
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "polygons.geojson")
     topology_builder.set_topology_connections_check(False)
 
     topology_result = topology_builder.build()
