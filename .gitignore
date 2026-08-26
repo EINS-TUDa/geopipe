@@ -11,3 +11,4 @@ plots/*
 .claude
 *.log
 *.html
+**/private_data/*

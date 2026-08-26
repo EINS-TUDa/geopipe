@@ -75,7 +75,7 @@ def census_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query:
 def case1_data_registry() -> DataRegistry:
     neuburg_heating_shares = FileDataset(
         keys=[DataKeys.HEATING_SHARES],
-        file_path= str(pathlib.Path(__file__).parent / "Census2022HeatingType100mGrid_Polygons_southhessen.geojson"),
+        file_path= str(pathlib.Path(__file__).parent / "Census2022HeatingType100mGrid.geojson"),
         query_function=census_bensheim_query,
         priority=10,
         regional_validity=None
