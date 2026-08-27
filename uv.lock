@@ -263,7 +263,7 @@ wheels = [
 
 [[package]]
 name = "geopipe"
-version = "1.1.2"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },
@@ -280,8 +280,6 @@ dependencies = [
     { name = "idna" },
     { name = "kiwisolver" },
     { name = "matplotlib" },
-    { name = "mkdocs" },
-    { name = "mkdocs-material" },
     { name = "networkx" },
     { name = "numpy" },
     { name = "openpyxl" },
@@ -307,9 +305,13 @@ dependencies = [
     { name = "urllib3" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
+]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-material" },
 ]
 
 [package.metadata]
@@ -328,8 +330,6 @@ requires-dist = [
     { name = "idna", specifier = ">=3.10" },
     { name = "kiwisolver", specifier = ">=1.4.8" },
     { name = "matplotlib", specifier = ">=3.10.3" },
-    { name = "mkdocs", specifier = ">=1.6.1" },
-    { name = "mkdocs-material", specifier = ">=9.7.5" },
     { name = "networkx", specifier = ">=3.0" },
     { name = "numpy", specifier = ">=2.2.5" },
     { name = "openpyxl", specifier = ">=3.1.5" },
@@ -344,7 +344,6 @@ requires-dist = [
     { name = "pyparsing", specifier = ">=3.2.3" },
     { name = "pyproj", specifier = ">=3.7.1" },
     { name = "pyqt6", specifier = ">=6.11.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
     { name = "python-dateutil", specifier = ">=2.9.0" },
     { name = "pytz", specifier = ">=2025.2" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -355,7 +354,13 @@ requires-dist = [
     { name = "tzdata", specifier = ">=2025.2" },
     { name = "urllib3", specifier = ">=2.4.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.3.5" }]
+docs = [
+    { name = "mkdocs", specifier = ">=1.6.1" },
+    { name = "mkdocs-material", specifier = ">=9.7.5" },
+]
 
 [[package]]
 name = "geopy"

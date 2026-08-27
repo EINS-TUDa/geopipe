@@ -2,7 +2,7 @@
 
 ## GeoPipe
 
-Geographical energy system modelling data Pipeline
+**Geo**graphical energy system modelling data **pipe**line
 
 ## Quickstart
 
@@ -13,10 +13,10 @@ Geographical energy system modelling data Pipeline
 
 ### Clone 
 ```bash
-git clone git@git.rwth-aachen.de:carolin.ayasse/data_pipeline_esm.git
-cd data_pipeline_esm
+git clone git@github.com:EINS-TUDa/geopipe.git
+cd geopipe
 ```
-### Environment. 
+### Environment
 ```bash
 uv sync
 ```
@@ -34,12 +34,10 @@ uv run python examples/test_case_bensheim/bensheim_test_main.py
 
 
 ## Documentation
-Documentation can be found [here](https://CaroAy.github.io/data-pipeline-esm/).
-To build the documentation, use:
-```
-uv run mkdocs gh-deploy --remote-name github
-```
+Documentation can be found [here](https://eins-tuda.github.io/geopipe).
+
 To preview the documentation locally, use:
 ```
+uv sync --group docs      # or: uv sync  (gets dev + docs + runtime)       
 uv run mkdocs serve
 ```

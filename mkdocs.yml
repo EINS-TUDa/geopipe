@@ -13,7 +13,7 @@ nav:
     - DataRegistry: Components/data_registry.md
     - EnergySystemBuilder: Components/energy_system_builder.md
   - CESM extension:
-    - NewlyInstalledUnits: CESM extension\newly_installed_units.md
+    - NewlyInstalledUnits: CESM extension/newly_installed_units.md
 
 markdown_extensions:
   - pymdownx.arithmatex:

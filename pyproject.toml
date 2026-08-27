@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geopipe"
-version = "1.1.2"
+version = "0.1.0"
 description = "Geographical energy system modelling data Pipeline"
 authors = [
     {name = "Carolin Ayasse", email = "carolin.ayasse@eins.tu-darmstadt.de"},
@@ -47,17 +47,22 @@ dependencies = [
     "psycopg2>=2.9.11",
     "gurobipy<13.0",
     "contextily>=1.7.0",
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.5",
     "pydantic>=2.13.3",
     "pydantic-settings>=2.14.0",
     "pyqt6>=6.11.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=8.3.5",
 ]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.5",
+]
+
+[tool.uv]
+default-groups = ["dev", "docs"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

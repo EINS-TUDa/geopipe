@@ -1,0 +1,9 @@
+mirror-to-github:
+  stage: deploy
+  image: alpine/git
+  script:
+    - git push "https://x-access-token:${GITHUB_TOKEN}@github.com/EINS-TUDa/geopipe.git" HEAD:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  tags:
+    - docker
