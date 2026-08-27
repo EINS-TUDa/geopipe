@@ -1,6 +1,12 @@
 mirror-to-github:
   stage: deploy
-  image: alpine/git
+  image:
+    name: alpine/git
+    entrypoint: [""]
+  variables:
+    # A shallow clone cannot be pushed to a remote that lacks the history
+    # ("shallow update not allowed"), so fetch the full history here.
+    GIT_DEPTH: 0
   script:
     - git push "https://x-access-token:${GITHUB_TOKEN}@github.com/EINS-TUDa/geopipe.git" HEAD:main
   rules:
