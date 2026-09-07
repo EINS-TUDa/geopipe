@@ -12,6 +12,10 @@ plots/*
 *.log
 *.html
 **/private_data/*
+<<<<<<< Updated upstream
 .env
 .env.*.local
 !.env.template
+=======
+dist/
+>>>>>>> Stashed changes

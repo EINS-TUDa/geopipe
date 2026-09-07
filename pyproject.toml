@@ -11,9 +11,18 @@ authors = [
     {name = "Alexander Christ", email = "alexchrist@outlook.com"},
 ]
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.12"
+keywords = [
+    "energy system modelling",
+    "geospatial",
+    "gis",
+    "optimisation",
+    "district heating",
+    "sector coupling",
+]
 dependencies = [
-    "cesm @ git+https://github.com/EINS-TUDa/CESM.git@578e0bb",
     "certifi>=2025.4.26",
     "charset-normalizer>=3.4.2",
     "colorama>=0.4.6",
@@ -45,22 +54,38 @@ dependencies = [
     "sqlalchemy>=2.0.44",
     "osm2geojson>=0.3.1",
     "psycopg2>=2.9.11",
-    "gurobipy<13.0",
     "contextily>=1.7.0",
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.7.5",
     "pydantic>=2.13.3",
     "pydantic-settings>=2.14.0",
     "pyqt6>=6.11.0",
 ]
 
 [project.optional-dependencies]
+cesm = ["gurobipy<13.0"]
+pypsa = ["pypsa>=1.3"]
+
+[project.urls]
+Homepage = "https://github.com/EINS-TUDa/geopipe"
+Documentation = "https://eins-tuda.github.io/geopipe/"
+Repository = "https://github.com/EINS-TUDa/geopipe"
+
+[dependency-groups]
 dev = [
     "pytest>=8.3.5",
 ]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.5",
+]
+# Dependency groups are never published, so a direct reference is allowed
+# here even though PyPI forbids one in [project.optional-dependencies].
+cesm-dev = [
+    "cesm @ git+https://github.com/EINS-TUDa/CESM.git@578e0bb",
+    "gurobipy<13.0",
+]
 
-[tool.hatch.metadata]
-allow-direct-references = true
+[tool.uv]
+default-groups = ["dev", "docs", "cesm-dev"]
 
 [tool.pytest.ini_options]
 python_functions = ["test_*", "*_test"]
