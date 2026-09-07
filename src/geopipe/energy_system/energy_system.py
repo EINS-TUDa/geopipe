@@ -218,7 +218,7 @@ class EnergySystemBuilder:
             if not isinstance(value, (int, float)):
                 raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
 
-            profile = pd.read_csv(demand_type.profile_path, sep="\s+", decimal=".", header=None)
+            profile = pd.read_csv(demand_type.profile_path, sep=r"\s+", decimal=".", header=None)
             if profile is None or profile.empty:
                 raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
             profile = pd.Series(profile.values.ravel())

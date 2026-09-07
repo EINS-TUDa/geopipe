@@ -1,9 +1,9 @@
 # coding=utf-8
+from collections import defaultdict
 from typing import Optional, Any
 
 import networkx as nx
 import pandas as pd
-from rasterio.crs import defaultdict
 
 
 class Topology:

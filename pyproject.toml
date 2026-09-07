@@ -13,54 +13,35 @@ authors = [
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.11"
 keywords = [
     "energy system modelling",
-    "geospatial",
     "gis",
     "optimisation",
     "district heating",
-    "sector coupling",
+    "data pipeline",
 ]
 dependencies = [
-    "certifi>=2025.4.26",
-    "charset-normalizer>=3.4.2",
-    "colorama>=0.4.6",
-    "contourpy>=1.3.2",
-    "cycler>=0.12.1",
-    "et_xmlfile>=2.0.0",
-    "fonttools>=4.58.0",
+    "contextily>=1.7.0",
     "geopandas>=1.0.1",
-    "idna>=3.10",
-    "kiwisolver>=1.4.8",
     "matplotlib>=3.10.3",
     "networkx>=3.0",
     "numpy>=2.2.5",
     "openpyxl>=3.1.5",
-    "packaging>=25.0",
+    "osm2geojson>=0.3.1",
     "pandas>=2.2.3",
-    "pillow>=11.2.1",
-    "pyogrio>=0.11.0",
-    "pyparsing>=3.2.3",
-    "pyproj>=3.7.1",
+    "psycopg2-binary>=2.9.11",
+    "pydantic>=2.13.3",
+    "pydantic-settings>=2.14.0",
+    "python-dotenv>=1.0.0",
     "pyyaml>=6.0",
-    "python-dateutil>=2.9.0",
-    "pytz>=2025.2",
     "requests>=2.32.3",
     "shapely>=2.1.0",
-    "six>=1.17.0",
-    "tzdata>=2025.2",
-    "urllib3>=2.4.0",
     "sqlalchemy>=2.0.44",
-    "osm2geojson>=0.3.1",
-    "psycopg2>=2.9.11",
-    "contextily>=1.7.0",
-    "pydantic>=2.13.3",
-    "pydantic-settings>=2.14.0"
 ]
 
 [project.optional-dependencies]
-cesm = ["gurobipy<13.0"]
+cesm = ["gurobipy<13.0", "plotly>=6.0"]
 pypsa = ["pypsa>=1.3"]
 
 [project.urls]
