@@ -56,7 +56,7 @@ class PostgresConnection:
             SQLAlchemy Engine instance
         """
         url = URL.create(
-            "postgresql",
+            "postgresql+psycopg",
             username=self.user,
             password=self.password,
             host=self.host,
