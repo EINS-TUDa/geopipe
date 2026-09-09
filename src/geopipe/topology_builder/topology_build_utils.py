@@ -486,7 +486,7 @@ def divide_segments_at_junctions(streets: gpd.GeoDataFrame,
                     if col in row and pd.notna(row[col]):
                         row[col] = row[col] * share
             if id_column and id_column in row:
-                row[id_column] = f"0{k * 100}{base[id_column]}"
+                row[id_column] = f"{k * 100}{base[id_column]}"
             output_rows.append(row)
         split_count += 1
 
