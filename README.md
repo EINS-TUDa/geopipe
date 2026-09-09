@@ -97,3 +97,10 @@ Clone the repo and run
 uv sync
 ```
 to set up the development environment.
+
+## Contact
+Carolin Ayasse, [carolin.ayasse@eins.tu-darmstadt.de](mailto:carolin.ayasse@eins.tu-darmstadt.de)
+
+[Energy Information Networks and Systems (EINS)](https://www.eins.tu-darmstadt.de) at Technical University of Darmstadt, Germany
+
+
