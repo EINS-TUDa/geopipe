@@ -42,7 +42,6 @@ dependencies = [
 
 [project.optional-dependencies]
 cesm = ["gurobipy<13.0", "plotly>=6.0"]
-pypsa = ["pypsa>=1.3"]
 
 [project.urls]
 Homepage = "https://github.com/EINS-TUDa/geopipe"
