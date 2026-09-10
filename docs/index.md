@@ -20,8 +20,7 @@ flowchart TD
     streets["Street network<br/>+ region definition"] --> tb["TopologyBuilder"]
     tb -- "network" --> esb["EnergySystemBuilder"]
     subgraph inputs["Energy system inputs"]
-        direction TB
-        techs["Technologies"] ~~~ demands["DemandTypes"] ~~~ ie["Imports/Exports"]
+        techs["Technologies"] --- demands["DemandTypes"] --- ie["Imports/Exports"]
     end
     inputs --> esb
     datasets["Datasets<br/>(file, PostgreSQL)"] --> dr["DataRegistry"]
@@ -32,6 +31,7 @@ flowchart TD
 
     classDef registry fill:#fff3cd,stroke:#d4a017,stroke-width:2px,color:#000
     class dr registry
+    linkStyle 2,3 stroke:none,stroke-width:0px
 
     click streets href "Components/modify_streets_data/"
     click tb href "Components/topology_builder/"
