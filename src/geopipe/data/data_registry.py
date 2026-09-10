@@ -3,17 +3,23 @@ DataRegistry - Central management of all Datasets.
 
 The Registry manages all available Datasets and routes queries
 to the appropriate Dataset (based on type, region, and priority).
+It also owns the project CRS: every registered Dataset is reprojected to it.
 """
 
+import logging
 from collections import defaultdict
 from enum import Enum
 from typing import Optional
 import geopandas as gpd
 import networkx as nx
+from pyproj import CRS
 
 from shapely.geometry.multipoint import MultiPoint
 
 from geopipe.data.dataset import Dataset
+
+logger = logging.getLogger(__name__)
+
 
 class DataKeys(str, Enum):
     RESIDENTIAL_HEAT_DEMAND_PROFILE = "residential_heat_demand_profile"
@@ -37,26 +43,47 @@ DataKeys.EXISTING_HEAT_GRID should return a GeoDataFrame with the existing heat 
 """
 
 
+def is_metric_crs(crs: CRS) -> bool:
+    """True if ``crs`` is projected with metre axes."""
+    return crs.is_projected and crs.axis_info[0].unit_name in ("metre", "meter")
+
+
 class DataRegistry:
     """
     Central registry for all Datasets.
 
     The Registry:
+    - Owns the project CRS; all Datasets are reprojected to it on registration
     - Manages all registered Datasets
     - Sorts by priority and registration order
     - Routes queries to the best available Dataset
     """
 
-    def __init__(self):
+    def __init__(self, crs: str | CRS):
+        """
+        Args:
+            crs: The project CRS (e.g. "EPSG:25832"). Should be projected in metres, as lengths and
+                distances throughout the pipeline are measured in CRS units.
+        """
+        self._crs: CRS = CRS.from_user_input(crs)
+        if not is_metric_crs(self._crs):
+            logger.warning("CRS '%s' is not a projected CRS in metres. Lengths and distances are measured in "
+                           "CRS units.", self._crs.name)
         self._type_to_datasets: dict[str, list[Dataset]] = defaultdict(list)
         self._registration_counter: int = 0
 
+    @property
+    def crs(self) -> CRS:
+        return self._crs
+
     def register(self, dataset: Dataset) -> None:
         """
-        Registers a Dataset.
+        Registers a Dataset and reprojects it to the project CRS.
         """
         if not isinstance(dataset, Dataset):
             raise TypeError(f"{dataset} is not an instance of Dataset")
+
+        dataset.set_crs(self._crs)
 
         # Store registration order
         dataset._registration_order = self._registration_counter
@@ -119,11 +146,11 @@ class DataRegistry:
         if isinstance(region, gpd.GeoDataFrame):
             boundary_gdf = gpd.GeoDataFrame(
                 geometry=[region.geometry.union_all().convex_hull],
-                crs=region.crs)
+                crs=self._crs)
         elif isinstance(region, nx.Graph):
             boundary_gdf = gpd.GeoDataFrame(
                 geometry=[MultiPoint(list(region.nodes)).convex_hull],
-                crs=region.graph.get("crs"))
+                crs=self._crs)
         else:
             raise TypeError("query expects region as nx.Graph")
 
@@ -135,5 +162,3 @@ class DataRegistry:
 
         # The first dataset has the highest priority
         return datasets[0].query(query=query, region = boundary_gdf)
-
-

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Optional, Callable
 import geopandas as gpd
 import pandas as pd
+from pyproj import CRS
 from sqlalchemy import text
 
 from ..data.database_connection import PostgresConnection
@@ -67,8 +68,25 @@ class Dataset(ABC):
         else:
             self.regional_validity = None
         self._custom_query_function = query_function
+        self._crs: Optional[CRS] = None  # Set by registry
 
         self._registration_order: int = 0  # Set by registry
+
+    @property
+    def crs(self) -> Optional[CRS]:
+        return self._crs
+
+    def set_crs(self, crs: CRS) -> None:
+        """Set the project CRS (done by the DataRegistry on registration). Spatial data is reprojected to it."""
+        self._crs = crs
+        if self.regional_validity is not None:
+            self.regional_validity = self._to_crs(self.regional_validity)
+
+    def _to_crs(self, data: Any) -> Any:
+        """Reproject a GeoDataFrame to the project CRS; other data is returned unchanged."""
+        if isinstance(data, gpd.GeoDataFrame) and self._crs is not None and data.crs != self._crs:
+            return data.to_crs(self._crs)
+        return data
 
     def query(self, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
         """
@@ -115,9 +133,8 @@ class Dataset(ABC):
         if self.regional_validity is None:
             return True  # Globally valid
 
-        region_ = region.to_crs(self.regional_validity.crs)
         rv_geom = self.regional_validity.geometry.union_all()
-        reg_geom = region_.geometry.union_all()
+        reg_geom = region.geometry.union_all()
         return bool(rv_geom.covers(reg_geom))
 
 
@@ -135,6 +152,10 @@ class SimpleDataset(Dataset):
     ):
         super().__init__(keys=keys, unit=unit, priority=priority, regional_validity=regional_validity)
         self.data = data
+
+    def set_crs(self, crs: CRS) -> None:
+        super().set_crs(crs)
+        self.data = self._to_crs(self.data)
 
     def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         return self.data
@@ -247,14 +268,17 @@ class FileDataset(Dataset):
     def file_path_str(self) -> str:
         return str(self.file_path)
 
+    def set_crs(self, crs: CRS) -> None:
+        if crs != self._crs:
+            self._cached_data = None  # reload and reproject on next access
+        super().set_crs(crs)
+
     def fetch(self, region, query):
         data = self.get_data()
         if not isinstance(data, gpd.GeoDataFrame):
             # Non-spatial payload (CSV profiles, plain tables): nothing to
             # filter on, so the region does not narrow the result.
             return data
-        if region.crs is not None and data.crs != region.crs:
-            data = data.to_crs(region.crs)
         boundary = gpd.GeoDataFrame(geometry=[region.geometry.union_all()], crs=region.crs)
         return gpd.sjoin(data, boundary, predicate="intersects", how="inner")
 
@@ -272,10 +296,10 @@ class FileDataset(Dataset):
     def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Returns the loaded data, using lazy loading.
-        Data is only loaded once and then cached.
+        Data is only loaded (and reprojected to the project CRS) once and then cached.
         """
         if self._cached_data is None:
-            self._cached_data = self._load_data()
+            self._cached_data = self._to_crs(self._load_data())
         return self._cached_data
 
     def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:

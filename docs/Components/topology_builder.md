@@ -25,9 +25,10 @@ returns a [`TopologyBuildResult`](#topologybuildresult).
 
 `build()` runs the following steps in order:
 
-1. **Validate input** — streets data, `id_column` and at least one
-   extensive column must be set, plus the builder-specific input
+1. **Validate input** — data registry, streets data, `id_column` and at
+   least one extensive column must be set, plus the builder-specific input
    (grouping or polygons). Raises `TypeError` / `ValueError` otherwise.
+   Streets (and polygons) are then reprojected to the registry CRS.
 2. **Clean the street geometry** (all steps optional, see
    [Geometry cleaning](#geometry-cleaning)):
     1. divide segments at junctions (`set_divide_at_junctions`),
@@ -54,6 +55,7 @@ so calls can be chained.
 
 | Setter | Arguments | Default | Description |
 |---|---|---|---|
+| `set_data_registry` | `data_registry: DataRegistry` | — (required) | Its CRS is the project CRS; all input geometries are reprojected to it. |
 | `set_streets_data` | `streets_data: GeoDataFrame \| Path`, `id_column: str` | — (required) | Street network (see [`streets.geojson`](#streetsgeojson-shared-input)). A `Path` is loaded via `geopandas.read_file`. `id_column` names a column with a stable per-street identifier; it is used to name split/connector segments and to report disconnected streets. |
 | `set_extensive_columns` | `extensive_columns: list[str]` | — (required, at least one) | Length-additive columns (e.g. heat demand totals) that are split by length share whenever a street is divided into several segments or edges. All other columns are copied unchanged. `build()` raises `ValueError` if none are given. |
 | `set_region_id_column` | `region_id_column: str` | `"region"` | Name of the column written into `streets` (and onto every graph edge) carrying the region ID. For `PolygonTopologyBuilder` it is also the column read from the polygons. An existing column of that name is overwritten (with a warning). |
@@ -76,8 +78,8 @@ columns are application-specific — at minimum you need
 - a stable street ID column (e.g. `fid`), passed as `id_column` to
   `set_streets_data`.
 
-Use a projected CRS in metres: edge lengths and all tolerances/distances
-are measured in CRS units.
+Any CRS works; the streets are reprojected to the registry CRS. Edge
+lengths and all tolerances/distances are measured in its units.
 
 ### `TopologyBuildResult`
 
@@ -189,6 +191,7 @@ from pathlib import Path
 from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder
 
 tb = SimpleTopologyBuilder()
+tb.set_data_registry(data_reg)
 tb.set_streets_data(Path("input/streets.geojson"), id_column="street_id")
 tb.set_extensive_columns(["waerme_mwh"])
 tb.set_grouping(Path("input/region_grouping.yaml"))
@@ -233,8 +236,7 @@ explicit street lists.
   boundary lies in no polygon and gets the default region.
 - A street lying within more than one (overlapping) polygon raises a
   `ValueError` listing the affected streets and polygons.
-- If the CRS of the polygons differs from the streets, the polygons are
-  reprojected to the streets' CRS.
+- The polygons are reprojected to the registry CRS.
 
 ### Additional API
 
@@ -249,6 +251,7 @@ from pathlib import Path
 from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
 
 tb = PolygonTopologyBuilder()
+tb.set_data_registry(data_reg)
 tb.set_streets_data(Path("input/streets.geojson"), id_column="street_id")
 tb.set_region_id_column("id")
 tb.set_extensive_columns(["waerme_mwh"])

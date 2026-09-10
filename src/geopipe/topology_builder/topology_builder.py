@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from pathlib import Path
-from typing import Self, Any
+from typing import Self, Any, Optional, TYPE_CHECKING
 import logging
 
 import geopandas as gpd
@@ -14,6 +14,9 @@ from networkx.algorithms.components import is_connected
 from .topology_build_utils import (gdf_to_nx, load_yaml, TopologyBuildResult,
                                     close_dead_end_gaps, drop_null_isolated_segments,
                                     divide_segments_at_junctions)
+
+if TYPE_CHECKING:
+    from geopipe.data.data_registry import DataRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,12 @@ class TopologyBuilder(ABC):
         self._divide_at_junctions: bool = False
         self._junction_tol: float = 1e-6
         self._check_topology_connections: bool = True
+        self._data_registry: Optional["DataRegistry"] = None
+
+    def set_data_registry(self, data_registry: "DataRegistry") -> Self:
+        """Set the data registry. Its CRS is the project CRS: all input geometries are reprojected to it."""
+        self._data_registry = data_registry
+        return self
 
     def set_streets_data(self, streets_data: gpd.GeoDataFrame | Path,
                          id_column: str) -> Self:
@@ -103,8 +112,12 @@ class TopologyBuilder(ABC):
         return self
 
     def _check_input(self):
+        if self._data_registry is None:
+            raise ValueError("Data registry must be set via set_data_registry")
         if not isinstance(self._streets_data, gpd.GeoDataFrame):
             raise TypeError("Streets data must be a GeoDataFrame")
+        if self._streets_data.crs is None:
+            raise ValueError("Streets data has no CRS")
 
         if self._streets_id_column is None:
             raise ValueError("Streets id column must be set via set_streets_data")
@@ -116,6 +129,11 @@ class TopologyBuilder(ABC):
                            self._region_id_column)
         if not self._extensive_columns:
             raise ValueError("No extensive columns specified. Demands have to be set as extensive.")
+
+    def _to_project_crs(self) -> None:
+        """Reproject the input geometries to the project CRS of the data registry."""
+        if self._streets_data.crs != self._data_registry.crs:
+            self._streets_data = self._streets_data.to_crs(self._data_registry.crs)
 
     def _setup(self):
         self._streets_data[self._region_id_column] = self._default_region
@@ -187,6 +205,7 @@ class TopologyBuilder(ABC):
     def build(self) -> TopologyBuildResult:
         """Build the topology"""
         self._check_input()
+        self._to_project_crs()
         self._clean_streets_geometry()
         #self._streets_data.to_file("debug_streets_data.geojson", driver="GeoJSON")
 
@@ -227,6 +246,13 @@ class PolygonTopologyBuilder(TopologyBuilder):
         super()._check_input()
         if self._polygons_data is None:
             raise ValueError("Polygons data must be set")
+        if self._polygons_data.crs is None:
+            raise ValueError("Polygons data has no CRS")
+
+    def _to_project_crs(self) -> None:
+        super()._to_project_crs()
+        if self._polygons_data.crs != self._data_registry.crs:
+            self._polygons_data = self._polygons_data.to_crs(self._data_registry.crs)
 
     def _setup(self):
         super()._setup()
@@ -251,8 +277,6 @@ class PolygonTopologyBuilder(TopologyBuilder):
                 raise ValueError("'polygons_geometry_column_name' does not exist")
 
     def _define_regions(self) -> None:
-        if self._polygons_data.crs != self._streets_data.crs:
-            self._polygons_data = self._polygons_data.to_crs(self._streets_data.crs)
         violating_streets = []
         for street_index, street_geometry in zip(self._streets_data.index,
                                                  self._streets_data[self._streets_geometry_column_name]):

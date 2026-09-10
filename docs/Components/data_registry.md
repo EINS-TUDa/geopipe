@@ -36,9 +36,19 @@ heating_shares = FileDataset(
     regional_validity=None,  # None = applies everywhere
 )
 
-data_reg = DataRegistry()
+data_reg = DataRegistry(crs="EPSG:25832")
 data_reg.register(heating_shares)
 ```
+
+## Project CRS
+
+The registry owns the project CRS; it is the single CRS of the whole
+pipeline. Every registered dataset is reprojected to it once (on
+registration, or on first load for file datasets), and the topology
+builder reprojects streets and polygons to it. Query functions
+therefore always receive data in the project CRS. Use a projected CRS in
+metres — a warning is logged otherwise, since lengths and distances are
+measured in CRS units.
 
 ## API
 
@@ -46,7 +56,8 @@ data_reg.register(heating_shares)
 
 | Method | Signature | Description |
 |---|---|---|
-| `__init__` | `DataRegistry()` | No arguments. |
+| `__init__` | `DataRegistry(crs: str \| pyproj.CRS)` | Sets the project CRS (see above). |
+| `crs` | property → `pyproj.CRS` | The project CRS. |
 | `register` | `register(dataset: Dataset) -> None` | Adds a dataset. Lookups walk registered datasets in **descending priority** (then registration order) and return the first match. |
 
 ## Built-in keys (`DataKeys`)
@@ -172,7 +183,7 @@ heating_shares = PostgresDataset(
         """,
 )
 
-data_reg = DataRegistry()
+data_reg = DataRegistry(crs="EPSG:25832")
 data_reg.register(heating_shares)
 ```
 

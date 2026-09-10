@@ -34,10 +34,13 @@ logging.getLogger("cesm").setLevel(logging.INFO)
 
 
 def main():
+    data_reg = case1_data_registry()
+
     streets_data = modify_streets_data(streets_data=CASE_DIR / "private_data" / "bensheim_streets_heat_demand.geojson",
                                        modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
 
     topology_builder = PolygonTopologyBuilder()
+    topology_builder.set_data_registry(data_reg)
     topology_builder.set_streets_data(streets_data, id_column="fid")
     topology_builder.set_region_id_column("id")
     topology_builder.set_extensive_columns(["waerme_mwh"])
@@ -57,7 +60,6 @@ def main():
                                                           "ind_oil_boiler": 0.2}},
     )
 
-    data_reg = case1_data_registry()
     register_technologies(CASE_DIR / "input_data" / "technologies_new.yaml", clear_registry=True)
 
     residential_heat_demand = DemandType(name="residential_heat",

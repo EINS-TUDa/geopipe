@@ -1,4 +1,5 @@
 import math
+from abc import abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Iterable
 
@@ -19,38 +20,31 @@ class DemandValueSource(BaseModel):
 
     Subclasses implement :meth:`value_for_region`. Returning ``None`` (or a
     zero value) means the demand does not exist in that region, so the
-    builder skips it there. This is what scopes a "special" demand to the
-    regions where it is actually present.
+    builder skips it there.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    def value_for_region(self, region_id: int, topology: "Topology") -> float | None:
+    def value_for_region(self, region_id: int, region_topology: "Topology") -> float | None:
         raise NotImplementedError
 
 
 class ColumnDemandValue(DemandValueSource):
-    """Demand value = sum of an (extensive) geodata column over the region's edges.
-
-    This is the classic, data-driven source: the value is distributed across the
-    street network and summed per region. Regions where the column sums to zero
-    (or is absent) get no demand.
+    """
+    Demand value = sum of an (extensive) geodata column over the region's edges.
     """
 
     column_name: str
 
-    def value_for_region(self, region_id: int, topology: "Topology") -> float | None:
+    def value_for_region(self, region_id: int, region_topology: "Topology") -> float | None:
         values = [data.get(self.column_name, float("nan"))
-                  for _, _, data in topology.graph.edges(data=True)]
+                  for _, _, data in region_topology.graph.edges(data=True)]
         return float(np.nansum(values))
 
 
 class ExplicitDemandValue(DemandValueSource):
-    """Demand value taken from an explicit ``{region_id: value}`` mapping.
-
-    The mapping keys double as the scope: the demand exists only in the listed
-    regions. Intended for "special" demands whose value is known up front (and,
-    later, can be swapped for a data-derived source without touching the builder).
+    """
+    Demand value taken from an explicit ``{region_id: value}`` mapping.
     """
 
     value_per_region: dict[int, float]

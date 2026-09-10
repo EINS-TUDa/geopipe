@@ -148,9 +148,8 @@ class EnergySystemBuilderConfig(BaseSettings):
 
 class EnergySystemBuilder:
 
-    def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
+    def __init__(self, energy_system_name: str = "Default"):
         self._energy_system_name = energy_system_name
-        self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
         self._data_registry: Optional[DataRegistry] = None
         self._unit: Optional[Unit] = None
@@ -163,10 +162,6 @@ class EnergySystemBuilder:
     @property
     def energy_system_name(self) -> str:
         return self._energy_system_name
-
-    @property
-    def base_crs(self) -> str:
-        return self._base_crs
 
     def set_system_topology(self, system_topology: nx.Graph | Topology):
         if isinstance(system_topology, nx.Graph):
@@ -292,7 +287,7 @@ class EnergySystemBuilder:
 
     def _build_decentral_technologies(self, topology: Topology, region_id: int, demands: list[Demand]) -> list[DecentralTechnology]:
         decentral_technologies = []
-        base_query = {"region": topology.graph, "base_crs": self.base_crs}
+        base_query = {"region": topology.graph}
         for demand in demands:
             matching_tech_names = DecentralTechnology.get_type_names_by_attribute(
                 "commodity_out", demand.demand_type.commodity_in)
@@ -611,12 +606,15 @@ class EnergySystemBuilder:
         errors = []
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
             errors.append(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
-        if not isinstance(self.base_crs, str) or not self.base_crs:
-            errors.append(f"Base CRS must be a non-empty string and not {type(self.base_crs)}")
         if not isinstance(self._system_topology, Topology):
             errors.append(f"System topology must be set and of type Topology and not {type(self._system_topology)}")
         if not isinstance(self._data_registry, DataRegistry):
             errors.append(f"DataRegistry must be set and of type DataRegistry and not {type(self._data_registry)}")
+        if isinstance(self._system_topology, Topology) and isinstance(self._data_registry, DataRegistry):
+            topology_crs = self._system_topology.graph.graph.get("crs")
+            if topology_crs is None or topology_crs != self._data_registry.crs:
+                errors.append(f"System topology CRS '{topology_crs}' differs from the DataRegistry CRS "
+                              f"'{self._data_registry.crs}'. Build the topology with the same DataRegistry.")
         if not isinstance(self._unit, Unit):
             errors.append(f"Unit must be set and of type Unit and not {type(self._unit)}")
         if not isinstance(self._config, EnergySystemBuilderConfig) and self._config is not None:

@@ -69,15 +69,7 @@ def census_bensheim_query(dataset: Dataset, region: gpd.GeoDataFrame, query: dic
 
 def heat_grid_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame:
     street_segments: gpd.GeoDataFrame = query["segments"]
-    heat_grid_data: gpd.GeoDataFrame = dataset.get_data()
-    # 0. Align crs
-    if street_segments.crs != heat_grid_data.crs:
-        heat_grid_data = heat_grid_data.to_crs(street_segments.crs)
-    # guard: buffer distance is in CRS units, so require a metre-based projected CRS
-    crs = street_segments.crs
-    if crs is None or not crs.is_projected or crs.axis_info[0].unit_name not in ("metre", "meter"):
-        raise ValueError(
-            f"heat_grid_bensheim_query needs a projected metre CRS, got '{getattr(crs, 'name', None)}'.")
+    heat_grid_data: gpd.GeoDataFrame = dataset.get_data()  # already in the project CRS
     # 1. Buffer around the heat grid geometries
     buffer_distance = 50  # meters
     heat_grid_buffer = heat_grid_data.buffer(buffer_distance).union_all()
@@ -132,7 +124,7 @@ def case1_data_registry() -> DataRegistry:
     )
 
 
-    data_reg = DataRegistry()
+    data_reg = DataRegistry(crs="EPSG:25832")
     data_reg.register(heating_shares)
     data_reg.register(heat_grid_bensheim)
     return data_reg
