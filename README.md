@@ -28,7 +28,8 @@ flowchart TD
     streets["Street network<br/>+ region definition"] --> tb["TopologyBuilder"]
     tb -- "network" --> esb["EnergySystemBuilder"]
     subgraph inputs["Energy system inputs"]
-        techs["Technologies"] --- demands["DemandTypes"] --- ie["Imports/Exports"]
+        direction TB
+        techs["Technologies"] ~~~ demands["DemandTypes"] ~~~ ie["Imports/Exports"]
     end
     inputs --> esb
     datasets["Datasets<br/>(file, PostgreSQL)"] --> dr["DataRegistry"]
@@ -39,19 +40,18 @@ flowchart TD
 
     classDef registry fill:#fff3cd,stroke:#d4a017,stroke-width:2px,color:#000
     class dr registry
-    linkStyle 2,3 stroke:none,stroke-width:0px
 
-    click streets href "https://eins-tuda.github.io/geopipe/Components/modify_streets_data/"
-    click tb href "https://eins-tuda.github.io/geopipe/Components/topology_builder/"
-    click techs href "https://eins-tuda.github.io/geopipe/Components/technologies/"
-    click demands href "https://eins-tuda.github.io/geopipe/Components/demand_type/"
-    click ie href "https://eins-tuda.github.io/geopipe/Components/energy_system_builder/#imports_exportsyaml"
-    click esb href "https://eins-tuda.github.io/geopipe/Components/energy_system_builder/"
-    click datasets href "https://eins-tuda.github.io/geopipe/Components/data_registry/"
-    click dr href "https://eins-tuda.github.io/geopipe/Components/data_registry/"
-    click ob href "https://eins-tuda.github.io/geopipe/Components/optimization/#optimizationbackend"
-    click scenario href "https://eins-tuda.github.io/geopipe/Components/optimization/#scenario"
-    click out href "https://eins-tuda.github.io/geopipe/Components/optimization/#solution"
+    click streets href "Components/modify_streets_data/"
+    click tb href "Components/topology_builder/"
+    click techs href "Components/technologies/"
+    click demands href "Components/demand_type/"
+    click ie href "Components/energy_system_builder/#imports_exportsyaml"
+    click esb href "Components/energy_system_builder/"
+    click datasets href "Components/data_registry/"
+    click dr href "Components/data_registry/"
+    click ob href "Components/optimization/#optimizationbackend"
+    click scenario href "Components/optimization/#scenario"
+    click out href "Components/optimization/#solution"
 ```
 
 See
