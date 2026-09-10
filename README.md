@@ -3,7 +3,7 @@
 
 **Geo**graphical energy system modeling data **pipe**line
 
-**_Note:_** This repo currently is under development and the API is not stable yet. Please contact us if you want to use it in your research.
+> This repo currently is under development and the API is not stable yet. Please contact us if you want to use it in your research.
 
 ## Installation
 ### Using CESM 
