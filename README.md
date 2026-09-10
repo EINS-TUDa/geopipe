@@ -15,8 +15,7 @@ pip install git+https://github.com/EINS-TUDa/CESM.git@578e0bb
 ```
 
 
-### Using PyPSA
-Using [PyPSA](https://github.com/PyPSA/PyPSA) as backend for the energy system optimization.
+### Using other optimization frameworks
 ```bash
 tbd
 ```

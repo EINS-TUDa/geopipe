@@ -58,6 +58,7 @@ class TopologyBuilder(ABC):
 
     def set_default_regions_in_topology(self, default_regions_in_topology: bool) -> Self:
         self._default_regions_in_topology = default_regions_in_topology
+        return self
 
     def set_extensive_columns(self, extensive_columns: list[str]) -> Self:
         """Columns whose values are length-additive (e.g. demand totals) and must be
@@ -207,7 +208,6 @@ class PolygonTopologyBuilder(TopologyBuilder):
         self._polygons_data = None
         self._streets_geometry_column_name = ["geometry", "geom"]
         self._polygons_geometry_column_name = ["geometry", "geom"]
-        # Todo: Add option to not check if each street segment is in any polygon
 
     def set_polygons_data(self, polygons_data: gpd.GeoDataFrame | Path) -> Self:
         if isinstance(polygons_data, Path):
@@ -242,7 +242,7 @@ class PolygonTopologyBuilder(TopologyBuilder):
 
         if isinstance(self._polygons_geometry_column_name, list):
             for polygons_geometry_column_name in self._polygons_geometry_column_name:
-                if polygons_geometry_column_name in self._streets_data:
+                if polygons_geometry_column_name in self._polygons_data:
                     self._polygons_geometry_column_name = polygons_geometry_column_name
                     logger.info("Using the name '%s' for the polygons_geometry_column_name",
                                 polygons_geometry_column_name)
@@ -289,6 +289,7 @@ class SimpleTopologyBuilder(TopologyBuilder):
         if isinstance(grouping, Path):
             grouping = load_yaml(grouping)
         self._grouping = grouping
+        return self
 
     def _check_input(self):
         super()._check_input()

@@ -37,13 +37,6 @@ def main():
     streets_data = modify_streets_data(streets_data=CASE_DIR / "private_data" / "bensheim_streets_heat_demand.geojson",
                                        modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
 
-    # topology_builder = SimpleTopologyBuilder()
-    # topology_builder.set_streets_data(streets_data)
-    # topology_builder.set_grouping(CASE_DIR / "input_data" / "region_grouping.yaml")
-    # topology_builder.set_region_id_column("id")
-    # topology_builder.set_extensive_columns(["waerme_mwh"])
-    # topology_result = topology_builder.build()
-
     topology_builder = PolygonTopologyBuilder()
     topology_builder.set_streets_data(streets_data, id_column="fid")
     topology_builder.set_region_id_column("id")
