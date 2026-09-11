@@ -1,21 +1,20 @@
 # DataRegistry
 
-`DataRegistry` is the pipeline's central data-lookup point. Every
-component that needs **regionalised data** — heat demand, electricity
-demand profiles, technology shares, street networks — asks the
-registry for it with a `DataRegistryQuery` (a *key* plus optional
-*params*) and the region's *topology*; the registry returns the result
-of the highest-priority dataset whose `scope` covers that
-region.
+`DataRegistry` is the pipeline's central data-lookup point:
+
+- **Streets** — the topology builders get the street network with
+  `streets(area)`. Streets are registered with `register_streets`
+  (see [Streets](#streets)).
+- **Regionalised data** — the `EnergySystemBuilder` asks for the demand
+  value, profile and technology shares of each `DemandType` with a
+  `DataRegistryQuery` (a *key* plus optional *params*) and the region's
+  *topology*; the registry returns the result of the highest-priority
+  dataset whose `scope` covers that region.
 
 This indirection means the rest of the pipeline does not need to know
 whether data comes from a GeoJSON, a Postgres database, a hard-coded
 constant, or a custom query function — only that some dataset has
 registered against the key.
-
-> **Status today.** `EnergySystemBuilder` resolves the demand values,
-> profiles and technology shares of each `DemandType` through the
-> registry. Street-network data will follow.
 
 ## Minimal usage
 
