@@ -24,7 +24,7 @@ passed to an optimisation backend.
 | Setter | Type | Required | Description |
 |---|---|---|---|
 | `set_system_topology` | `networkx.Graph` or `Topology` | yes | The graph returned by `TopologyBuilder.build().network`. |
-| `set_data_registry` | `DataRegistry` | yes | Registry used for `heating_shares` (and reserved keys). The topology must be built with the same registry (same CRS). |
+| `set_data_registry` | `DataRegistry` | yes | Registry that resolves the demand values and technology shares. The topology must be built with the same registry (same CRS). |
 | `set_demand_types` | `list[DemandType]` | yes | Overwrites the demand list. |
 | `add_demand_types` | `*DemandType` | — | Appends additional demand types. |
 | `set_imports_exports` | `str` or `Path` | yes | Path to `imports_exports.yaml` (see below). |

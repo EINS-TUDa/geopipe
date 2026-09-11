@@ -1,56 +1,15 @@
 import math
-from abc import abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Iterable
+from typing import Annotated, Iterable, Optional
 
-import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-if TYPE_CHECKING:
-    from geopipe.topology_builder.topology import Topology
+from geopipe.data.data_registry import DataRegistryQuery
 
 
 #: A share constrained to the closed interval [0, 1].
 Share = Annotated[float, Field(ge=0.0, le=1.0)]
-
-
-class DemandValueSource(BaseModel):
-    """Resolves the annual demand value of a :class:`DemandType` in a given region.
-
-    Subclasses implement :meth:`value_for_region`. Returning ``None`` (or a
-    zero value) means the demand does not exist in that region, so the
-    builder skips it there.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    def value_for_region(self, region_id: int, region_topology: "Topology") -> float | None:
-        raise NotImplementedError
-
-
-class ColumnDemandValue(DemandValueSource):
-    """
-    Demand value = sum of an (extensive) geodata column over the region's edges.
-    """
-
-    column_name: str
-
-    def value_for_region(self, region_id: int, region_topology: "Topology") -> float | None:
-        values = [data.get(self.column_name, float("nan"))
-                  for _, _, data in region_topology.graph.edges(data=True)]
-        return float(np.nansum(values))
-
-
-class ExplicitDemandValue(DemandValueSource):
-    """
-    Demand value taken from an explicit ``{region_id: value}`` mapping.
-    """
-
-    value_per_region: dict[int, float]
-
-    def value_for_region(self, region_id: int, topology: "Topology") -> float | None:
-        return self.value_per_region.get(region_id)
 
 
 class DemandType(BaseModel):
@@ -58,20 +17,19 @@ class DemandType(BaseModel):
 
     name: str
     commodity_in: str
-    value_source: ColumnDemandValue | ExplicitDemandValue
+    #: Annual demand per region, converted from the dataset's unit to the energy unit of the energy system.
+    #: A None or zero value means the demand does not exist in that region.
+    value: DataRegistryQuery
     profile_path: Path
     cooperation_of_technologies: bool
     decrease_percent_per_year: float
-    #: Query for census-derived decentral technology shares. ``None`` for demands
-    #: without census data (e.g. special demands), in which case
+    #: Existing decentral technology shares per region (e.g. census-derived). ``None`` for demands
+    #: without such data (e.g. special demands), in which case
     #: ``default_decentral_supply_technology`` provides the existing mix.
-    technology_shares_query_params: dict[str, Any] | None = None
+    technology_shares: Optional[DataRegistryQuery] = None
     #: Fallback decentral supply when no census shares are available. Either a single
     #: technology name, or a ``(tech_name, share)`` mix whose shares sum to 1.
     default_decentral_supply_technology: str | list[tuple[str, Share]] | None = None
-
-    # TODO: Add unit attribute which automatically converts the demand value to the unit of the energy system if necessary.
-    #  For now, we assume that the unit of the demand value is the same as the energy unit of the energy system.
 
     @model_validator(mode="after")
     def _validate_default_supply(self) -> "DemandType":

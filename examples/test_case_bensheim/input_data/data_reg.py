@@ -9,7 +9,8 @@ from shapely.geometry.multipoint import MultiPoint
 from geopipe import DataRegistry
 from geopipe.data.data_registry import DataKeys, DataRegistryQuery
 from geopipe.data.data_utils import get_gdf_from_ags
-from geopipe.data.dataset import Dataset, FileDataset, CensusTechnology
+from geopipe.data.dataset import Dataset, FileDataset, CensusTechnology, StreetValueDataset
+from geopipe.energy_system.units import UnitEnum
 from geopipe.topology_builder.topology import Topology
 
 
@@ -85,7 +86,7 @@ def heat_grid_bensheim_query(dataset: FileDataset, topology: Topology, query: Da
     return result
 
 
-def case1_data_registry() -> DataRegistry:
+def case1_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
     # db_conn = PostgresConnection.from_env("INFDBGAUSS")
     # heating_shares = PostgresDataset(
     #     keys=[DataKeys.HEATING_SHARES],
@@ -124,11 +125,20 @@ def case1_data_registry() -> DataRegistry:
         scope=None
     )
 
+    residential_heat_demand = StreetValueDataset.from_column(
+        streets, id_column="fid", value_column="waerme_mwh",
+        keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND], unit=UnitEnum.MWH)
+
+    pool_heat_demand = StreetValueDataset(values={"1173": 800.0}, keys=["pool_heat_demand"], unit=UnitEnum.MWH)
+
 
     data_reg = DataRegistry(crs="EPSG:25832")
     data_reg.register(heating_shares)
     data_reg.register(heat_grid_bensheim)
+    data_reg.register(residential_heat_demand)
+    data_reg.register(pool_heat_demand)
     return data_reg
 
 if __name__ == "__main__":
-    data_reg = case1_data_registry()
+    data_reg = case1_data_registry(
+        gpd.read_file(pathlib.Path(__file__).parents[1] / "private_data" / "bensheim_streets_heat_demand.geojson"))

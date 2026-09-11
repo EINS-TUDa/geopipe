@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from compare_techmaps import compare_techmaps
+from geopipe.data import DataKeys, DataRegistryQuery
 from geopipe.data.dataset import CensusTechnology
-from geopipe.energy_system.demand import DemandType, ColumnDemandValue, ExplicitDemandValue
+from geopipe.energy_system.demand import DemandType
 from geopipe.energy_system.energy_system import EnergySystemBuilder, EnergySystemBuilderConfig
 from geopipe.energy_system import Scenario
 from geopipe.energy_system import register_technologies
@@ -34,10 +35,9 @@ logging.getLogger("cesm").setLevel(logging.INFO)
 
 
 def main():
-    data_reg = case1_data_registry()
-
     streets_data = modify_streets_data(streets_data=CASE_DIR / "private_data" / "bensheim_streets_heat_demand.geojson",
                                        modifications_file=CASE_DIR / "input_data" / "modifications.yaml")
+    data_reg = case1_data_registry(streets_data)
 
     topology_builder = PolygonTopologyBuilder()
     topology_builder.set_data_registry(data_reg)
@@ -66,10 +66,10 @@ def main():
                        commodity_in="residential_heat",
                        cooperation_of_technologies=False,
                        profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
-                       value_source=ColumnDemandValue(column_name="waerme_mwh"),
-                       technology_shares_query_params={
-                           "key": "heating_shares",
-                           "name_mapping": {
+                       value=DataRegistryQuery(key=DataKeys.RESIDENTIAL_HEAT_DEMAND),
+                       technology_shares=DataRegistryQuery(
+                           key=DataKeys.HEATING_SHARES,
+                           params={"name_mapping": {
                                CensusTechnology.Gas: "ind_gas_boiler",
                                CensusTechnology.Oil: "ind_oil_boiler",
                                CensusTechnology.Wood: "ind_biomass",
@@ -79,8 +79,8 @@ def main():
                                CensusTechnology.Coal: None,
                                CensusTechnology.District_Heating: "heat_exchanger",
                                CensusTechnology.NoEnergyCarrier: None,
-                           },
-                       },
+                           }},
+                       ),
                        default_decentral_supply_technology="ind_oil_boiler",
                        decrease_percent_per_year=0)
 
@@ -88,8 +88,8 @@ def main():
                        commodity_in="pool_heat",
                        cooperation_of_technologies=True,
                        profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
-                       value_source=ExplicitDemandValue(value_per_region={0: 800.0}),
-                       technology_shares_query_params=None,
+                       value=DataRegistryQuery(key="pool_heat_demand"),
+                       technology_shares=None,
                        default_decentral_supply_technology=[("pool_heat_pump", 0.6),
                                                             ("pool_gas_boiler", 0.4)],
                        decrease_percent_per_year=0)

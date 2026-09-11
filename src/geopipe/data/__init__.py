@@ -4,6 +4,7 @@ from geopipe.data.dataset import (
     PostgresDataset,
     CSVDataset,
     SimpleDataset,
-    FileDataset
+    FileDataset,
+    StreetValueDataset,
 )
 from geopipe.data.database_connection import PostgresConnection

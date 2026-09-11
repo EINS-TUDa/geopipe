@@ -13,13 +13,9 @@ whether data comes from a GeoJSON, a Postgres database, a hard-coded
 constant, or a custom query function — only that some dataset has
 registered against the key.
 
-> **Status today.** `EnergySystemBuilder` currently only queries the
-> registry for **`heating_shares`** (via
-> `DemandType.technology_shares_query_params`). The other keys listed
-> below are reserved for upcoming changes that will move demand
-> profiles, demand totals, and street-network data through the same
-> mechanism — register them now if it fits your data layout, but until
-> those wirings land they have no effect on the built `EnergySystem`.
+> **Status today.** `EnergySystemBuilder` resolves the demand values
+> and technology shares of each `DemandType` through the registry.
+> Demand profiles and street-network data will follow.
 
 ## Minimal usage
 
@@ -59,8 +55,7 @@ measured in CRS units.
 |---|---|---|
 | `__init__` | `DataRegistry(crs: str \| pyproj.CRS)` | Sets the project CRS (see above). |
 | `crs` | property → `pyproj.CRS` | The project CRS. |
-| `query` | `query(topology, query: DataRegistryQuery) -> Any` | Answers the query for one region topology. |
-| `query_all` | `query_all(topologies: dict[K, Topology], query) -> dict[K, Any]` | Answers it for many regions at once (see below). |
+| `query` | `query(topology, query: DataRegistryQuery, unit=None) -> Any` | Answers the query for one region topology (see below). |
 
 ### `DataRegistryQuery`
 
@@ -71,14 +66,18 @@ function (e.g. `{"name_mapping": {...}}`).
 ### Routing
 
 The registry works on region topologies only; it derives no geometry
-itself. In `query_all`, each region is routed to the highest-priority
-dataset whose `scope` covers **all** of the region's
-topology nodes. A dataset covering only part of the study area thus
-answers for the regions inside it, and the next dataset by priority for
-the rest. Regions no dataset covers raise a `LookupError`. Each dataset
-is then called once with all regions routed to it (`Dataset.query_all`;
-the default loops over `Dataset.query`, subclasses can override it for
-vectorised access).
+itself. `query` routes the region to the highest-priority dataset whose
+`scope` covers **all** of the region's topology nodes. A dataset
+covering only part of the study area thus answers for the regions
+inside it, and the next dataset by priority for the rest. A region no
+dataset covers raises a `LookupError`.
+
+### Units
+
+With `unit=`, a numeric result is converted from the dataset's `unit`
+(e.g. `UnitEnum.KWH` → `UnitEnum.MWH`); a dataset without a unit is then
+rejected. The `EnergySystemBuilder` requests demand values in the energy
+unit of the energy system.
 | `register` | `register(dataset: Dataset) -> None` | Adds a dataset. Lookups walk registered datasets in **descending priority** (then registration order) and return the first match. |
 
 ## Built-in keys (`DataKeys`)
@@ -87,8 +86,8 @@ vectorised access).
 | ----------------------------------------- | -------------------------------------------------------- |
 | `RESIDENTIAL_HEAT_DEMAND_PROFILE`         | `pd.Series` of 8760 hourly values (normalised)           |
 | `RESIDENTIAL_ELECTRICITY_DEMAND_PROFILE`  | same                                                     |
-| `RESIDENTIAL_HEAT_DEMAND`                 | `float` total per region (kWh)                           |
-| `RESIDENTIAL_ELECTRICITY_DEMAND`          | `float` total per region (kWh)                           |
+| `RESIDENTIAL_HEAT_DEMAND`                 | `float` total per region (in the dataset's `unit`)       |
+| `RESIDENTIAL_ELECTRICITY_DEMAND`          | `float` total per region (in the dataset's `unit`)       |
 | `HEATING_SHARES`                          | `dict[str, float]` summing to 1, after `name_mapping`    |
 | `STREET_NETWORK`                          | `GeoDataFrame` with a `geom` `LineString` column         |
 | `LINEAR_HEAT_DENSITY`                     | `GeoDataFrame` with `geom` and `heat_density_mwh_per_km` |
@@ -114,6 +113,20 @@ query) -> Any` if supplied, otherwise return the loaded data as-is.
 | `load_data_kwargs` | `dict` or `None` | `None` | Extra kwargs forwarded to the underlying `read_file` / `read_csv`. |
 | `priority` | `int` | `10` | Higher = preferred when multiple datasets can answer the same key. |
 | `scope` | `GeoDataFrame` or `None` | `None` | Polygon of the area the dataset is valid for; `None` = applies everywhere. A region is routed to the dataset only if the polygon covers all of its topology nodes. |
+
+### `StreetValueDataset`
+
+Values per street (e.g. annual heat demand), keyed by the street ids of
+the raw input streets (the topology builder's `id_column`). A region's
+value is the sum over its edges of *value × the edge's share of its
+source street's length*, so it does not depend on how regions are
+defined.
+
+```python
+heat_demand = StreetValueDataset.from_column(
+    streets, id_column="fid", value_column="waerme_mwh",
+    keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND], unit=UnitEnum.MWH)
+```
 
 ### `PostgresDataset`
 

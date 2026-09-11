@@ -56,6 +56,13 @@ class UnitEnum(Enum):
     KWH = "kWh"
     MWH = "MWh"
     GWH = "GWh"
+    TWH = "TWh"
+
+    def conversion_factor(self, to: "UnitEnum") -> float:
+        """Factor that converts a value in this unit into ``to``, e.g. ``KWH.conversion_factor(MWH) == 0.001``."""
+        if _DIMENSION[self] != _DIMENSION[to]:
+            raise ValueError(f"Cannot convert {self.value} to {to.value}.")
+        return _SCALE[self] / _SCALE[to]
 
     @property
     def unit(self) -> Unit:
@@ -67,3 +74,10 @@ class UnitEnum(Enum):
             return UnitGW()
         else:
             raise ValueError(f"Unsupported unit: {self}")
+
+
+#: Size of each unit in W or Wh.
+_SCALE = {UnitEnum.KW: 1e3, UnitEnum.MW: 1e6, UnitEnum.GW: 1e9,
+          UnitEnum.KWH: 1e3, UnitEnum.MWH: 1e6, UnitEnum.GWH: 1e9, UnitEnum.TWH: 1e12}
+_DIMENSION = {UnitEnum.KW: "power", UnitEnum.MW: "power", UnitEnum.GW: "power",
+              UnitEnum.KWH: "energy", UnitEnum.MWH: "energy", UnitEnum.GWH: "energy", UnitEnum.TWH: "energy"}

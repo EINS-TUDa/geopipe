@@ -11,6 +11,7 @@ import networkx as nx
 import shapely
 from networkx.algorithms.components import is_connected
 
+from .topology import SOURCE_STREET_ID, SOURCE_SHARE
 from .topology_build_utils import (gdf_to_nx, load_yaml, TopologyBuildResult,
                                     close_dead_end_gaps, drop_null_isolated_segments,
                                     divide_segments_at_junctions)
@@ -135,6 +136,18 @@ class TopologyBuilder(ABC):
         if self._streets_data.crs != self._data_registry.crs:
             self._streets_data = self._streets_data.to_crs(self._data_registry.crs)
 
+    def _add_original_id_and_share(self) -> None:
+        """Record on every street its source street id and its share of that street's length. Both are split
+        along with the streets and carried onto the graph edges, so street-keyed data can be mapped onto any
+        regions."""
+        self._streets_data = self._streets_data.assign(
+            **{SOURCE_STREET_ID: self._streets_data[self._streets_id_column], SOURCE_SHARE: 1.0})
+
+    @property
+    def _length_additive_columns(self) -> list[str]:
+        """Columns split by length share when a street is divided: the extensive columns and the source share."""
+        return [*self._extensive_columns, SOURCE_SHARE]
+
     def _setup(self):
         self._streets_data[self._region_id_column] = self._default_region
 
@@ -151,7 +164,7 @@ class TopologyBuilder(ABC):
         """
         if self._divide_at_junctions:
             self._streets_data = divide_segments_at_junctions(
-                self._streets_data, self._extensive_columns, self._junction_tol,
+                self._streets_data, self._length_additive_columns, self._junction_tol,
                 id_column=self._streets_id_column)
 
         if self._gap_distance is not None:
@@ -167,7 +180,7 @@ class TopologyBuilder(ABC):
         ...
 
     def _build_street_network(self) -> None:
-        self._street_network = gdf_to_nx(self._streets_data, extensive_columns=self._extensive_columns)
+        self._street_network = gdf_to_nx(self._streets_data, extensive_columns=self._length_additive_columns)
 
     def _build_topologies(self):
         topologies = defaultdict(nx.Graph)
@@ -206,6 +219,7 @@ class TopologyBuilder(ABC):
         """Build the topology"""
         self._check_input()
         self._to_project_crs()
+        self._add_original_id_and_share()
         self._clean_streets_geometry()
         #self._streets_data.to_file("debug_streets_data.geojson", driver="GeoJSON")
 

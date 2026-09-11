@@ -109,6 +109,10 @@ result.streets.plot(column="region")
 - **Edge attributes**:
     - `length` — Euclidean length of the edge in CRS units,
     - `geometry` — the geometry of the street the edge belongs to,
+    - `source_street_id`, `source_share` — the input street the edge
+      stems from (its `id_column` value) and the edge's share of that
+      street's length. Street-keyed data (`StreetValueDataset`) is
+      mapped onto regions with them,
     - every column of `streets` (including the region column and
       `id_column`). Extensive columns are scaled by the edge's share of
       the street length, so summing them over a street's edges recovers

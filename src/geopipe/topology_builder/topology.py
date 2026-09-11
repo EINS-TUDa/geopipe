@@ -8,6 +8,11 @@ import networkx as nx
 import pandas as pd
 from shapely.geometry import MultiPoint
 
+#: Edge attribute: id of the input street the edge stems from after divide_at_junctions.
+SOURCE_STREET_ID = "source_street_id"
+#: Edge attribute: the edge's share of the length of its source street after divide_at_junctions.
+SOURCE_SHARE = "source_share"
+
 
 class Topology:
 

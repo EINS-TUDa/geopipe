@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Callable, Hashable, Mapping, TypeVar, TYPE_CHECKING
+from typing import Any, Optional, Callable, Hashable, Mapping, TYPE_CHECKING
 import geopandas as gpd
 import pandas as pd
 import shapely
@@ -10,12 +10,11 @@ from sqlalchemy import text
 
 from ..data.database_connection import PostgresConnection
 from ..energy_system.units import UnitEnum
+from ..topology_builder.topology import SOURCE_STREET_ID, SOURCE_SHARE
 
 if TYPE_CHECKING:
     from .data_registry import DataRegistryQuery
     from ..topology_builder.topology import Topology
-
-K = TypeVar("K", bound=Hashable)
 
 class CensusTechnology(Enum):
     Gas = "Gas"
@@ -106,13 +105,6 @@ class Dataset(ABC):
             return self._custom_query_function(self, topology, query)
         return self._default_query(query)
 
-    def query_all(self, topologies: Mapping[K, "Topology"], query: "DataRegistryQuery") -> dict[K, Any]:
-        """
-        Answers the query for many region topologies. The default calls :meth:`query` per topology;
-        subclasses can override this for vectorised access (e.g. one spatial join for all regions).
-        """
-        return {key: self.query(topology, query) for key, topology in topologies.items()}
-
     def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Return this dataset's full contents. Subclasses that hold data
@@ -183,6 +175,50 @@ class SimpleDataset(Dataset):
 
     def _default_query(self, query: "DataRegistryQuery") -> pd.DataFrame | gpd.GeoDataFrame:
         return self.data
+
+    def is_available(self) -> bool:
+        return True
+
+
+class StreetValueDataset(Dataset):
+    """
+    Values per street (e.g. the annual heat demand), keyed by the street id of the raw input streets, i.e.
+    the ``id_column`` given to the topology builder.
+
+    A region's value is the sum over its edges of ``values[source street] * share``, where ``share`` is the
+    edge's share of its source street's length. The values are thus independent of how regions are defined.
+    """
+    def __init__(
+        self,
+        values: Mapping[Hashable, float],
+        keys: list[str],
+        unit: Optional[UnitEnum] = None,
+        priority: int = 10,
+        scope: Optional[gpd.GeoDataFrame] = None,
+    ):
+        super().__init__(keys=keys, unit=unit, priority=priority, scope=scope)
+        self.values: dict[Hashable, float] = {street_id: float(value) for street_id, value in values.items()
+                                              if not pd.isna(value)}
+
+    @classmethod
+    def from_column(cls, streets: gpd.GeoDataFrame, id_column: str, value_column: str,
+                    **kwargs) -> "StreetValueDataset":
+        """Create the dataset from a column of the streets data (e.g. ``waerme_mwh``)."""
+        if not streets[id_column].is_unique:
+            raise ValueError(f"Street ids in column '{id_column}' are not unique.")
+        return cls(values=dict(zip(streets[id_column], streets[value_column])), **kwargs)
+
+    def query(self, topology: "Topology", query: "DataRegistryQuery") -> float:
+        """Sum of the street values over the region's edges, each weighted with the edge's share of its street."""
+        total = 0.0
+        for _, _, data in topology.graph.edges(data=True):
+            if SOURCE_STREET_ID not in data:
+                raise ValueError(f"Topology edges carry no '{SOURCE_STREET_ID}'. Build the topology with a "
+                                 f"TopologyBuilder.")
+            value = self.values.get(data[SOURCE_STREET_ID])
+            if value is not None:
+                total += value * data[SOURCE_SHARE]
+        return total
 
     def is_available(self) -> bool:
         return True

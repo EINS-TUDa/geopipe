@@ -10,18 +10,17 @@ It also owns the project CRS: every registered Dataset is reprojected to it.
 import logging
 from collections import defaultdict
 from enum import Enum
-from typing import Any, Hashable, Mapping, Optional, TypeVar, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 from pyproj import CRS
 
 from geopipe.data.dataset import Dataset
+from geopipe.energy_system.units import UnitEnum
 
 if TYPE_CHECKING:
     from geopipe.topology_builder.topology import Topology
 
 logger = logging.getLogger(__name__)
-
-K = TypeVar("K", bound=Hashable)
 
 
 class DataKeys(str, Enum):
@@ -37,8 +36,8 @@ class DataKeys(str, Enum):
 """
 DataKeys.HEAT_DEMAND_PROFILE should return a pd.Series
 DataKeys.ELECTRICITY_DEMAND_PROFILE should return a pd.Series
-DataKeys.ELECTRICITY_DEMAND should return float with the sum of the residential electricity demand in kWh for the specified region.
-DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residential heat demand in kWh for the specified region.
+DataKeys.ELECTRICITY_DEMAND should return float with the sum of the residential electricity demand in the dataset's unit for the specified region.
+DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residential heat demand in the dataset's unit for the specified region.
 DataKeys.HEATING_SHARES should return a dict[CensusTechnology, float], or dict[str, float] if a name_mapping is provided
 DataKeys.STREET_NETWORK should return a GeoDataFrame with the street network for the specified region, with columns 'geom' (LineString)
 DataKeys.LINEAR_HEAT_DENSITY should return a GeoDataFrame with the linear heat density for the specified region, with columns 'geom' (LineString) and 'heat_density_mwh_per_km'
@@ -144,42 +143,29 @@ class DataRegistry:
         # Only return datasets that are valid in the region
         return [ds for ds in candidates if ds.is_in_region(topology)]
 
-    def query(self, topology: "Topology", query: DataRegistryQuery) -> Any:
+    def query(self, topology: "Topology", query: DataRegistryQuery, unit: Optional[UnitEnum] = None) -> Any:
         """
-        Answers the query for a single region topology. See :meth:`query_all`.
-        """
-        return self.query_all({0: topology}, query)[0]
-
-    def query_all(self, topologies: Mapping[K, "Topology"], query: DataRegistryQuery) -> dict[K, Any]:
-        """
-        Answers the query for many region topologies at once.
-
-        Each topology is routed to the highest-priority dataset whose scope covers it
-        completely. Each dataset is then queried once with all topologies routed to it.
+        Answers the query for a region topology with the highest-priority dataset whose scope covers
+        it completely.
 
         Args:
-            topologies: Region topologies by an arbitrary key (e.g. the region id)
+            topology: The region topology
             query: The query
+            unit: If given, a numeric result is converted from the dataset's unit to this unit
 
         Returns:
-            The result per key, in the order of ``topologies``
+            Query result from the best available dataset
         """
-        candidates = self._type_to_datasets.get(query.key, [])
-        if not candidates:
-            raise LookupError(f"No datasets registered for key '{query.key}'.")
+        datasets = self.get_datasets(query.key, topology)
+        if not datasets:
+            raise LookupError(f"No dataset for key '{query.key}' covers the region.")
 
-        routed: dict[Dataset, dict[K, "Topology"]] = {}
-        uncovered = []
-        for topology_key, topology in topologies.items():
-            dataset = next((ds for ds in candidates if ds.is_in_region(topology)), None)
-            if dataset is None:
-                uncovered.append(topology_key)
-            else:
-                routed.setdefault(dataset, {})[topology_key] = topology
-        if uncovered:
-            raise LookupError(f"No dataset for key '{query.key}' covers the region(s) {uncovered}.")
-
-        results: dict[K, Any] = {}
-        for dataset, routed_topologies in routed.items():
-            results.update(dataset.query_all(routed_topologies, query))
-        return {topology_key: results[topology_key] for topology_key in topologies}
+        # The first dataset has the highest priority
+        dataset = datasets[0]
+        result = dataset.query(topology, query)
+        if unit is None or result is None:
+            return result
+        if dataset.unit is None:
+            raise ValueError(f"{type(dataset).__name__} answering '{query.key}' has no unit, but the result is "
+                             f"requested in {unit.value}.")
+        return result * dataset.unit.conversion_factor(unit)
