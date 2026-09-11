@@ -45,13 +45,20 @@ Runs [CESM](https://github.com/EINS-TUDa/CESM) with Gurobi. Requires the
 
 | Method | Arguments | Description |
 |---|---|---|
-| constructor | `timeseries_dir`, `output_dir` | Directories for time-series input and results (created if missing). |
+| constructor | `timeseries_dir`, `output_dir` | Directories for static time series (time-step sets, central technology profiles) and for results (created if missing). |
 | `solve` | `energy_system`, `scenario`, `mip_gap=None`, `lp_file=False` | `mip_gap`: relative MIP optimality gap (e.g. `0.01` = 1 %; `None` = solver default). `lp_file=True` writes the model `.lp` for debugging. |
 
 `solve` writes `<system>_<scenario>.xlsx` (CESM input) and
 `<system>_<scenario>.sqlite` (raw results) to `output_dir`. If no optimal
 or suboptimal solution is found, it raises `RuntimeError`; for an
 infeasible model it also writes `model_iis.ilp`.
+
+CESM reads all time series from one folder, so `solve` clears
+`output_dir/profiles/` and writes each distinct demand profile there
+once: as `<demand>.txt` if it is the same in all regions, otherwise as
+`<demand>_<region id>.txt`. A profile shared by several demands keeps
+the first name. The static time series the model references are copied
+there too.
 
 ## Solution
 

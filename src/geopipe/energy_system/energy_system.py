@@ -214,13 +214,13 @@ class EnergySystemBuilder:
                 raise ValueError(f"Demand value of {demand_type.name} in region {region_id} is not a number: "
                                  f"{value!r}.")
 
-            profile = pd.read_csv(demand_type.profile_path, sep=r"\s+", decimal=".", header=None)
-            if profile is None or profile.empty:
-                raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
-            profile = pd.Series(profile.values.ravel())
+            profile = self._data_registry.query(topology, demand_type.profile)
+            if not isinstance(profile, pd.Series) or profile.empty:
+                raise ValueError(f"Demand profile of {demand_type.name} in region {region_id} must be a non-empty "
+                                 f"pandas Series.")
 
             # Create a RegionDemand instance
-            demand = Demand(demand_type=demand_type, value=value, profile=profile, profile_name=demand_type.name)
+            demand = Demand(demand_type=demand_type, value=value, profile=profile)
             collection.append(demand)
         return collection
 
@@ -312,12 +312,12 @@ class EnergySystemBuilder:
                 existing_capacity = share * demand.peak(
                     year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
                 existing_energy_output = share * demand.value(0)
-                output_profile_path = None
+                output_profile = None
                 if not demand.demand_type.cooperation_of_technologies:
-                    output_profile_path = demand.demand_type.profile_path
+                    output_profile = demand.profile
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
                                                                   existing_energy_output=existing_energy_output,
-                                                                  output_profile_path=output_profile_path))
+                                                                  output_profile=output_profile))
                 shares_seen.add(name)
             for name, share in technology_shares_data.items():
                 if share > 0 and name not in shares_seen:
@@ -659,7 +659,7 @@ class EnergySystemBuilder:
                         f"expected '{demand_type.commodity_in}'.")
             # Registry queries need a registered dataset for their key.
             if isinstance(self._data_registry, DataRegistry):
-                for field_name in ("value", "technology_shares"):
+                for field_name in ("value", "profile", "technology_shares"):
                     source = getattr(demand_type, field_name)
                     if isinstance(source, DataRegistryQuery) and not self._data_registry.get_datasets(source.key):
                         errors.append(f"{where}: no dataset is registered for the {field_name} key "

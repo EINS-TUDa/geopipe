@@ -9,7 +9,7 @@ from shapely.geometry.multipoint import MultiPoint
 from geopipe import DataRegistry
 from geopipe.data.data_registry import DataKeys, DataRegistryQuery
 from geopipe.data.data_utils import get_gdf_from_ags
-from geopipe.data.dataset import Dataset, FileDataset, CensusTechnology, StreetValueDataset
+from geopipe.data.dataset import Dataset, FileDataset, CSVDataset, CensusTechnology, StreetValueDataset
 from geopipe.energy_system.units import UnitEnum
 from geopipe.topology_builder.topology import Topology
 
@@ -131,12 +131,18 @@ def case1_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
 
     pool_heat_demand = StreetValueDataset(values={"1173": 800.0}, keys=["pool_heat_demand"], unit=UnitEnum.MWH)
 
+    heat_profile = CSVDataset(
+        keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE, "pool_heat_demand_profile"],
+        file_path=str(pathlib.Path(__file__).parent / "residential_heat.txt"),
+        pandas_kwargs={"sep": r"\s+", "header": None})
+
 
     data_reg = DataRegistry(crs="EPSG:25832")
     data_reg.register(heating_shares)
     data_reg.register(heat_grid_bensheim)
     data_reg.register(residential_heat_demand)
     data_reg.register(pool_heat_demand)
+    data_reg.register(heat_profile)
     return data_reg
 
 if __name__ == "__main__":

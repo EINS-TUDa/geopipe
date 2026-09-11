@@ -13,9 +13,9 @@ whether data comes from a GeoJSON, a Postgres database, a hard-coded
 constant, or a custom query function — only that some dataset has
 registered against the key.
 
-> **Status today.** `EnergySystemBuilder` resolves the demand values
-> and technology shares of each `DemandType` through the registry.
-> Demand profiles and street-network data will follow.
+> **Status today.** `EnergySystemBuilder` resolves the demand values,
+> profiles and technology shares of each `DemandType` through the
+> registry. Street-network data will follow.
 
 ## Minimal usage
 

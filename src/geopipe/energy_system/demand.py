@@ -1,5 +1,4 @@
 import math
-from pathlib import Path
 from typing import Annotated, Iterable, Optional
 
 import pandas as pd
@@ -20,7 +19,7 @@ class DemandType(BaseModel):
     #: Annual demand per region, converted from the dataset's unit to the energy unit of the energy system.
     #: A None or zero value means the demand does not exist in that region.
     value: DataRegistryQuery
-    profile_path: Path
+    profile: DataRegistryQuery
     cooperation_of_technologies: bool
     decrease_percent_per_year: float
     #: Existing decentral technology shares per region (e.g. census-derived). ``None`` for demands
@@ -59,7 +58,7 @@ class DemandType(BaseModel):
 
 class Demand:
 
-    def __init__(self, demand_type: DemandType, value: float, profile: pd.Series, profile_name: str):
+    def __init__(self, demand_type: DemandType, value: float, profile: pd.Series):
         """
 
         Parameters
@@ -69,13 +68,11 @@ class Demand:
             The value of the initial year
         profile : pd.Series
             A Series with numeric values. Consists of 8760 data points with the demand per hour
-        profile_name : str
         decrease_percent_per_year :
             Decrease of the value per year in percent
         """
         self._demand_type = demand_type
         self._profile = profile / profile.sum()
-        self._profile_name = profile_name
         self._value = value
 
     @property
@@ -89,10 +86,6 @@ class Demand:
     @property
     def profile(self) -> pd.Series:
         return self._profile
-
-    @property
-    def profile_name(self) -> str:
-        return self._profile_name
 
     def value(self, year_period) -> float:
         """The value of the year after the start"""

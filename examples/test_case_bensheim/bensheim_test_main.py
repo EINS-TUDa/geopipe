@@ -65,7 +65,7 @@ def main():
     residential_heat_demand = DemandType(name="residential_heat",
                        commodity_in="residential_heat",
                        cooperation_of_technologies=False,
-                       profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
+                       profile=DataRegistryQuery(key=DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE),
                        value=DataRegistryQuery(key=DataKeys.RESIDENTIAL_HEAT_DEMAND),
                        technology_shares=DataRegistryQuery(
                            key=DataKeys.HEATING_SHARES,
@@ -87,7 +87,7 @@ def main():
     pool_heat_demand = DemandType(name="pool_heat",
                        commodity_in="pool_heat",
                        cooperation_of_technologies=True,
-                       profile_path=CASE_DIR / "input_data" / "residential_heat.txt",
+                       profile=DataRegistryQuery(key="pool_heat_demand_profile"),
                        value=DataRegistryQuery(key="pool_heat_demand"),
                        technology_shares=None,
                        default_decentral_supply_technology=[("pool_heat_pump", 0.6),

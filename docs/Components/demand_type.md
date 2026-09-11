@@ -28,7 +28,7 @@ A demand may also be satisfied directly by an `Import` whose
 
 ## Data sources
 
-`value` and `technology_shares` are `DataRegistryQuery`s, answered per
+`value`, `profile` and `technology_shares` are `DataRegistryQuery`s, answered per
 region by the `DataRegistry` (priorities, scopes, routing — see
 [DataRegistry](data_registry.md)). A special demand registers its own
 dataset under its own key. The value is converted from the dataset's
@@ -42,7 +42,6 @@ its streets, so the same input works for any region definition.
 ## Constructor
 
 ```python
-from pathlib import Path
 from geopipe.data import DataKeys, DataRegistryQuery, StreetValueDataset
 from geopipe.data.dataset import CensusTechnology
 from geopipe.energy_system.demand import DemandType
@@ -52,7 +51,7 @@ residential_heat = DemandType(
     name="residential_heat",
     commodity_in="residential_heat",
     cooperation_of_technologies=False,
-    profile_path=Path("input/residential_heat.txt"),
+    profile=DataRegistryQuery(key=DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE),
     value=DataRegistryQuery(key=DataKeys.RESIDENTIAL_HEAT_DEMAND),
     technology_shares=DataRegistryQuery(
         key=DataKeys.HEATING_SHARES,
@@ -79,7 +78,7 @@ pool_heat = DemandType(
     name="pool_heat",
     commodity_in="pool_heat",
     cooperation_of_technologies=False,
-    profile_path=Path("input/pool_heat.txt"),
+    profile=DataRegistryQuery(key="pool_heat_demand_profile"),
     value=DataRegistryQuery(key="pool_heat_demand"),  # only in the region of street 1173
     technology_shares=None,                            # no census data
     default_decentral_supply_technology=[("pool_heat_pump", 0.6),
@@ -93,20 +92,25 @@ pool_heat = DemandType(
 | `name`                                | Identifier; appears in plots and report output.                                                                                                          |
 | `commodity_in`                        | Commodity that satisfies the demand (must match a registered technology's `commodity_out`, or an import's).                                              |
 | `cooperation_of_technologies`         | `True` → all decentralised techs share a common load shape; `False` → each tech sees its own profile.                                                    |
-| `profile_path`                        | Path to a normalised hourly profile (see below).                                                                                                         |
+| `profile`                             | `DataRegistryQuery` for the hourly profile per region (see below).                                                                                       |
 | `value`                               | `DataRegistryQuery` for the annual demand per region (see [Data sources](#data-sources)). Zero or `None` = no demand in that region.                     |
 | `technology_shares`                   | `DataRegistryQuery` for per-tech shares per region. `None` for demands without such data — see the default below.                                        |
 | `default_decentral_supply_technology` | Existing-mix fallback when no census shares are available: a single tech name, or a `[(tech_name, share), ...]` mix whose shares sum to 1. **Required when `technology_shares` is `None` and the commodity is supplied by decentral technologies** (not needed for import-only demands). Validated at `.build()`. |
 | `decrease_percent_per_year`           | Linear annual decline applied to demand (e.g. `1` = −1 %/yr).                                                                                            |
 
-### `profile_path` file
+### `profile`
 
-Plain text, one space-separated row of **8760 floats** that **sum to
-≈ 1**. The pipeline normalises and broadcasts the profile across years
-internally, so absolute units don't matter — only the relative shape.
+Must return a `pd.Series` of **8760 hourly values** per region. The
+pipeline normalises it, so absolute units don't matter — only the
+relative shape. A profile file (e.g. one space-separated row of 8760
+floats) is registered as a `CSVDataset`; one file can serve several
+demands through several keys:
 
-```
-0.00011250 0.00012030 0.00012237 ... (8760 values total)
+```python
+data_reg.register(CSVDataset(
+    keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE, "pool_heat_demand_profile"],
+    file_path="input/residential_heat.txt",
+    pandas_kwargs={"sep": r"\s+", "header": None}))
 ```
 
 ### `technology_shares`
