@@ -41,10 +41,7 @@ def main():
 
     topology_builder = PolygonTopologyBuilder()
     topology_builder.set_data_registry(data_reg)
-    topology_builder.set_streets_data(streets_data, id_column="fid")
-    topology_builder.set_region_id_column("id")
-    topology_builder.set_extensive_columns(["waerme_mwh"])
-    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "polygons.geojson")
+    topology_builder.set_polygons_data(CASE_DIR / "input_data" / "polygons.geojson", id_column="id")
     topology_builder.set_topology_connections_check(False)
 
     topology_result = topology_builder.build()

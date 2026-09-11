@@ -10,11 +10,14 @@ It also owns the project CRS: every registered Dataset is reprojected to it.
 import logging
 from collections import defaultdict
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
+import geopandas as gpd
 from pydantic import BaseModel, ConfigDict
 from pyproj import CRS
 
-from geopipe.data.dataset import Dataset
+from geopipe.data.dataset import Dataset, SimpleDataset
+from geopipe.data.streets import prepare_streets
 from geopipe.energy_system.units import UnitEnum
 
 if TYPE_CHECKING:
@@ -39,7 +42,7 @@ DataKeys.ELECTRICITY_DEMAND_PROFILE should return a pd.Series
 DataKeys.ELECTRICITY_DEMAND should return float with the sum of the residential electricity demand in the dataset's unit for the specified region.
 DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residential heat demand in the dataset's unit for the specified region.
 DataKeys.HEATING_SHARES should return a dict[CensusTechnology, float], or dict[str, float] if a name_mapping is provided
-DataKeys.STREET_NETWORK should return a GeoDataFrame with the street network for the specified region, with columns 'geom' (LineString)
+DataKeys.STREET_NETWORK is registered only via DataRegistry.register_streets and read via DataRegistry.streets(area)
 DataKeys.LINEAR_HEAT_DENSITY should return a GeoDataFrame with the linear heat density for the specified region, with columns 'geom' (LineString) and 'heat_density_mwh_per_km'
 DataKeys.EXISTING_HEAT_GRID should return a GeoDataFrame with the existing heat grid for the specified region, with columns 'geom' (LineString)
 """
@@ -93,11 +96,41 @@ class DataRegistry:
 
     def register(self, dataset: Dataset) -> None:
         """
-        Registers a Dataset and reprojects it to the project CRS.
+        Registers a Dataset and reprojects it to the project CRS. Streets are registered with
+        :meth:`register_streets` instead.
         """
         if not isinstance(dataset, Dataset):
             raise TypeError(f"{dataset} is not an instance of Dataset")
+        if DataKeys.STREET_NETWORK in dataset.keys:
+            raise ValueError("Streets must be registered with register_streets().")
+        self._register(dataset)
 
+    def register_streets(self, streets: gpd.GeoDataFrame | Path, id_column: str,
+                         scope: Optional[gpd.GeoDataFrame] = None, priority: int = 10,
+                         divide_at_junctions: bool = False, junction_tol: float = 1e-6,
+                         gap_distance: Optional[float] = None,
+                         drop_isolated_null_columns: Optional[list[str]] = None) -> None:
+        """
+        Registers a street dataset.
+
+        The streets are validated, reprojected to the project CRS, given their original street id and length
+        share, and optionally cleaned
+        (see :func:`geopipe.data.streets.prepare_streets` for the cleaning steps).
+
+        Args:
+            streets: Street lines, or a path to a file geopandas can read
+            id_column: Column with a unique id per street; street-keyed data (e.g. a StreetValueDataset) refers to it
+            scope: Area the street dataset is valid for; None = everywhere
+            priority: Priority among street datasets (higher = preferred)
+        """
+        if isinstance(streets, Path):
+            streets = gpd.read_file(streets)
+        prepared = prepare_streets(streets, id_column, self._crs, divide_at_junctions=divide_at_junctions,
+                                   junction_tol=junction_tol, gap_distance=gap_distance,
+                                   drop_isolated_null_columns=drop_isolated_null_columns)
+        self._register(SimpleDataset(keys=[DataKeys.STREET_NETWORK], data=prepared, priority=priority, scope=scope))
+
+    def _register(self, dataset: Dataset) -> None:
         dataset.set_crs(self._crs)
 
         # Store registration order
@@ -142,6 +175,17 @@ class DataRegistry:
 
         # Only return datasets that are valid in the region
         return [ds for ds in candidates if ds.is_in_region(topology)]
+
+    def streets(self, area: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+        """
+        Returns all streets of the highest-priority street dataset whose scope covers the whole ``area`` (e.g. the
+        region polygons). Streets outside the area are included, as connections between regions may run over them.
+        """
+        area_geometry = area.to_crs(self._crs).union_all()
+        for dataset in self._type_to_datasets.get(DataKeys.STREET_NETWORK, []):
+            if dataset.covers(area_geometry):
+                return dataset.get_data()
+        raise LookupError("No street dataset covers the area. Register streets with register_streets().")
 
     def query(self, topology: "Topology", query: DataRegistryQuery, unit: Optional[UnitEnum] = None) -> Any:
         """

@@ -21,7 +21,7 @@ from ._year_dep import get_earliest_year_value
 from ..data.data_registry import DataRegistry, DataRegistryQuery
 from .region import Demand, Region
 from .units import Unit, UnitEnum
-from ..topology_builder.topology import Topology
+from ..topology_builder.topology import Topology, REGION_ID
 from ..plot.energy_system_plotter import plot_system_topology
 
 import logging
@@ -121,8 +121,6 @@ class EnergySystemBuilderConfig(BaseSettings):
     #: raised.
     central_tech_existing_capacities: dict[str, dict[int | str, list[tuple[str, Share]]]] = Field(
         default_factory=dict)
-    #: Name of the ID property on the edges of the topology Graph
-    region_id_name: str = "id"
     #: Name of the street-id property on the edges of the topology Graph; used to evaluate
     #: ``constrain_location_to_streets`` for central technologies.
     street_id_name: str = "street_id"
@@ -199,7 +197,7 @@ class EnergySystemBuilder:
 
     def _region_topologies(self):
         if self.__region_topologies is None:
-            self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
+            self.__region_topologies = self._system_topology.sub_topologies_by_edge_property(REGION_ID)
         return self.__region_topologies
 
     def _build_demands(self, topology: Topology, region_id: int) -> list[Demand]:
@@ -486,7 +484,7 @@ class EnergySystemBuilder:
         # All connections between regions
         region_connections: RegionConnections = compute_region_connections(self._region_topologies(),
                                                                            self._system_topology,
-                                                                           self._config.region_id_name)
+                                                                           REGION_ID)
 
         # Effective placement set per commodity. Initialised from config; auto-extended below when a connected
         # region group contains no configured location for its commodity.

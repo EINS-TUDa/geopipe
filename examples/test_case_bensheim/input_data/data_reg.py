@@ -138,6 +138,7 @@ def case1_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
 
 
     data_reg = DataRegistry(crs="EPSG:25832")
+    data_reg.register_streets(streets, id_column="fid")
     data_reg.register(heating_shares)
     data_reg.register(heat_grid_bensheim)
     data_reg.register(residential_heat_demand)

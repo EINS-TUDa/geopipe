@@ -65,7 +65,7 @@ def _check_linear_heat_density(registry: DataRegistry, sample_region) -> bool:
 def _check_street_network(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.STREET_NETWORK
     try:
-        result = registry.query(sample_region, DataRegistryQuery(key=key))
+        result = registry.streets(sample_region.convex_hull)
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False

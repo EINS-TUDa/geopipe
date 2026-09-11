@@ -78,7 +78,60 @@ With `unit=`, a numeric result is converted from the dataset's `unit`
 (e.g. `UnitEnum.KWH` → `UnitEnum.MWH`); a dataset without a unit is then
 rejected. The `EnergySystemBuilder` requests demand values in the energy
 unit of the energy system.
-| `register` | `register(dataset: Dataset) -> None` | Adds a dataset. Lookups walk registered datasets in **descending priority** (then registration order) and return the first match. |
+| `register` | `register(dataset: Dataset) -> None` | Adds a dataset. Lookups walk registered datasets in **descending priority** (then registration order) and return the first match. Streets go through `register_streets`. |
+| `register_streets` | `register_streets(streets, id_column, ...) -> None` | The only way to register streets (see [Streets](#streets)). |
+| `streets` | `streets(area: GeoDataFrame) -> GeoDataFrame` | All streets of the highest-priority street dataset whose `scope` covers `area`. |
+
+## Streets
+
+Streets are the base of the topology, so they have their own entry
+point: `register_streets` is the only way to register them (`register`
+refuses the key `STREET_NETWORK`).
+
+```python
+data_reg.register_streets(streets, id_column="fid", divide_at_junctions=True, gap_distance=5)
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `streets` | — (required) | `LineString` / `MultiLineString` streets, as `GeoDataFrame` or `Path`. |
+| `id_column` | — (required) | Unique, non-empty id per street. Street-keyed data (`StreetValueDataset`) refers to these ids. |
+| `scope`, `priority` | `None`, `10` | As for every dataset. |
+| `divide_at_junctions`, `junction_tol` | `False`, `1e-6` | See [cleaning steps](#cleaning-steps). |
+| `gap_distance` | `None` | See [cleaning steps](#cleaning-steps). |
+| `drop_isolated_null_columns` | `None` | See [cleaning steps](#cleaning-steps). |
+
+The streets are validated and reprojected, and every street records its
+`source_street_id` and `source_share`, which the cleaning steps split
+along with it. Cleaning runs once, at registration.
+
+`streets(area)` returns **all** streets of the highest-priority street
+dataset whose `scope` covers the whole `area` — also those outside it,
+as connections between regions may run over them. The topology builders
+call it.
+
+### Cleaning steps
+
+All steps are off by default, as they cost seconds per town (e.g.
+junction division ≈ 4 s for 4,660 streets). They run in this order:
+
+- **`divide_at_junctions`** — streets are only connected in the graph if
+  they share a vertex. This cuts them where they meet without one:
+  at **T-junctions** (one street ends on, or within `junction_tol` of,
+  another's interior; the crossed street is split) and at **mid-segment
+  crossings** (both streets are split). Each piece becomes its own row
+  with the ID `f"{k * 100}{old_id}"` for the *k*-th piece (street `42`
+  → `10042`, `20042`). Streets sharing an endpoint are left untouched;
+  collinear overlaps are ignored.
+- **`gap_distance`** — every dead-end (degree-1 node) is connected to
+  the closest point on the nearest street within this distance,
+  excluding its own street and the streets at its neighbouring
+  junction. The connection point is inserted into the target street
+  and a connector street is appended with the ID `f"000{target_id}"`
+  and all other attributes `NaN`. Facing dead-ends are bridged once.
+- **`drop_isolated_null_columns`** — streets outside the largest
+  connected component of the network are dropped if their values in
+  all of these columns are NULL.
 
 ## Built-in keys (`DataKeys`)
 
@@ -89,7 +142,7 @@ unit of the energy system.
 | `RESIDENTIAL_HEAT_DEMAND`                 | `float` total per region (in the dataset's `unit`)       |
 | `RESIDENTIAL_ELECTRICITY_DEMAND`          | `float` total per region (in the dataset's `unit`)       |
 | `HEATING_SHARES`                          | `dict[str, float]` summing to 1, after `name_mapping`    |
-| `STREET_NETWORK`                          | `GeoDataFrame` with a `geom` `LineString` column         |
+| `STREET_NETWORK`                          | Street lines — only via `register_streets` / `streets`   |
 | `LINEAR_HEAT_DENSITY`                     | `GeoDataFrame` with `geom` and `heat_density_mwh_per_km` |
 
 A single `Dataset` can advertise multiple keys via the `keys=[…]`

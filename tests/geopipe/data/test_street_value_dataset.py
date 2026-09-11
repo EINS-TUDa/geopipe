@@ -1,6 +1,7 @@
 import geopandas as gpd
 import pytest
 from shapely import LineString
+from shapely.geometry import box
 
 from geopipe.data.data_registry import DataRegistry, DataRegistryQuery
 from geopipe.data.dataset import StreetValueDataset
@@ -23,14 +24,13 @@ def _streets() -> gpd.GeoDataFrame:
 def test_values_follow_split_streets_into_regions():
     streets = _streets()
     registry = DataRegistry(crs=CRS)
+    # junction division splits A into 100A (x = 0..40) and 200A (x = 40..100)
+    registry.register_streets(streets, id_column="fid", divide_at_junctions=True)
     registry.register(StreetValueDataset.from_column(streets, id_column="fid", value_column="waerme_mwh",
                                                      keys=["heat"]))
-    # junction division splits A into 100A (x = 0..40) and 200A (x = 40..100)
     result = (SimpleTopologyBuilder()
               .set_data_registry(registry)
-              .set_streets_data(streets, id_column="fid")
-              .set_extensive_columns(["waerme_mwh"])
-              .set_divide_at_junctions(True)
+              .set_area(gpd.GeoDataFrame(geometry=[box(-10, -10, 110, 20)], crs=CRS))
               .set_grouping({1: {"fid": ["100A", "B"]}, 2: {"fid": ["200A"]}})
               .build())
     topologies = {region_id: Topology(graph) for region_id, graph in result.region_topologies.items()}

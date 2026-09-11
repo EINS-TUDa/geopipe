@@ -6,6 +6,8 @@ import geopandas as gpd
 import pandas as pd
 import shapely
 from pyproj import CRS
+from shapely.geometry import MultiPoint
+from shapely.geometry.base import BaseGeometry
 from sqlalchemy import text
 
 from ..data.database_connection import PostgresConnection
@@ -137,18 +139,20 @@ class Dataset(ABC):
     def is_available(self) -> bool:
         raise NotImplementedError
 
-    def is_in_region(self, topology: "Topology") -> bool:
-        """True if the scope covers every node of the region topology."""
+    def covers(self, geometry: BaseGeometry) -> bool:
+        """True if the scope covers ``geometry`` (always true without a scope)."""
         if self.scope is None:
             return True  # Globally valid
 
         if self._scope_geometry is None:
             self._scope_geometry = self.scope.geometry.union_all()
             shapely.prepare(self._scope_geometry)
+        return bool(self._scope_geometry.covers(geometry))
+
+    def is_in_region(self, topology: "Topology") -> bool:
+        """True if the scope covers every node of the region topology."""
         nodes = list(topology.graph.nodes)
-        if not nodes:
-            return True
-        return bool(shapely.covers(self._scope_geometry, shapely.points(nodes)).all())
+        return not nodes or self.covers(MultiPoint(nodes))
 
 
 class SimpleDataset(Dataset):
