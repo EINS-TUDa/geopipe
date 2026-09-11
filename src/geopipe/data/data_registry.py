@@ -1,24 +1,27 @@
 """
 DataRegistry - Central management of all Datasets.
 
-The Registry manages all available Datasets and routes queries
-to the appropriate Dataset (based on type, region, and priority).
+The Registry manages all available Datasets and routes queries to the appropriate
+Dataset (based on key, scope and priority). Queries work on region topologies:
+each region is routed to the highest-priority Dataset whose scope covers it.
 It also owns the project CRS: every registered Dataset is reprojected to it.
 """
 
 import logging
 from collections import defaultdict
 from enum import Enum
-from typing import Optional
-import geopandas as gpd
-import networkx as nx
+from typing import Any, Hashable, Mapping, Optional, TypeVar, TYPE_CHECKING
+from pydantic import BaseModel, ConfigDict
 from pyproj import CRS
-
-from shapely.geometry.multipoint import MultiPoint
 
 from geopipe.data.dataset import Dataset
 
+if TYPE_CHECKING:
+    from geopipe.topology_builder.topology import Topology
+
 logger = logging.getLogger(__name__)
+
+K = TypeVar("K", bound=Hashable)
 
 
 class DataKeys(str, Enum):
@@ -48,6 +51,19 @@ def is_metric_crs(crs: CRS) -> bool:
     return crs.is_projected and crs.axis_info[0].unit_name in ("metre", "meter")
 
 
+class DataRegistryQuery(BaseModel):
+    """A query to the DataRegistry.
+
+    ``key`` selects the datasets; ``params`` are dataset-specific options that are passed
+    through unchanged to the query function of the dataset that answers the query.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str
+    params: dict[str, Any] = {}
+
+
 class DataRegistry:
     """
     Central registry for all Datasets.
@@ -56,7 +72,7 @@ class DataRegistry:
     - Owns the project CRS; all Datasets are reprojected to it on registration
     - Manages all registered Datasets
     - Sorts by priority and registration order
-    - Routes queries to the best available Dataset
+    - Routes each queried region to the best Dataset covering it
     """
 
     def __init__(self, crs: str | CRS):
@@ -104,14 +120,14 @@ class DataRegistry:
     def get_datasets(
         self,
         key: Optional[str] = None,
-        region: Optional[gpd.GeoDataFrame] = None
+        topology: Optional["Topology"] = None
         ) -> list[Dataset]:
         """
-        Returns all datasets for a type (optionally filtered by region and key).
+        Returns all datasets for a type (optionally filtered by key and by coverage of a region topology).
 
         Args:
             key: The requested data type
-            region: Optional query region
+            topology: Optional region topology the datasets must cover
 
         Returns:
             List of datasets, sorted by priority
@@ -120,45 +136,50 @@ class DataRegistry:
             # all datasets
             candidates = [ds for datasets in self._type_to_datasets.values() for ds in datasets]
         else:
-            candidates = self._type_to_datasets[key]
+            candidates = self._type_to_datasets.get(key, [])
 
-        if region is None:
+        if topology is None:
             return candidates
 
         # Only return datasets that are valid in the region
-        return [ds for ds in candidates if ds.is_in_region(region)]
+        return [ds for ds in candidates if ds.is_in_region(topology)]
 
-    def query(self, query: dict):
+    def query(self, topology: "Topology", query: DataRegistryQuery) -> Any:
         """
-        Executes a query and returns the result from the best dataset.
+        Answers the query for a single region topology. See :meth:`query_all`.
+        """
+        return self.query_all({0: topology}, query)[0]
+
+    def query_all(self, topologies: Mapping[K, "Topology"], query: DataRegistryQuery) -> dict[K, Any]:
+        """
+        Answers the query for many region topologies at once.
+
+        Each topology is routed to the highest-priority dataset whose scope covers it
+        completely. Each dataset is then queried once with all topologies routed to it.
 
         Args:
-            query: Dictionary with at least 'key', optionally 'region' and other parameters
+            topologies: Region topologies by an arbitrary key (e.g. the region id)
+            query: The query
 
         Returns:
-            Query result from the best available dataset
+            The result per key, in the order of ``topologies``
         """
-        key = query.get("key")
-        if not key:
-            raise ValueError("'key' must be specified in the query.")
+        candidates = self._type_to_datasets.get(query.key, [])
+        if not candidates:
+            raise LookupError(f"No datasets registered for key '{query.key}'.")
 
-        region = query.pop("region")
-        if isinstance(region, gpd.GeoDataFrame):
-            boundary_gdf = gpd.GeoDataFrame(
-                geometry=[region.geometry.union_all().convex_hull],
-                crs=self._crs)
-        elif isinstance(region, nx.Graph):
-            boundary_gdf = gpd.GeoDataFrame(
-                geometry=[MultiPoint(list(region.nodes)).convex_hull],
-                crs=self._crs)
-        else:
-            raise TypeError("query expects region as nx.Graph")
+        routed: dict[Dataset, dict[K, "Topology"]] = {}
+        uncovered = []
+        for topology_key, topology in topologies.items():
+            dataset = next((ds for ds in candidates if ds.is_in_region(topology)), None)
+            if dataset is None:
+                uncovered.append(topology_key)
+            else:
+                routed.setdefault(dataset, {})[topology_key] = topology
+        if uncovered:
+            raise LookupError(f"No dataset for key '{query.key}' covers the region(s) {uncovered}.")
 
-        datasets = self.get_datasets(key, boundary_gdf)
-
-        if not datasets:
-            region_info = f" in region '{region}'" if region is not None else ""
-            raise LookupError(f"No datasets found for key '{key}'{region_info}.")
-
-        # The first dataset has the highest priority
-        return datasets[0].query(query=query, region = boundary_gdf)
+        results: dict[K, Any] = {}
+        for dataset, routed_topologies in routed.items():
+            results.update(dataset.query_all(routed_topologies, query))
+        return {topology_key: results[topology_key] for topology_key in topologies}

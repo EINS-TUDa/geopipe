@@ -105,8 +105,9 @@ internally, so absolute units don't matter — only the relative shape.
 
 ### `technology_shares_query_params`
 
-The dict is passed through to whichever `Dataset` the registry resolves
-to. Two keys matter at the user level:
+The dict becomes a `DataRegistryQuery`: `key` selects the registry key,
+all other entries become its `params` and reach the query function of
+the dataset the registry resolves to. Two keys matter at the user level:
 
 - **`key`** — the registry key to query (e.g. `"heating_shares"`,
   matching `DataKeys.HEATING_SHARES`).

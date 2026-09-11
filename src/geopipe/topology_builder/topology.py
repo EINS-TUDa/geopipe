@@ -1,9 +1,12 @@
 # coding=utf-8
 from collections import defaultdict
+from functools import cached_property
 from typing import Optional, Any
 
+import geopandas as gpd
 import networkx as nx
 import pandas as pd
+from shapely.geometry import MultiPoint
 
 
 class Topology:
@@ -14,6 +17,15 @@ class Topology:
     @property
     def name(self):
         return self.graph.name
+
+    @property
+    def crs(self):
+        return self.graph.graph.get("crs")
+
+    @cached_property
+    def convex_hull(self) -> gpd.GeoDataFrame:
+        """Convex hull of the nodes as a single-row GeoDataFrame, e.g. for area-based data queries."""
+        return gpd.GeoDataFrame(geometry=[MultiPoint(list(self.graph.nodes)).convex_hull], crs=self.crs)
 
     @property
     def total_edge_length(self) -> float:

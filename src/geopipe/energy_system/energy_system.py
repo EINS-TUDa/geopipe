@@ -1,7 +1,7 @@
 # coding=utf-8
 import time
 from dataclasses import dataclass, field
-from typing import Annotated, Optional
+from typing import Annotated, Any, Iterable, Optional
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -18,7 +18,7 @@ from .technology import PipeTechnology, GridTechnology, CentralTechnology, Decen
 from .region import compute_region_connections, RegionConnections
 from .demand import DemandType, ExplicitDemandValue
 from ._year_dep import get_earliest_year_value
-from ..data.data_registry import DataRegistry
+from ..data.data_registry import DataRegistry, DataRegistryQuery
 from .region import Demand, Region
 from .units import Unit, UnitEnum
 from ..topology_builder.topology import Topology
@@ -202,6 +202,31 @@ class EnergySystemBuilder:
             self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
         return self.__region_topologies
 
+    def _query_all(self, query: DataRegistryQuery, region_ids: Iterable[int]) -> dict[int, Any]:
+        """Batch-query the data registry for the given regions."""
+        region_topologies = self._region_topologies()
+        return self._data_registry.query_all(
+            {region_id: region_topologies[region_id] for region_id in region_ids}, query)
+
+    def _query_technology_shares(self, demands_per_region: dict[int, list[Demand]]
+                                 ) -> dict[str, dict[int, dict[str, float]]]:
+        """Batch-query the technology shares of each demand type over all regions where the demand exists and
+        is supplied by decentral technologies. Returns demand name -> region id -> shares."""
+        technology_shares = {}
+        for demand_type in self._demand_types:
+            query_params = demand_type.technology_shares_query_params
+            if query_params is None or not DecentralTechnology.get_type_names_by_attribute(
+                    "commodity_out", demand_type.commodity_in):
+                continue
+            region_ids = [region_id for region_id, demands in demands_per_region.items()
+                          if any(demand.name == demand_type.name for demand in demands)]
+            if not region_ids:
+                continue
+            params = dict(query_params)
+            query = DataRegistryQuery(key=params.pop("key"), params=params)
+            technology_shares[demand_type.name] = self._query_all(query, region_ids)
+        return technology_shares
+
     def _build_demands(self, topology: Topology, region_id: int) -> list[Demand]:
         collection = []
         for demand_type in self._demand_types:
@@ -285,9 +310,10 @@ class EnergySystemBuilder:
 
         return technology_shares_data
 
-    def _build_decentral_technologies(self, topology: Topology, region_id: int, demands: list[Demand]) -> list[DecentralTechnology]:
+    def _build_decentral_technologies(self, region_id: int, demands: list[Demand],
+                                      technology_shares: dict[str, dict[int, dict[str, float]]]
+                                      ) -> list[DecentralTechnology]:
         decentral_technologies = []
-        base_query = {"region": topology.graph}
         for demand in demands:
             matching_tech_names = DecentralTechnology.get_type_names_by_attribute(
                 "commodity_out", demand.demand_type.commodity_in)
@@ -298,11 +324,8 @@ class EnergySystemBuilder:
                             demand.demand_type.commodity_in, demand.demand_type.name, region_id)
                 continue
 
-            if demand.demand_type.technology_shares_query_params is None:
-                technology_shares_data: dict[str, float] = {}
-            else:
-                technology_shares_data = self._data_registry.query(
-                    demand.demand_type.technology_shares_query_params | base_query)
+            # Copy: the processing below modifies the shares in place; the dataset's result must stay untouched.
+            technology_shares_data = dict(technology_shares.get(demand.name, {}).get(region_id, {}))
 
             technology_shares_data = self._process_technology_shares(technology_shares_data, demand, region_id)
 
@@ -474,13 +497,14 @@ class EnergySystemBuilder:
         self._pre_build()
 
         region_ids = tuple(self._region_topologies().keys())
-        demands_per_region: dict[int, list[Demand]] = {}
+        demands_per_region: dict[int, list[Demand]] = {region_id: self._build_demands(topology, region_id)
+                                                       for region_id, topology in self._region_topologies().items()}
+        technology_shares = self._query_technology_shares(demands_per_region)
         decentralized_tech_per_region: dict[int, list[DecentralTechnology]] = {}
         grid_tech_per_region: dict[int, dict[str, GridTechnology]] = {}
         for region_id, topology in self._region_topologies().items():
-            demands_per_region[region_id] = self._build_demands(topology, region_id)
-            decentralized_tech_per_region[region_id] = self._build_decentral_technologies(topology, region_id,
-                                                                                          demands_per_region[region_id])
+            decentralized_tech_per_region[region_id] = self._build_decentral_technologies(
+                region_id, demands_per_region[region_id], technology_shares)
             grid_tech_per_region[region_id] = self._build_grids(topology, decentralized_tech_per_region[region_id])
 
         # All connections between regions

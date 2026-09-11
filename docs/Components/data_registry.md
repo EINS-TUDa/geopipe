@@ -3,8 +3,9 @@
 `DataRegistry` is the pipeline's central data-lookup point. Every
 component that needs **regionalised data** — heat demand, electricity
 demand profiles, technology shares, street networks — asks the
-registry for it by *key* and *region*; the registry returns the result
-of the highest-priority dataset whose `regional_validity` covers that
+registry for it with a `DataRegistryQuery` (a *key* plus optional
+*params*) and the region's *topology*; the registry returns the result
+of the highest-priority dataset whose `scope` covers that
 region.
 
 This indirection means the rest of the pipeline does not need to know
@@ -33,7 +34,7 @@ heating_shares = FileDataset(
     file_path=str(pathlib.Path(__file__).parent / "Census2022HeatingType.geojson"),
     query_function=census_bensheim_query,  # see below
     priority=10,
-    regional_validity=None,  # None = applies everywhere
+    scope=None,  # None = applies everywhere
 )
 
 data_reg = DataRegistry(crs="EPSG:25832")
@@ -58,6 +59,26 @@ measured in CRS units.
 |---|---|---|
 | `__init__` | `DataRegistry(crs: str \| pyproj.CRS)` | Sets the project CRS (see above). |
 | `crs` | property → `pyproj.CRS` | The project CRS. |
+| `query` | `query(topology, query: DataRegistryQuery) -> Any` | Answers the query for one region topology. |
+| `query_all` | `query_all(topologies: dict[K, Topology], query) -> dict[K, Any]` | Answers it for many regions at once (see below). |
+
+### `DataRegistryQuery`
+
+`DataRegistryQuery(key, params={})` — `key` selects the datasets;
+`params` are dataset-specific options passed unchanged to the query
+function (e.g. `{"name_mapping": {...}}`).
+
+### Routing
+
+The registry works on region topologies only; it derives no geometry
+itself. In `query_all`, each region is routed to the highest-priority
+dataset whose `scope` covers **all** of the region's
+topology nodes. A dataset covering only part of the study area thus
+answers for the regions inside it, and the next dataset by priority for
+the rest. Regions no dataset covers raise a `LookupError`. Each dataset
+is then called once with all regions routed to it (`Dataset.query_all`;
+the default loops over `Dataset.query`, subclasses can override it for
+vectorised access).
 | `register` | `register(dataset: Dataset) -> None` | Adds a dataset. Lookups walk registered datasets in **descending priority** (then registration order) and return the first match. |
 
 ## Built-in keys (`DataKeys`)
@@ -79,7 +100,7 @@ list.
 
 Two built-ins are available out of the box: `FileDataset` (any file
 that pandas/geopandas can read) and `PostgresDataset` (any Postgres
-connection). Both call the optional `query_function(dataset, region,
+connection). Both call the optional `query_function(dataset, topology,
 query) -> Any` if supplied, otherwise return the loaded data as-is.
 
 ### `FileDataset`
@@ -88,11 +109,11 @@ query) -> Any` if supplied, otherwise return the loaded data as-is.
 |---|---|---|---|
 | `keys` | `list[str]` | — (required) | Data keys this dataset can answer (typically values from `DataKeys`). |
 | `file_path` | `str` | — (required) | Path to the source file (`.geojson` / `.gpkg` / `.shp` → geopandas, else pandas CSV). |
-| `query_function` | `Callable` or `None` | `None` | Custom resolver with signature `(dataset, region, query) -> Any`. If omitted, `query()` returns the loaded data. |
+| `query_function` | `Callable` or `None` | `None` | Custom resolver with signature `(dataset, topology, query) -> Any`. If omitted, `query()` returns the loaded data. |
 | `unit` | `UnitEnum` or `None` | `None` | Optional unit annotation for the returned data. |
 | `load_data_kwargs` | `dict` or `None` | `None` | Extra kwargs forwarded to the underlying `read_file` / `read_csv`. |
 | `priority` | `int` | `10` | Higher = preferred when multiple datasets can answer the same key. |
-| `regional_validity` | `GeoDataFrame` or `None` | `None` | Validity polygon; `None` = applies everywhere. Lookups skip datasets whose polygon does not cover the queried region. |
+| `scope` | `GeoDataFrame` or `None` | `None` | Polygon of the area the dataset is valid for; `None` = applies everywhere. A region is routed to the dataset only if the polygon covers all of its topology nodes. |
 
 ### `PostgresDataset`
 
@@ -100,11 +121,11 @@ query) -> Any` if supplied, otherwise return the loaded data as-is.
 |---|---|---|---|
 | `keys` | `list[str]` | — (required) | Data keys this dataset can answer. |
 | `db_connection` | `PostgresConnection` | — (required) | Connection used by `execute_spatial_query` / the query function. |
-| `query_function` | `Callable` or `None` | — (required) | Resolver with signature `(dataset, region, query) -> Any`. |
+| `query_function` | `Callable` or `None` | — (required) | Resolver with signature `(dataset, topology, query) -> Any`. |
 | `sql` | `str` or `None` | `None` | SQL executed by `fetch()`, with `:wkt` / `:epsg` placeholders for the region. |
 | `unit` | `UnitEnum` or `None` | `None` | Optional unit annotation. |
 | `priority` | `int` | `2` | Lower default than `FileDataset` so files win on ties. |
-| `regional_validity` | `GeoDataFrame` or `None` | `None` | Validity polygon; `None` = applies everywhere. |
+| `scope` | `GeoDataFrame` or `None` | `None` | Polygon of the area the dataset is valid for; `None` = applies everywhere. |
 
 ## Adding a Postgres data source
 
@@ -156,7 +177,7 @@ directory, so scripts run from anywhere inside the repository pick it up.
 
 The `sql` string is executed by `fetch()` through
 `execute_spatial_query`, which binds two parameters for you: `:wkt`
-(the queried region as WKT) and `:epsg` (its EPSG code). Use them in a
+(the geometry passed to `fetch`, as WKT) and `:epsg` (its EPSG code). Use them in a
 `ST_Intersects` clause so the database does the spatial filtering:
 
 ```python
@@ -194,7 +215,7 @@ raising if the server is unreachable, so a database dataset that is
 temporarily down simply loses to a lower-priority `FileDataset`.
 
 The `query_function` receives the raw query result via
-`dataset.fetch(region, query)` and post-processes it exactly as it would
+`dataset.fetch(geometry, query)` (e.g. `topology.convex_hull`) and post-processes it exactly as it would
 for a file-backed dataset — the same function can therefore serve both a
 `FileDataset` and a `PostgresDataset` variant of the same data.
 
@@ -202,16 +223,19 @@ for a file-backed dataset — the same function can therefore serve both a
 
 When the default loader doesn't fit (e.g. you need to aggregate raw
 census categories into named technologies), pass a `query_function`.
-It receives the dataset, the requested region, and the query dict:
+It receives the dataset, the region's `Topology` and the
+`DataRegistryQuery`. How the topology becomes a spatial filter is up to
+the function — e.g. `topology.convex_hull` (a one-row GeoDataFrame) for
+an area-based lookup:
 
 ```python
-def census_bensheim_query(dataset, region, query):
-    if query["key"] != "heating_shares":
+def census_bensheim_query(dataset, topology, query):
+    if query.key != DataKeys.HEATING_SHARES:
         raise ValueError("only heating_shares supported")
 
-    gdf = dataset.get_data()
-    # ... spatial join, aggregation, etc. ...
-    name_mapping = query.get("name_mapping", {})
+    gdf = dataset.fetch(topology.convex_hull, query)
+    # ... aggregation ...
+    name_mapping = query.params.get("name_mapping", {})
     return mapped_shares
 ```
 

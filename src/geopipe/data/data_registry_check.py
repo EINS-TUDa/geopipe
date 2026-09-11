@@ -5,7 +5,7 @@ import pandas as pd
 from geopandas import GeoDataFrame
 from shapely.geometry import LineString
 from .dataset import CensusTechnology
-from .data_registry import DataRegistry, DataKeys
+from .data_registry import DataRegistry, DataKeys, DataRegistryQuery
 
 
 def check_registry(registry: DataRegistry, sample_region) -> bool:
@@ -33,7 +33,7 @@ def check_registry(registry: DataRegistry, sample_region) -> bool:
 def _check_linear_heat_density(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.LINEAR_HEAT_DENSITY
     try:
-        result = registry.query({"key": key, "region": sample_region})
+        result = registry.query(sample_region, DataRegistryQuery(key=key))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False
@@ -65,7 +65,7 @@ def _check_linear_heat_density(registry: DataRegistry, sample_region) -> bool:
 def _check_street_network(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.STREET_NETWORK
     try:
-        result = registry.query({"key": key, "region": sample_region})
+        result = registry.query(sample_region, DataRegistryQuery(key=key))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False
@@ -91,8 +91,8 @@ def _check_heating_shares(registry: DataRegistry, sample_region) -> bool:
     name_mapping = {tech: tech.value for tech in CensusTechnology}
 
     try:
-        result_1 = registry.query({"key": key, "region": sample_region})
-        result_2 = registry.query({"key": key, "region": sample_region, "name_mapping": name_mapping})
+        result_1 = registry.query(sample_region, DataRegistryQuery(key=key))
+        result_2 = registry.query(sample_region, DataRegistryQuery(key=key, params={"name_mapping": name_mapping}))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         success &= False
@@ -118,7 +118,7 @@ def _check_heating_shares(registry: DataRegistry, sample_region) -> bool:
 def _check_residential_heat_demand(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.RESIDENTIAL_HEAT_DEMAND
     try:
-        result = registry.query({"key": key, "region": sample_region})
+        result = registry.query(sample_region, DataRegistryQuery(key=key))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False
@@ -133,7 +133,7 @@ def _check_residential_heat_demand(registry: DataRegistry, sample_region) -> boo
 def _check_residential_electricity_demand(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.RESIDENTIAL_ELECTRICITY_DEMAND
     try:
-        result = registry.query({"key": key, "region": sample_region})
+        result = registry.query(sample_region, DataRegistryQuery(key=key))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False
@@ -148,7 +148,7 @@ def _check_residential_electricity_demand(registry: DataRegistry, sample_region)
 def _check_residential_electric_demand_profile(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.RESIDENTIAL_ELECTRICITY_DEMAND_PROFILE
     try:
-        result = registry.query({"key": key, "region": sample_region})
+        result = registry.query(sample_region, DataRegistryQuery(key=key))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False
@@ -163,7 +163,7 @@ def _check_residential_electric_demand_profile(registry: DataRegistry, sample_re
 def _check_residential_heat_demand_profile(registry: DataRegistry, sample_region) -> bool:
     key = DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE
     try:
-        result = registry.query({"key": key, "region": sample_region})
+        result = registry.query(sample_region, DataRegistryQuery(key=key))
     except Exception as e:
         print(f"Error querying registry for key '{key}': {e}")
         return False

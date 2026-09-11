@@ -1,14 +1,21 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional, Callable
+from typing import Any, Optional, Callable, Hashable, Mapping, TypeVar, TYPE_CHECKING
 import geopandas as gpd
 import pandas as pd
+import shapely
 from pyproj import CRS
 from sqlalchemy import text
 
 from ..data.database_connection import PostgresConnection
 from ..energy_system.units import UnitEnum
+
+if TYPE_CHECKING:
+    from .data_registry import DataRegistryQuery
+    from ..topology_builder.topology import Topology
+
+K = TypeVar("K", bound=Hashable)
 
 class CensusTechnology(Enum):
     Gas = "Gas"
@@ -45,15 +52,15 @@ class Dataset(ABC):
         keys: list[str],
         unit: Optional[UnitEnum] = None,
         priority: int = 10,
-        regional_validity: Optional[gpd.GeoDataFrame] = None,
+        scope: Optional[gpd.GeoDataFrame] = None,
         query_function: Optional[Callable] = None,
     ):
         """
         Args:
             keys: List of data types this dataset can provide
             priority: Priority (higher = preferred), default: 10
-            regional_validity: GeoDataFrame with validity region
-            query_function: Optional custom query function
+            scope: GeoDataFrame with the area the dataset is valid for (None = everywhere)
+            query_function: Optional custom query function ``(dataset, topology, query) -> Any``
         """
         if not isinstance(keys, list):
             raise TypeError("Dataset keys must be a list of strings.")
@@ -63,12 +70,13 @@ class Dataset(ABC):
         self.keys: list[str] = keys
         self.unit: Optional[UnitEnum] = unit
         self.priority: int = priority
-        if regional_validity is not None:
-            self.regional_validity = regional_validity.dissolve()  # Ensure single geometry
+        if scope is not None:
+            self.scope = scope.dissolve()  # Ensure single geometry
         else:
-            self.regional_validity = None
+            self.scope = None
         self._custom_query_function = query_function
         self._crs: Optional[CRS] = None  # Set by registry
+        self._scope_geometry = None  # Prepared union of scope, built on first use
 
         self._registration_order: int = 0  # Set by registry
 
@@ -79,8 +87,9 @@ class Dataset(ABC):
     def set_crs(self, crs: CRS) -> None:
         """Set the project CRS (done by the DataRegistry on registration). Spatial data is reprojected to it."""
         self._crs = crs
-        if self.regional_validity is not None:
-            self.regional_validity = self._to_crs(self.regional_validity)
+        if self.scope is not None:
+            self.scope = self._to_crs(self.scope)
+        self._scope_geometry = None
 
     def _to_crs(self, data: Any) -> Any:
         """Reproject a GeoDataFrame to the project CRS; other data is returned unchanged."""
@@ -88,14 +97,21 @@ class Dataset(ABC):
             return data.to_crs(self._crs)
         return data
 
-    def query(self, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+    def query(self, topology: "Topology", query: "DataRegistryQuery") -> Any:
         """
-        Default query implementation that uses custom query function if provided,
+        Answers the query for one region topology. Uses the custom query function if provided,
         otherwise calls _default_query method.
         """
         if self._custom_query_function is not None:
-            return self._custom_query_function(self, region, query)
+            return self._custom_query_function(self, topology, query)
         return self._default_query(query)
+
+    def query_all(self, topologies: Mapping[K, "Topology"], query: "DataRegistryQuery") -> dict[K, Any]:
+        """
+        Answers the query for many region topologies. The default calls :meth:`query` per topology;
+        subclasses can override this for vectorised access (e.g. one spatial join for all regions).
+        """
+        return {key: self.query(topology, query) for key, topology in topologies.items()}
 
     def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         """
@@ -107,7 +123,7 @@ class Dataset(ABC):
             f"{self.__class__.__name__} must implement either get_data or fetch"
         )
 
-    def fetch(self, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+    def fetch(self, region: gpd.GeoDataFrame, query: "DataRegistryQuery") -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Returns data filtered for region.
 
@@ -115,7 +131,7 @@ class Dataset(ABC):
         """
         return self.get_data()
 
-    def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+    def _default_query(self, query: "DataRegistryQuery") -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Default query logic. Subclasses should override this method
         if they don't provide a custom query function.
@@ -129,13 +145,18 @@ class Dataset(ABC):
     def is_available(self) -> bool:
         raise NotImplementedError
 
-    def is_in_region(self, region: gpd.GeoDataFrame) -> bool:
-        if self.regional_validity is None:
+    def is_in_region(self, topology: "Topology") -> bool:
+        """True if the scope covers every node of the region topology."""
+        if self.scope is None:
             return True  # Globally valid
 
-        rv_geom = self.regional_validity.geometry.union_all()
-        reg_geom = region.geometry.union_all()
-        return bool(rv_geom.covers(reg_geom))
+        if self._scope_geometry is None:
+            self._scope_geometry = self.scope.geometry.union_all()
+            shapely.prepare(self._scope_geometry)
+        nodes = list(topology.graph.nodes)
+        if not nodes:
+            return True
+        return bool(shapely.covers(self._scope_geometry, shapely.points(nodes)).all())
 
 
 class SimpleDataset(Dataset):
@@ -148,9 +169,9 @@ class SimpleDataset(Dataset):
         data: any,
         unit: Optional[UnitEnum] = None,
         priority: int = 10,
-        regional_validity: Optional[gpd.GeoDataFrame] = None,
+        scope: Optional[gpd.GeoDataFrame] = None,
     ):
-        super().__init__(keys=keys, unit=unit, priority=priority, regional_validity=regional_validity)
+        super().__init__(keys=keys, unit=unit, priority=priority, scope=scope)
         self.data = data
 
     def set_crs(self, crs: CRS) -> None:
@@ -160,7 +181,7 @@ class SimpleDataset(Dataset):
     def get_data(self) -> pd.DataFrame | gpd.GeoDataFrame:
         return self.data
 
-    def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+    def _default_query(self, query: "DataRegistryQuery") -> pd.DataFrame | gpd.GeoDataFrame:
         return self.data
 
     def is_available(self) -> bool:
@@ -176,7 +197,7 @@ class PostgresDataset(Dataset):
         sql: Optional[str] = None,
         unit: Optional[UnitEnum] = None,
         priority: int = 2,
-        regional_validity: Optional[gpd.GeoDataFrame] = None,
+        scope: Optional[gpd.GeoDataFrame] = None,
 
     ):
         """
@@ -184,15 +205,15 @@ class PostgresDataset(Dataset):
             keys: List of data types this dataset provides
             db_connection: Database connection
             priority: Dataset priority (higher = preferred)
-            regional_validity: Optional GeoDataFrame defining validity region
+            scope: Optional GeoDataFrame with the area the dataset is valid for
             query_function: Optional custom query function with signature:
-                           func(dataset: PostgreSQLTableDataset, query: dict) -> pd.DataFrame | gpd.GeoDataFrame
+                           func(dataset, topology, query) -> Any
         """
         super().__init__(
             keys=keys,
             unit=unit,
             priority=priority,
-            regional_validity=regional_validity,
+            scope=scope,
             query_function=query_function,
         )
         self.sql: str  = sql
@@ -205,7 +226,7 @@ class PostgresDataset(Dataset):
     def fetch(self, region, query):
         if self.sql is None:
             raise ValueError("No sql query provided.")
-        return self.execute_spatial_query({**query, "region": region}, self.sql)
+        return self.execute_spatial_query({"region": region}, self.sql)
 
     def execute_spatial_query(self, query: dict, sql_query: text) -> pd.DataFrame:
         """
@@ -246,13 +267,13 @@ class FileDataset(Dataset):
             unit: Optional[UnitEnum] = None,
             load_data_kwargs: Optional[dict[str, Any]] = None,
             priority: int = 10,
-            regional_validity: Optional[gpd.GeoDataFrame] = None,
+            scope: Optional[gpd.GeoDataFrame] = None,
     ):
         super().__init__(
             keys=keys,
             unit=unit,
             priority=priority,
-            regional_validity=regional_validity,
+            scope=scope,
             query_function=query_function
         )
         self.file_path = Path(file_path)
@@ -302,7 +323,7 @@ class FileDataset(Dataset):
             self._cached_data = self._to_crs(self._load_data())
         return self._cached_data
 
-    def _default_query(self, query: dict) -> pd.DataFrame | gpd.GeoDataFrame:
+    def _default_query(self, query: "DataRegistryQuery") -> pd.DataFrame | gpd.GeoDataFrame:
         """
         Default query returns the loaded data.
         For more complex queries, provide a custom query_function.
@@ -325,7 +346,7 @@ class CSVDataset(FileDataset):
         unit: Optional[UnitEnum] = None,
         pandas_kwargs: Optional[dict[str, Any]] = None,
         priority: int = 10,
-        regional_validity: Optional[gpd.GeoDataFrame] = None,
+        scope: Optional[gpd.GeoDataFrame] = None,
         query_function: Optional[Callable] = None,
     ):
         super().__init__(
@@ -335,7 +356,7 @@ class CSVDataset(FileDataset):
             unit=unit,
             load_data_kwargs=pandas_kwargs,
             priority=priority,
-            regional_validity=regional_validity
+            scope=scope
         )
 
     def _load_data(self) -> pd.Series:
@@ -346,7 +367,7 @@ class CSVDataset(FileDataset):
         s = pd.Series(df.values.ravel())
         return s
 
-    def _default_query(self, query: dict) -> pd.Series:
+    def _default_query(self, query: "DataRegistryQuery") -> pd.Series:
         """
         Default query returns the loaded CSV data as a Series.
         """
