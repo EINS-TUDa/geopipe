@@ -56,8 +56,7 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.5",
 ]
-# Dependency groups are never published, so a direct reference is allowed
-# here even though PyPI forbids one in [project.optional-dependencies].
+
 cesm-dev = [
     "cesm @ git+https://github.com/EINS-TUDa/CESM.git@578e0bb",
     "gurobipy<13.0",

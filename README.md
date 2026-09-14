@@ -41,18 +41,6 @@ flowchart TD
     ob -- "Solution" --> out["Results, Report, Plots"]
 
     linkStyle 4,5 stroke:none,stroke-width:0px
-
-    click streets href "Components/modify_streets_data/"
-    click tb href "Components/topology_builder/"
-    click techs href "Components/technologies/"
-    click demands href "Components/demand_type/"
-    click ie href "Components/energy_system_builder/#imports_exportsyaml"
-    click esb href "Components/energy_system_builder/"
-    click datasets href "Components/data_registry/"
-    click dr href "Components/data_registry/"
-    click ob href "Components/optimization/#optimizationbackend"
-    click scenario href "Components/optimization/#scenario"
-    click out href "Components/optimization/#solution"
 ```
 
 See
