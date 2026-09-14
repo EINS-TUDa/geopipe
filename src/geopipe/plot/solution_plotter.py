@@ -697,19 +697,24 @@ def _draw_pipe_path(
 
     nodes = list(topology.nodes())
     if topology.number_of_edges() == 0:
-        for node in nodes:
-            ax.plot(
-                float(node[0]),
-                float(node[1]),
-                marker="o",
-                markersize=10,
-                markerfacecolor=color,
-                markeredgecolor="white",
-                markeredgewidth=1.5,
-                linestyle="none",
-                zorder=zorder + 1,
-            )
-        return nodes
+        cx = sum(float(n[0]) for n in nodes) / len(nodes)
+        cy = sum(float(n[1]) for n in nodes) / len(nodes)
+        central = min(
+            nodes,
+            key=lambda n: (float(n[0]) - cx) ** 2 + (float(n[1]) - cy) ** 2,
+        )
+        ax.plot(
+            float(central[0]),
+            float(central[1]),
+            marker="o",
+            markersize=10,
+            markerfacecolor=color,
+            markeredgecolor="white",
+            markeredgewidth=1.5,
+            linestyle="none",
+            zorder=zorder + 1,
+        )
+        return [central]
 
     for u, v in topology.edges():
         ax.plot(
