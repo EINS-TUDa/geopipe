@@ -1,69 +1,131 @@
 # TopologyBuilder
 
-A `TopologyBuilder` turns a street-network GeoDataFrame into a **region
-graph** that all later pipeline stages consume. Two implementations
-share the same fluent setter interface and differ only in *how regions
-are defined*. `.build()` returns a `TopologyBuildResult` namedtuple
-with `network` (a `networkx.Graph`), `region_topologies`, and the
-(possibly splitted) `streets` GeoDataFrame.
+A `TopologyBuilder` turns the streets of the `DataRegistry` into a
+**street network** split into **region topologies**, which all later
+pipeline stages consume. Two implementations differ only in *how regions
+are defined*:
 
-`set_extensive_columns(...)` lists demand columns whose values are
-length-additive and must be **rescaled** when a street is split into
-multiple segments (e.g. the heat demand of a 200 m segment cut into
-80 m + 120 m). Intensive columns (densities, temperatures) are left
-untouched.
+- [`PolygonTopologyBuilder`](#polygontopologybuilder) — regions are
+  derived from a polygon layer.
+- [`SimpleTopologyBuilder`](#simpletopologybuilder) — regions are listed
+  explicitly (street ids or row indices per region).
 
-Before regions are assigned, streets can optionally be **divided at junctions**
-(off by default, enable via `set_divide_at_junctions`): where one street ends on the
-*interior* of another the crossed street gains a vertex at that point, so
-the two share a graph node instead of being geometrically touching but
-graph-disconnected. The crossed street's extensive columns are split
-across the resulting sub-segments by length share when the network is
-built.
+Streets are registered — and optionally cleaned — with
+[`DataRegistry.register_streets`](data_registry.md#streets).
 
-### `streets.geojson` (shared input)
+```python
+from geopipe.topology_builder.topology_builder import (
+    SimpleTopologyBuilder, PolygonTopologyBuilder,
+)
+```
 
-User-supplied, required by both builders. Must contain a geometry
-column of `LineString` features. All other columns are
-application-specific — at minimum you'll want at least one demand
-column (e.g. `waerme_mwh` in kWh) and a stable street ID column to
-reference from the region-definition input.
+## What `build()` does
+
+1. **Query the streets** for the builder's area from the registry
+   (`DataRegistry.streets(area)`): the polygons, or the area set with
+   `set_area`.
+2. **Assign regions** — every street gets a region id (column and edge
+   attribute `region_id`); streets outside all regions get none.
+3. **Build the street network** — the streets are converted into a
+   `networkx.Graph` (see [Network structure](#network-structure)).
+4. **Split into region topologies** — one sub-graph per region. Streets
+   without a region stay in `network` only; connections between regions
+   may run over them.
+5. **Check connectivity** — every region topology must be a single
+   connected graph (`set_topology_connections_check`, on by default).
+
+## Common API
+
+| Setter | Arguments | Default | Description |
+|---|---|---|---|
+| `set_data_registry` | `data_registry: DataRegistry` | — (required) | Source of the streets; its CRS is the project CRS. |
+| `set_topology_connections_check` | `enabled: bool` | `True` | Raise a `ValueError` if a region topology is not connected, listing the ids of the streets not connected to its largest group. |
+| `build` | — | — | Run the steps above and return a `TopologyBuildResult`. |
+
+### `TopologyBuildResult`
+
+`build()` returns a dataclass (`geopipe.topology_builder.TopologyBuildResult`):
+
+| Field | Type | Description |
+|---|---|---|
+| `network` | `networkx.Graph` | The full street network, including streets without a region. Pass this to `EnergySystemBuilder.set_system_topology`. |
+| `region_topologies` | `dict[Any, networkx.Graph]` | One sub-graph per region id. |
+| `streets` | `GeoDataFrame` | The streets with the `region_id` column. |
+
+### Network structure
+
+- **Nodes** are `(x, y)` coordinate tuples in the project CRS.
+- **Edges** connect each pair of consecutive vertices of a street
+  geometry, i.e. a street with *n* vertices becomes *n − 1* edges.
+  Streets are only connected where they share a vertex (see
+  [divide at junctions](data_registry.md#cleaning-steps)).
+- **Edge attributes**:
+    - `length` — Euclidean length of the edge in CRS units,
+    - `geometry` — the geometry of the street the edge belongs to,
+    - `region_id` — the edge's region (`None` outside all regions),
+    - `source_street_id`, `source_share` — the input street the edge
+      stems from and the edge's share of that street's length.
+      Street-keyed data (`StreetValueDataset`) is mapped onto regions
+      with them,
+    - every other column of the streets, copied unchanged. Values such
+      as demands are *not* split onto the edges — use a
+      `StreetValueDataset` for them.
+- The graph's CRS is stored in `network.graph["crs"]`.
+
+## PolygonTopologyBuilder
+
+Every street that lies completely **within** polygon *k* belongs to
+region *k*. The polygons are also the area whose streets are queried.
+
+- Streets are **not** split at polygon boundaries: a street crossing a
+  boundary belongs to no region.
+- A street lying within more than one (overlapping) polygon raises a
+  `ValueError` listing the affected streets and polygons.
+
+| Setter | Arguments | Default | Description |
+|---|---|---|---|
+| `set_polygons_data` | `polygons_data: GeoDataFrame \| Path`, `id_column: str` | — (required) | Polygon layer (`Polygon` / `MultiPolygon`); `id_column` holds the region id. A `Path` is loaded via `geopandas.read_file`; the polygons are reprojected to the registry CRS. |
+
+```python
+from pathlib import Path
+from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
+
+tb = PolygonTopologyBuilder()
+tb.set_data_registry(data_reg)
+tb.set_polygons_data(Path("input/polygons.geojson"), id_column="id")
+result = tb.build()
+```
 
 ## SimpleTopologyBuilder
 
-Regions are listed explicitly in a YAML file: each region ID maps to a
-column name and the list of values to match. A street belongs to
-region *k* iff its row matches one of the values listed under *k*.
-Use this when you already know the region membership of every street
-and want full control without relying on geometry.
+Regions are listed explicitly in a YAML file or dict: each region ID
+maps to a column name and the list of values to match. A street belongs
+to region *k* iff its value in that column is one of the values listed
+under *k*. Use this when you already know the region membership of
+every street.
 
-### API
-
-| Setter | Type | Default | Description |
+| Setter | Arguments | Default | Description |
 |---|---|---|---|
-| `set_streets_data` | `GeoDataFrame` or `Path`, `id_column: str` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. `id_column` names a stable per-street identifier used in diagnostics (the row index is reset during cleaning). |
-| `set_grouping` | `dict` or `Path` | — (required) | Region grouping (see `region_grouping.yaml` below). A `Path` is loaded as YAML. |
-| `set_extensive_columns` | `list[str]` | `[]` | Length-additive columns to rescale when streets are split. |
-| `set_divide_at_junctions` | `enabled: bool`, `tol: float` | `False`, `1e-6` | Split segments where another street's vertex meets their interior so the streets share a graph node. `tol` is the max distance (CRS units) for a vertex to count as on a segment. |
-| `set_region_id_column` | `str` | `"region"` | Name of the column written into `streets` carrying the region ID. |
-| `set_default_region` | `Any` | `None` | Value assigned to streets that match no group. |
-| `set_default_regions_in_topology` | `bool` | `False` | If `True`, edges in the default region are included in `region_topologies`. |
+| `set_area` | `area: GeoDataFrame \| Path` | — (required) | Study area whose streets are queried from the registry. |
+| `set_grouping` | `grouping: dict \| Path` | — (required) | Region grouping (see [`region_grouping.yaml`](#region_groupingyaml)). A `Path` is loaded as YAML. |
 
 ```python
 from pathlib import Path
 from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder
 
 tb = SimpleTopologyBuilder()
-tb.set_streets_data(Path("input/streets.geojson"), id_column="street_id")
-tb.set_extensive_columns(["waerme_mwh"])
+tb.set_data_registry(data_reg)
+tb.set_area(Path("input/study_area.geojson"))
 tb.set_grouping(Path("input/region_grouping.yaml"))
 result = tb.build()
 ```
 
 ### `region_grouping.yaml`
 
-Maps **region ID → column name → list of values to match**. Each region
-is the union of street rows whose `street_id` is in the list:
+Maps **region ID → column name → list of values to match**. Region IDs
+must be integers, column names strings and the values lists (otherwise
+`build()` raises `TypeError`). Each region is the union of street rows
+whose `street_id` is in the list:
 
 ```yaml
 0:
@@ -75,47 +137,10 @@ is the union of street rows whose `street_id` is in the list:
     - DEHE04620001hKzc
 ```
 
-Use the special key `index` instead of a column name to match raw row
-indices.
+Use the special key `index` instead of a column name to match row
+indices. If a street matches several regions, the last one wins.
 
-## PolygonTopologyBuilder
-
-Regions are derived by spatial join from a polygon GeoJSON: every
-street that falls inside polygon *k* is assigned to region *k*, and
-streets crossing polygon boundaries are split. The region ID is read
-from the column passed to `set_region_id_column`. Use this when
-regions are defined by area geometries rather than explicit street
-lists.
-
-### API
-
-| Setter | Type | Default | Description |
-|---|---|---|---|
-| `set_streets_data` | `GeoDataFrame` or `Path`, `id_column: str` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. `id_column` names a stable per-street identifier used in diagnostics (the row index is reset during cleaning). |
-| `set_polygons_data` | `GeoDataFrame` or `Path` | — (required) | Polygon layer defining the regions (see `polygons.geojson` below). |
-| `set_region_id_column` | `str` | `"region"` | Column on `polygons_data` carrying the region ID; also the column written into `streets`. |
-| `set_extensive_columns` | `list[str]` | `[]` | Length-additive columns to rescale when streets are split at polygon boundaries. |
-| `set_divide_at_junctions` | `enabled: bool`, `tol: float` | `False`, `1e-6` | Split segments where another street's vertex meets their interior so the streets share a graph node. `tol` is the max distance (CRS units) for a vertex to count as on a segment. |
-| `set_streets_geometry_column_name` | `str` | auto-detects `"geometry"` / `"geom"` | Geometry column name on `streets_data`. |
-| `set_polygons_geometry_column_name` | `str` | auto-detects `"geometry"` / `"geom"` | Geometry column name on `polygons_data`. |
-| `set_default_region` | `Any` | `None` | Value assigned to streets that fall in no polygon. |
-| `set_default_regions_in_topology` | `bool` | `False` | If `True`, edges in the default region are included in `region_topologies`. |
-
-```python
-from pathlib import Path
-from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
-
-tb = PolygonTopologyBuilder()
-tb.set_streets_data(Path("input/streets.geojson"), id_column="street_id")
-tb.set_region_id_column("id")
-tb.set_extensive_columns(["waerme_mwh"])
-tb.set_polygons_data(Path("input/polygons.geojson"))
-result = tb.build()
-```
-
-### `polygons.geojson`
-
-Standard GeoJSON with polygon geometries. The region ID is read from
-whatever column you pass to `set_region_id_column` (default `"id"`).
-Streets are assigned to region *k* iff their geometry intersects
-polygon *k*; streets crossing polygon boundaries are split.
+The grouping is applied to the *registered* streets: if they were
+[cleaned](data_registry.md#cleaning-steps), split pieces and connectors
+carry new IDs and the row index is reset, so they no longer match the
+original IDs/indices.

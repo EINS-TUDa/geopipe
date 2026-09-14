@@ -13,19 +13,18 @@ passed to an optimisation backend.
 
 ### Constructor
 
-`EnergySystemBuilder(energy_system_name="Default", base_crs="EPSG:25832")`
+`EnergySystemBuilder(energy_system_name="Default")`
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `energy_system_name` | `str` | `"Default"` | Identifier of the built `EnergySystem`; surfaces in reports and plots. |
-| `base_crs` | `str` | `"EPSG:25832"` | CRS used internally for all geometry operations. |
 
 ### Setters
 
 | Setter | Type | Required | Description |
 |---|---|---|---|
 | `set_system_topology` | `networkx.Graph` or `Topology` | yes | The graph returned by `TopologyBuilder.build().network`. |
-| `set_data_registry` | `DataRegistry` | yes | Registry used for `heating_shares` (and reserved keys). |
+| `set_data_registry` | `DataRegistry` | yes | Registry that resolves the demand values and technology shares. The topology must be built with the same registry (same CRS). |
 | `set_demand_types` | `list[DemandType]` | yes | Overwrites the demand list. |
 | `add_demand_types` | `*DemandType` | — | Appends additional demand types. |
 | `set_imports_exports` | `str` or `Path` | yes | Path to `imports_exports.yaml` (see below). |

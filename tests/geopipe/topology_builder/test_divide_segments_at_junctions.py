@@ -6,8 +6,8 @@ import networkx as nx
 import pytest
 from shapely import LineString, MultiLineString
 
-from geopipe.topology_builder.topology_build_utils import (
-    divide_segments_at_junctions, gdf_to_nx)
+from geopipe.data.streets import divide_segments_at_junctions
+from geopipe.topology_builder.topology_build_utils import gdf_to_nx
 
 # real street data stores each feature as a single-component MultiLineString, so every
 # case is exercised with bare LineStrings and with MultiLineString-wrapped geometries

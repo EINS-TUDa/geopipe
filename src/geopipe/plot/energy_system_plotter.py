@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from shapely.geometry import MultiPoint
 
 from ..energy_system.region import Region
+from ..topology_builder.topology import REGION_ID
 from .solution_plotter import _add_basemap, _draw_pipe_path, _save_figure, _zoom_to_regions
 
 
@@ -91,7 +92,7 @@ def _build_region_color_map(region_ids: list[int]) -> dict[int, Any]:
 def _draw_topology_edges_by_region(ax, system_topology, *, color_map: dict[int, Any]) -> None:
     graph = system_topology.graph if hasattr(system_topology, "graph") else system_topology
     for u, v, data in graph.edges(data=True):
-        raw = data.get("id")
+        raw = data.get(REGION_ID)
         try:
             rid = int(raw) if raw is not None else None
         except (TypeError, ValueError):

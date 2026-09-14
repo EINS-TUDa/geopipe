@@ -1,9 +1,11 @@
 from typing import Optional
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, URL
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError, OperationalError
+from dotenv import find_dotenv, load_dotenv
+import os
 
-class DatabaseConnection:
+class PostgresConnection:
     """
     Manages a connection to a database server.
 
@@ -13,11 +15,11 @@ class DatabaseConnection:
 
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 5432,
-        database: str = None,
-        user: str = None,
-        password: str = None,
+        host: str, # = "localhost",
+        port: int, # = 5432,
+        database: str, # = None,
+        user: str, # = None,
+        password: str, # = None,
     ):
         self.host = host
         self.port = port
@@ -25,6 +27,25 @@ class DatabaseConnection:
         self.user = user
         self.password = password
         self._engine: Optional[Engine] = None
+
+    @classmethod
+    def from_env(cls, prefix: str ) -> "PostgresConnection":
+        """
+        Build a connection from {PREFIX}_HOST/_PORT/_DATABASE/_USER/_PASSWORD.
+        """
+        load_dotenv()
+        def req(name: str) -> str:
+            val = os.environ.get(f"{prefix}_{name}")
+            if not val:
+                raise RuntimeError(f"Missing env var {prefix}_{name} (see .env.template)")
+            return val
+        return cls(
+            host=req("HOST"),
+            port=int(req("PORT")),
+            database=req("DATABASE"),
+            user=req("USER"),
+            password=req("PASSWORD"),
+        )
 
     def get_engine(self) -> Engine:
         """
@@ -34,12 +55,15 @@ class DatabaseConnection:
         Returns:
             SQLAlchemy Engine instance
         """
-        if self._engine is None:
-            connection_string = (
-                f"postgresql://{self.user}:{self.password}@"
-                f"{self.host}:{self.port}/{self.database}"
-            )
-            self._engine = create_engine(connection_string)
+        url = URL.create(
+            "postgresql+psycopg",
+            username=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        )
+        self._engine = create_engine(url)
         return self._engine
 
     def is_available(self) -> bool:
@@ -53,7 +77,3 @@ class DatabaseConnection:
 
     def __repr__(self) -> str:
         return f"DatabaseConnection(host='{self.host}', database='{self.database}')"
-
-    def connection_string_full(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
-

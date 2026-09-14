@@ -59,9 +59,18 @@ Wärmeplanung.
     model needs a single figure, selected or aggregated from the catalogue's
     ranges and reference cases.
 
-Short form for plots, figures and derived outputs:
 
-> Based on: Deutsche Energie-Agentur (dena, 2026): KWW-Technikkatalog
-> Wärmeplanung. Version 1.1. Berlin. Rights holder: Bundesministerium für
-> Wirtschaft und Energie. CC BY 4.0. Adapted.
+## Waste heat data - Plattform für Abwärme
+The availability of waste heat sources in the Bensheim test case is derived from the Plattform für Abwärme (PfA). 
+
+- **Publisher:** Bundesamt für Wirtschaft und Ausfuhrkontrolle (BAFA),
+  Bundesstelle für Energieeffizienz (BfEE), Frankfurter Str. 29–35,
+  65760 Eschborn, <pfa@bafa.bund.de>
+- **Source (URI):** <http://www.bfee-online.de/pfa>
+- **Version:** 1.2, as of 05.07.2026
+- **Licence:** Creative Commons Attribution-NonCommercial 4.0 International
+  (CC BY-NC 4.0), <https://creativecommons.org/licenses/by-nc/4.0/> —
+  **non-commercial use only**
+
+
 

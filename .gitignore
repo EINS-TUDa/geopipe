@@ -12,3 +12,8 @@ plots/*
 *.log
 *.html
 **/private_data/*
+.env
+.env.*.local
+!.env.template
+dist/
+

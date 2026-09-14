@@ -11,6 +11,7 @@ from ...energy_system.region import Demand
 from ...energy_system.technology import PipeTechnology, GridTechnology, CentralTechnology, CHPTechnology, \
     DecentralTechnology, Technology
 from .conversion_sub_process import ConversionSubProcess
+from .profiles import profile_hash
 from .units import df_units
 from ..resolved_system import ResolvedSystem
 
@@ -20,7 +21,7 @@ from ...energy_system.units import UnitKW, UnitMW
 
 logger = logging.getLogger(__name__)
 
-CONVERSION_FACTOR = 0.001 # MWh to GWh, t to kilo t, EUR to k EUR, kW to MW
+CONVERSION_FACTOR = 0.001 # MWh to GWh, EUR to k EUR, kW to MW
 
 @dataclass(frozen=True)
 class Techmap:
@@ -99,8 +100,8 @@ def _df_scenario(resolved: ResolvedSystem) -> pd.DataFrame:
             "year_step": s.year_gap,
             "discount_rate": s.discount_rate,
             "TSS": s.tss,
-            "annual_co2_limit": year_dep_value_to_cesm_string(s.co2_limit, True),
-            "co2_price": year_dep_value_to_cesm_string(s.co2_price),
+            "annual_co2_limit": year_dep_value_to_cesm_string(s.co2_limit),
+            "co2_price": year_dep_value_to_cesm_string(s.co2_price, True),
         }]
     )
 
@@ -146,19 +147,25 @@ def _demand_to_conversion_sub_process(
     demand: Demand,
     region_id: int,
     scenario_name: str,
-    scenario_years: list[int]) -> ConversionSubProcess:
+    scenario_years: list[int],
+    profile_names: dict[str, str]) -> ConversionSubProcess:
     return ConversionSubProcess(
         conversion_process_name=f"{demand.name}_D{region_id}",
         commodity_in=commodity_name(demand.demand_type.commodity_in, region_id),
         commodity_out="Dummy",
         scenario=scenario_name,
         min_eout=year_dep_value_to_cesm_string(demand.values_per_year(scenario_years), True),
-        output_profile=demand.demand_type.profile_path.stem,
+        output_profile=profile_names[profile_hash(demand.profile)],
     )
 
 def _decentralized_tech_to_conversion_sub_process(tech: DecentralTechnology, region_id: int, scenario_name: str,
-                                                  start_year: int) -> ConversionSubProcess:
-    output_profile = tech.output_profile_path.stem if tech.output_profile_path else None
+                                                  start_year: int,
+                                                  profile_names: dict[str, str]) -> ConversionSubProcess:
+    output_profile = None
+    if tech.output_profile is not None:
+        output_profile = profile_names.get(profile_hash(tech.output_profile))
+        if output_profile is None:
+            raise ValueError(f"The output profile of {tech.name} in region {region_id} matches no demand profile.")
     return ConversionSubProcess(
         conversion_process_name=f"{tech.name}_D{region_id}",
         commodity_in=commodity_name(tech.commodity_in, region_id),
@@ -255,7 +262,7 @@ def _chp_to_conversion_sub_process(chp: CHPTechnology, region_id: int, scenario_
     )
     return [cs_import, cs_loss, cs_commodity_out, cs_commodity_out_2]
 
-def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
+def _conversion_sub_process_df(resolved: ResolvedSystem, profile_names: dict[str, str]) -> pd.DataFrame:
     cs_list: list[ConversionSubProcess] = []
     scenario_name = resolved.scenario.name
     scenario_years = resolved.scenario.years
@@ -276,12 +283,14 @@ def _conversion_sub_process_df(resolved: ResolvedSystem) -> pd.DataFrame:
     # demands
     for region_id, demands in resolved.demands.items():
         for demand in demands:
-            cs_list.append(_demand_to_conversion_sub_process(demand, region_id, scenario_name, scenario_years))
+            cs_list.append(_demand_to_conversion_sub_process(demand, region_id, scenario_name, scenario_years,
+                                                             profile_names))
 
     # decentralized techs
     for region_id, techs in resolved.decentralized_technologies.items():
         for tech in techs:
-            cs_list.append(_decentralized_tech_to_conversion_sub_process(tech, region_id, scenario_name, start_year))
+            cs_list.append(_decentralized_tech_to_conversion_sub_process(tech, region_id, scenario_name, start_year,
+                                                                         profile_names))
 
     # grids
     for region_id, grids in resolved.grid_technologies.items():
@@ -329,14 +338,15 @@ def _conversion_process_df(conversion_process_names: set[str]) -> pd.DataFrame:
         columns=["conversion_process_name", "order", "color"],
     )
 
-def create_techmap(resolved: ResolvedSystem) -> Techmap:
+def create_techmap(resolved: ResolvedSystem, profile_names: dict[str, str]) -> Techmap:
+    """``profile_names`` maps a profile's content hash to its timeseries name (see :func:`profile_names`)."""
     # CONVERSION_FACTOR (0.001) converts the source values into the UnitMW Units sheet
     # below; it is only valid if the EnergySystem is expressed in UnitKW (kW/MWh/t/EUR).
     if not isinstance(resolved.units, UnitKW):
         raise ValueError(
             f"techmap scaling assumes UnitKW source data, got {type(resolved.units).__name__}"
         )
-    df_cs = _conversion_sub_process_df(resolved)
+    df_cs = _conversion_sub_process_df(resolved, profile_names)
     df_co = _commodity_df(set(df_cs["commodity_in"]))
     df_cp = _conversion_process_df(set(df_cs["conversion_process_name"]))
 

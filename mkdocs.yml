@@ -1,10 +1,14 @@
 site_name: GeoPipe Documentation
+site_url: https://eins-tuda.github.io/geopipe/
+repo_url: https://github.com/EINS-TUDa/geopipe
+repo_name: EINS-TUDa/geopipe
+edit_uri: edit/main/docs/
 theme:
   name: material
 
 nav:
   - Welcome: index.md
-  - Getting started: getting_started.md
+  - Installation: installation.md
   - Components:
     - modify_streets_data: Components/modify_streets_data.md
     - TopologyBuilder: Components/topology_builder.md
@@ -12,12 +16,18 @@ nav:
     - DemandType: Components/demand_type.md
     - DataRegistry: Components/data_registry.md
     - EnergySystemBuilder: Components/energy_system_builder.md
+    - Optimization: Components/optimization.md
   - CESM extension:
     - NewlyInstalledUnits: CESM extension/newly_installed_units.md
 
 markdown_extensions:
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
 
 extra_javascript:
   - javascripts/mathjax.js

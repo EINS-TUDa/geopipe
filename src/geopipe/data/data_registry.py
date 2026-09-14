@@ -1,21 +1,30 @@
 """
 DataRegistry - Central management of all Datasets.
 
-The Registry manages all available Datasets and routes queries
-to the appropriate Dataset (based on type, region, and priority).
+The Registry manages all available Datasets and routes queries to the appropriate
+Dataset (based on key, scope and priority). Queries work on region topologies:
+each region is routed to the highest-priority Dataset whose scope covers it.
+It also owns the project CRS: every registered Dataset is reprojected to it.
 """
 
+import logging
 from collections import defaultdict
 from enum import Enum
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional, TYPE_CHECKING
 import geopandas as gpd
-import networkx as nx
-import yaml
-import importlib
+from pydantic import BaseModel, ConfigDict
+from pyproj import CRS
 
-from shapely.geometry.multipoint import MultiPoint
+from geopipe.data.dataset import Dataset, SimpleDataset
+from geopipe.data.streets import prepare_streets
+from geopipe.energy_system.units import UnitEnum
 
-from geopipe.data.dataset import Dataset
+if TYPE_CHECKING:
+    from geopipe.topology_builder.topology import Topology
+
+logger = logging.getLogger(__name__)
+
 
 class DataKeys(str, Enum):
     RESIDENTIAL_HEAT_DEMAND_PROFILE = "residential_heat_demand_profile"
@@ -25,16 +34,36 @@ class DataKeys(str, Enum):
     HEATING_SHARES = "heating_shares"
     STREET_NETWORK = "street_network"
     LINEAR_HEAT_DENSITY = "linear_heat_density"
+    EXISTING_HEAT_GRID = "existing_heat_grid"
 
 """
 DataKeys.HEAT_DEMAND_PROFILE should return a pd.Series
 DataKeys.ELECTRICITY_DEMAND_PROFILE should return a pd.Series
-DataKeys.ELECTRICITY_DEMAND should return float with the sum of the residential electricity demand in kWh for the specified region.
-DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residential heat demand in kWh for the specified region.
+DataKeys.ELECTRICITY_DEMAND should return float with the sum of the residential electricity demand in the dataset's unit for the specified region.
+DataKeys.RESIDENTIAL_HEAT_DEMAND should return float with the sum of the residential heat demand in the dataset's unit for the specified region.
 DataKeys.HEATING_SHARES should return a dict[CensusTechnology, float], or dict[str, float] if a name_mapping is provided
-DataKeys.STREET_NETWORK should return a GeoDataFrame with the street network for the specified region, with columns 'geom' (LineString)
+DataKeys.STREET_NETWORK is registered only via DataRegistry.register_streets and read via DataRegistry.streets(area)
 DataKeys.LINEAR_HEAT_DENSITY should return a GeoDataFrame with the linear heat density for the specified region, with columns 'geom' (LineString) and 'heat_density_mwh_per_km'
+DataKeys.EXISTING_HEAT_GRID should return a GeoDataFrame with the existing heat grid for the specified region, with columns 'geom' (LineString)
 """
+
+
+def is_metric_crs(crs: CRS) -> bool:
+    """True if ``crs`` is projected with metre axes."""
+    return crs.is_projected and crs.axis_info[0].unit_name in ("metre", "meter")
+
+
+class DataRegistryQuery(BaseModel):
+    """A query to the DataRegistry.
+
+    ``key`` selects the datasets; ``params`` are dataset-specific options that are passed
+    through unchanged to the query function of the dataset that answers the query.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    key: str
+    params: dict[str, Any] = {}
 
 
 class DataRegistry:
@@ -42,21 +71,67 @@ class DataRegistry:
     Central registry for all Datasets.
 
     The Registry:
+    - Owns the project CRS; all Datasets are reprojected to it on registration
     - Manages all registered Datasets
     - Sorts by priority and registration order
-    - Routes queries to the best available Dataset
+    - Routes each queried region to the best Dataset covering it
     """
 
-    def __init__(self):
+    def __init__(self, crs: str | CRS):
+        """
+        Args:
+            crs: The project CRS (e.g. "EPSG:25832"). Should be projected in metres, as lengths and
+                distances throughout the pipeline are measured in CRS units.
+        """
+        self._crs: CRS = CRS.from_user_input(crs)
+        if not is_metric_crs(self._crs):
+            logger.warning("CRS '%s' is not a projected CRS in metres. Lengths and distances are measured in "
+                           "CRS units.", self._crs.name)
         self._type_to_datasets: dict[str, list[Dataset]] = defaultdict(list)
         self._registration_counter: int = 0
 
+    @property
+    def crs(self) -> CRS:
+        return self._crs
+
     def register(self, dataset: Dataset) -> None:
         """
-        Registers a Dataset.
+        Registers a Dataset and reprojects it to the project CRS. Streets are registered with
+        :meth:`register_streets` instead.
         """
         if not isinstance(dataset, Dataset):
             raise TypeError(f"{dataset} is not an instance of Dataset")
+        if DataKeys.STREET_NETWORK in dataset.keys:
+            raise ValueError("Streets must be registered with register_streets().")
+        self._register(dataset)
+
+    def register_streets(self, streets: gpd.GeoDataFrame | Path, id_column: str,
+                         scope: Optional[gpd.GeoDataFrame] = None, priority: int = 10,
+                         divide_at_junctions: bool = False, junction_tol: float = 1e-6,
+                         gap_distance: Optional[float] = None,
+                         drop_isolated_null_columns: Optional[list[str]] = None) -> None:
+        """
+        Registers a street dataset.
+
+        The streets are validated, reprojected to the project CRS, given their original street id and length
+        share, and optionally cleaned
+        (see :func:`geopipe.data.streets.prepare_streets` for the cleaning steps).
+
+        Args:
+            streets: Street lines, or a path to a file geopandas can read
+            id_column: Column with a unique id per street; street-keyed data (e.g. a StreetValueDataset) refers to it
+            scope: Area the street dataset is valid for; None = everywhere
+            priority: Priority among street datasets (higher = preferred)
+        """
+        if isinstance(streets, Path):
+            streets = gpd.read_file(streets)
+        prepared = prepare_streets(streets, id_column, self._crs, divide_at_junctions=divide_at_junctions,
+                                   junction_tol=junction_tol, gap_distance=gap_distance,
+                                   drop_isolated_null_columns=drop_isolated_null_columns)
+        self._register(SimpleDataset(keys=[DataKeys.STREET_NETWORK], data=prepared, priority=priority, scope=scope))
+
+    def _register(self, dataset: Dataset) -> None:
+        dataset.set_crs(self._crs)
 
         # Store registration order
         dataset._registration_order = self._registration_counter
@@ -77,14 +152,14 @@ class DataRegistry:
     def get_datasets(
         self,
         key: Optional[str] = None,
-        region: Optional[gpd.GeoDataFrame] = None
+        topology: Optional["Topology"] = None
         ) -> list[Dataset]:
         """
-        Returns all datasets for a type (optionally filtered by region and key).
+        Returns all datasets for a type (optionally filtered by key and by coverage of a region topology).
 
         Args:
             key: The requested data type
-            region: Optional query region
+            topology: Optional region topology the datasets must cover
 
         Returns:
             List of datasets, sorted by priority
@@ -93,43 +168,48 @@ class DataRegistry:
             # all datasets
             candidates = [ds for datasets in self._type_to_datasets.values() for ds in datasets]
         else:
-            candidates = self._type_to_datasets[key]
+            candidates = self._type_to_datasets.get(key, [])
 
-        if region is None:
+        if topology is None:
             return candidates
 
         # Only return datasets that are valid in the region
-        return [ds for ds in candidates if ds.is_in_region(region)]
+        return [ds for ds in candidates if ds.is_in_region(topology)]
 
-    def query(self, query: dict):
+    def streets(self, area: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """
-        Executes a query and returns the result from the best dataset.
+        Returns all streets of the highest-priority street dataset whose scope covers the whole ``area`` (e.g. the
+        region polygons). Streets outside the area are included, as connections between regions may run over them.
+        """
+        area_geometry = area.to_crs(self._crs).union_all()
+        for dataset in self._type_to_datasets.get(DataKeys.STREET_NETWORK, []):
+            if dataset.covers(area_geometry):
+                return dataset.get_data()
+        raise LookupError("No street dataset covers the area. Register streets with register_streets().")
+
+    def query(self, topology: "Topology", query: DataRegistryQuery, unit: Optional[UnitEnum] = None) -> Any:
+        """
+        Answers the query for a region topology with the highest-priority dataset whose scope covers
+        it completely.
 
         Args:
-            query: Dictionary with at least 'key', optionally 'region' and other parameters
+            topology: The region topology
+            query: The query
+            unit: If given, a numeric result is converted from the dataset's unit to this unit
 
         Returns:
             Query result from the best available dataset
         """
-        key = query.get("key")
-        if not key:
-            raise ValueError("'key' must be specified in the query.")
-
-        region = query.pop("region")
-        if isinstance(region, nx.Graph):
-            boundary_gdf = gpd.GeoDataFrame(
-                geometry=[MultiPoint(list(region.nodes)).convex_hull],
-                crs=region.graph.get("crs"))
-        else:
-            raise TypeError("query expects region as nx.Graph")
-
-        datasets = self.get_datasets(key, boundary_gdf)
-
+        datasets = self.get_datasets(query.key, topology)
         if not datasets:
-            region_info = f" in region '{region}'" if region is not None else ""
-            raise LookupError(f"No datasets found for key '{key}'{region_info}.")
+            raise LookupError(f"No dataset for key '{query.key}' covers the region.")
 
         # The first dataset has the highest priority
-        return datasets[0].query(query=query, region = boundary_gdf)
-
-
+        dataset = datasets[0]
+        result = dataset.query(topology, query)
+        if unit is None or result is None:
+            return result
+        if dataset.unit is None:
+            raise ValueError(f"{type(dataset).__name__} answering '{query.key}' has no unit, but the result is "
+                             f"requested in {unit.value}.")
+        return result * dataset.unit.conversion_factor(unit)

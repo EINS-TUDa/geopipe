@@ -19,6 +19,7 @@ from shapely.ops import unary_union
 
 from ..energy_system.region import Region
 from ..energy_system.technology import GridTechnology
+from ..topology_builder.topology import REGION_ID
 
 from typing import TYPE_CHECKING
 
@@ -560,7 +561,7 @@ def _system_graph(system_topology):
 
 
 def _edge_region_id(edge_data: dict) -> int | None:
-    raw = edge_data.get("id")
+    raw = edge_data.get(REGION_ID)
     if raw is None:
         return None
     try:
@@ -872,7 +873,6 @@ def _demand_values_per_region(
             out.setdefault(rid, {})[demand.name] = float(demand.value(year_period))
     return out
 
-
 def _add_basemap(ax, energy_system) -> None:
     if not energy_system.regions:
         return
@@ -880,7 +880,14 @@ def _add_basemap(ax, energy_system) -> None:
     if crs is None:
         return
     try:
-        ctx.add_basemap(ax, crs=crs, source=ctx.providers.OpenStreetMap.Mapnik, alpha=0.7, zorder=0)
+        ctx.add_basemap(
+            ax,
+            crs=crs,
+            source=ctx.providers.OpenStreetMap.Mapnik,
+            headers={"User-Agent": "geopipe"},
+            alpha=0.7,
+            zorder=0,
+        )
     except Exception:
         # Tile fetching can fail (offline, rate-limited); plotting should still succeed.
         pass
