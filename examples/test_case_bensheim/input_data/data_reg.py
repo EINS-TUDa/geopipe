@@ -7,14 +7,16 @@ from geopipe.data import PostgresConnection, PostgresDataset
 from shapely.geometry.multipoint import MultiPoint
 
 from geopipe import DataRegistry
-from geopipe.data.data_registry import DataKeys
+from geopipe.data.data_registry import DataKeys, DataRegistryQuery
 from geopipe.data.data_utils import get_gdf_from_ags
-from geopipe.data.dataset import Dataset, FileDataset, CensusTechnology
+from geopipe.data.dataset import Dataset, FileDataset, CSVDataset, CensusTechnology, StreetValueDataset
+from geopipe.energy_system.units import UnitEnum
+from geopipe.topology_builder.topology import Topology
 
 
-def census_bensheim_query(dataset: Dataset, region: gpd.GeoDataFrame, query: dict) -> dict[CensusTechnology, float]:
-    if query["key"] != "heating_shares":
-        raise ValueError("census_neuburg_query only supports 'heating_shares' key")
+def census_bensheim_query(dataset: Dataset, topology: Topology, query: DataRegistryQuery) -> dict[CensusTechnology, float]:
+    if query.key != DataKeys.HEATING_SHARES:
+        raise ValueError("census_bensheim_query only supports 'heating_shares' key")
 
     census_names = {   "Gas": CensusTechnology.Gas,
                        "Heizoel": CensusTechnology.Oil,
@@ -27,7 +29,7 @@ def census_bensheim_query(dataset: Dataset, region: gpd.GeoDataFrame, query: dic
                        "kein_Energietraeger": CensusTechnology.NoEnergyCarrier}
 
 
-    gdf_in_region = dataset.fetch(region, query)
+    gdf_in_region = dataset.fetch(topology.convex_hull, query)
     gdf_in_region = gdf_in_region.rename(columns=census_names)
 
     technologies = list(census_names.values())
@@ -47,7 +49,7 @@ def census_bensheim_query(dataset: Dataset, region: gpd.GeoDataFrame, query: dic
 
     tech_shares = {k: float(v) for k, v in tech_shares.items()}
 
-    name_mapping = query.get("name_mapping", {})
+    name_mapping = query.params.get("name_mapping", {})
     if name_mapping:
         # accumulate so multiple census technologies mapped to the same
         # target name are summed instead of overwriting each other
@@ -67,17 +69,9 @@ def census_bensheim_query(dataset: Dataset, region: gpd.GeoDataFrame, query: dic
 
     return tech_shares
 
-def heat_grid_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, query: dict) -> pd.DataFrame:
-    street_segments: gpd.GeoDataFrame = query["segments"]
-    heat_grid_data: gpd.GeoDataFrame = dataset.get_data()
-    # 0. Align crs
-    if street_segments.crs != heat_grid_data.crs:
-        heat_grid_data = heat_grid_data.to_crs(street_segments.crs)
-    # guard: buffer distance is in CRS units, so require a metre-based projected CRS
-    crs = street_segments.crs
-    if crs is None or not crs.is_projected or crs.axis_info[0].unit_name not in ("metre", "meter"):
-        raise ValueError(
-            f"heat_grid_bensheim_query needs a projected metre CRS, got '{getattr(crs, 'name', None)}'.")
+def heat_grid_bensheim_query(dataset: FileDataset, topology: Topology, query: DataRegistryQuery) -> pd.DataFrame:
+    street_segments: gpd.GeoDataFrame = query.params["segments"]
+    heat_grid_data: gpd.GeoDataFrame = dataset.get_data()  # already in the project CRS
     # 1. Buffer around the heat grid geometries
     buffer_distance = 50  # meters
     heat_grid_buffer = heat_grid_data.buffer(buffer_distance).union_all()
@@ -92,7 +86,7 @@ def heat_grid_bensheim_query(dataset: FileDataset, region: gpd.GeoDataFrame, que
     return result
 
 
-def case1_data_registry() -> DataRegistry:
+def case1_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
     # db_conn = PostgresConnection.from_env("INFDBGAUSS")
     # heating_shares = PostgresDataset(
     #     keys=[DataKeys.HEATING_SHARES],
@@ -128,14 +122,30 @@ def case1_data_registry() -> DataRegistry:
         file_path=str(pathlib.Path(__file__).parent / "heat_grid_bensheim.geojson"),
         query_function=heat_grid_bensheim_query,
         priority=10,
-        regional_validity=None
+        scope=None
     )
 
+    residential_heat_demand = StreetValueDataset.from_column(
+        streets, id_column="fid", value_column="waerme_mwh",
+        keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND], unit=UnitEnum.MWH)
 
-    data_reg = DataRegistry()
+    pool_heat_demand = StreetValueDataset(values={"1173": 800.0}, keys=["pool_heat_demand"], unit=UnitEnum.MWH)
+
+    heat_profile = CSVDataset(
+        keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE, "pool_heat_demand_profile"],
+        file_path=str(pathlib.Path(__file__).parent / "residential_heat.txt"),
+        pandas_kwargs={"sep": r"\s+", "header": None})
+
+
+    data_reg = DataRegistry(crs="EPSG:25832")
+    data_reg.register_streets(streets, id_column="fid")
     data_reg.register(heating_shares)
     data_reg.register(heat_grid_bensheim)
+    data_reg.register(residential_heat_demand)
+    data_reg.register(pool_heat_demand)
+    data_reg.register(heat_profile)
     return data_reg
 
 if __name__ == "__main__":
-    data_reg = case1_data_registry()
+    data_reg = case1_data_registry(
+        gpd.read_file(pathlib.Path(__file__).parents[1] / "private_data" / "bensheim_streets_heat_demand.geojson"))

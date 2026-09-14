@@ -26,21 +26,21 @@ tbd
 The most important concepts are:
 ```mermaid
 flowchart TD
-    streets["Street network<br/>+ region definition"] --> tb["TopologyBuilder"]
-    tb -- "network" --> esb["EnergySystemBuilder"]
+    streets["Street network"] -- "register_streets" --> dr["DataRegistry"]
+    datasets["Datasets"] -- "register" --> dr
+    dr -- "streets" --> tb["TopologyBuilder"]
+    tb -- "topology" --> esb["EnergySystemBuilder"]
     subgraph inputs["Energy system inputs"]
         direction TB
-        techs["Technologies"] ~~~ demands["DemandTypes"] ~~~ ie["Imports/Exports"]
+        techs["Technologies"] --- demands["DemandTypes"] --- ie["Commodity<br/>data"]
     end
     inputs --> esb
-    datasets["Datasets<br/>(file, PostgreSQL)"] --> dr["DataRegistry"]
-    dr -- "heating_shares" --> esb
+    dr -- "demand annual values, demand time profiles, technology shares" --> esb
     esb -- "EnergySystem" --> ob["OptimizationBackend"]
-    scenario["Scenario<br/>+ time series"] --> ob
-    ob -- "Solution" --> out["Results · Report · Plots"]
+    scenario["Scenario"] --> ob
+    ob -- "Solution" --> out["Results, Report, Plots"]
 
-    classDef registry fill:#fff3cd,stroke:#d4a017,stroke-width:2px,color:#000
-    class dr registry
+    linkStyle 4,5 stroke:none,stroke-width:0px
 
     click streets href "Components/modify_streets_data/"
     click tb href "Components/topology_builder/"

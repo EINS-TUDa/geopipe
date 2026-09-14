@@ -16,12 +16,12 @@ from pydantic_settings import (
 from .imports_exports import Import, load_imports_exports_from_yaml, Export
 from .technology import PipeTechnology, GridTechnology, CentralTechnology, DecentralTechnology
 from .region import compute_region_connections, RegionConnections
-from .demand import DemandType, ExplicitDemandValue
+from .demand import DemandType
 from ._year_dep import get_earliest_year_value
-from ..data.data_registry import DataRegistry
+from ..data.data_registry import DataRegistry, DataRegistryQuery
 from .region import Demand, Region
 from .units import Unit, UnitEnum
-from ..topology_builder.topology import Topology
+from ..topology_builder.topology import Topology, REGION_ID
 from ..plot.energy_system_plotter import plot_system_topology
 
 import logging
@@ -121,8 +121,6 @@ class EnergySystemBuilderConfig(BaseSettings):
     #: raised.
     central_tech_existing_capacities: dict[str, dict[int | str, list[tuple[str, Share]]]] = Field(
         default_factory=dict)
-    #: Name of the ID property on the edges of the topology Graph
-    region_id_name: str = "id"
     #: Name of the street-id property on the edges of the topology Graph; used to evaluate
     #: ``constrain_location_to_streets`` for central technologies.
     street_id_name: str = "street_id"
@@ -148,9 +146,8 @@ class EnergySystemBuilderConfig(BaseSettings):
 
 class EnergySystemBuilder:
 
-    def __init__(self, energy_system_name: str = "Default", base_crs: str = "EPSG:25832"):
+    def __init__(self, energy_system_name: str = "Default"):
         self._energy_system_name = energy_system_name
-        self._base_crs = base_crs
         self._system_topology: Optional[Topology] = None
         self._data_registry: Optional[DataRegistry] = None
         self._unit: Optional[Unit] = None
@@ -163,10 +160,6 @@ class EnergySystemBuilder:
     @property
     def energy_system_name(self) -> str:
         return self._energy_system_name
-
-    @property
-    def base_crs(self) -> str:
-        return self._base_crs
 
     def set_system_topology(self, system_topology: nx.Graph | Topology):
         if isinstance(system_topology, nx.Graph):
@@ -204,27 +197,28 @@ class EnergySystemBuilder:
 
     def _region_topologies(self):
         if self.__region_topologies is None:
-            self.__region_topologies = self._system_topology.sub_topologies_by_edge_property("id")
+            self.__region_topologies = self._system_topology.sub_topologies_by_edge_property(REGION_ID)
         return self.__region_topologies
 
     def _build_demands(self, topology: Topology, region_id: int) -> list[Demand]:
         collection = []
+        energy_unit = UnitEnum(self._unit.energy)
         for demand_type in self._demand_types:
-            # A None or zero value means the demand does not exist in this region; the value
-            # source uses this to scope special demands to the regions where they are present.
-            value = demand_type.value_source.value_for_region(region_id, topology)
+            # A None or zero value means the demand does not exist in this region.
+            value = self._data_registry.query(topology, demand_type.value, energy_unit)
             if value is None or value == 0:
                 continue
             if not isinstance(value, (int, float)):
-                raise ValueError(f"Demand value for {demand_type.name} not found or invalid in data registry.")
+                raise ValueError(f"Demand value of {demand_type.name} in region {region_id} is not a number: "
+                                 f"{value!r}.")
 
-            profile = pd.read_csv(demand_type.profile_path, sep=r"\s+", decimal=".", header=None)
-            if profile is None or profile.empty:
-                raise ValueError(f"Demand profile for {demand_type.name} not found in data registry.")
-            profile = pd.Series(profile.values.ravel())
+            profile = self._data_registry.query(topology, demand_type.profile)
+            if not isinstance(profile, pd.Series) or profile.empty:
+                raise ValueError(f"Demand profile of {demand_type.name} in region {region_id} must be a non-empty "
+                                 f"pandas Series.")
 
             # Create a RegionDemand instance
-            demand = Demand(demand_type=demand_type, value=value, profile=profile, profile_name=demand_type.name)
+            demand = Demand(demand_type=demand_type, value=value, profile=profile)
             collection.append(demand)
         return collection
 
@@ -292,7 +286,6 @@ class EnergySystemBuilder:
 
     def _build_decentral_technologies(self, topology: Topology, region_id: int, demands: list[Demand]) -> list[DecentralTechnology]:
         decentral_technologies = []
-        base_query = {"region": topology.graph, "base_crs": self.base_crs}
         for demand in demands:
             matching_tech_names = DecentralTechnology.get_type_names_by_attribute(
                 "commodity_out", demand.demand_type.commodity_in)
@@ -303,11 +296,11 @@ class EnergySystemBuilder:
                             demand.demand_type.commodity_in, demand.demand_type.name, region_id)
                 continue
 
-            if demand.demand_type.technology_shares_query_params is None:
+            if demand.demand_type.technology_shares is None:
                 technology_shares_data: dict[str, float] = {}
             else:
-                technology_shares_data = self._data_registry.query(
-                    demand.demand_type.technology_shares_query_params | base_query)
+                # Copy: the processing below modifies the shares in place; the dataset's result must stay untouched.
+                technology_shares_data = dict(self._data_registry.query(topology, demand.demand_type.technology_shares))
 
             technology_shares_data = self._process_technology_shares(technology_shares_data, demand, region_id)
 
@@ -317,12 +310,12 @@ class EnergySystemBuilder:
                 existing_capacity = share * demand.peak(
                     year_period=0) * 1000  # factor energy (e.g. MWH) to power (e.g. KW)
                 existing_energy_output = share * demand.value(0)
-                output_profile_path = None
+                output_profile = None
                 if not demand.demand_type.cooperation_of_technologies:
-                    output_profile_path = demand.demand_type.profile_path
+                    output_profile = demand.profile
                 decentral_technologies.append(DecentralTechnology(name=name, existing_capacity=existing_capacity,
                                                                   existing_energy_output=existing_energy_output,
-                                                                  output_profile_path=output_profile_path))
+                                                                  output_profile=output_profile))
                 shares_seen.add(name)
             for name, share in technology_shares_data.items():
                 if share > 0 and name not in shares_seen:
@@ -491,7 +484,7 @@ class EnergySystemBuilder:
         # All connections between regions
         region_connections: RegionConnections = compute_region_connections(self._region_topologies(),
                                                                            self._system_topology,
-                                                                           self._config.region_id_name)
+                                                                           REGION_ID)
 
         # Effective placement set per commodity. Initialised from config; auto-extended below when a connected
         # region group contains no configured location for its commodity.
@@ -611,12 +604,15 @@ class EnergySystemBuilder:
         errors = []
         if not isinstance(self.energy_system_name, str) or not self.energy_system_name:
             errors.append(f"Energy system name must be a non-empty string and not {type(self.energy_system_name)}")
-        if not isinstance(self.base_crs, str) or not self.base_crs:
-            errors.append(f"Base CRS must be a non-empty string and not {type(self.base_crs)}")
         if not isinstance(self._system_topology, Topology):
             errors.append(f"System topology must be set and of type Topology and not {type(self._system_topology)}")
         if not isinstance(self._data_registry, DataRegistry):
             errors.append(f"DataRegistry must be set and of type DataRegistry and not {type(self._data_registry)}")
+        if isinstance(self._system_topology, Topology) and isinstance(self._data_registry, DataRegistry):
+            topology_crs = self._system_topology.graph.graph.get("crs")
+            if topology_crs is None or topology_crs != self._data_registry.crs:
+                errors.append(f"System topology CRS '{topology_crs}' differs from the DataRegistry CRS "
+                              f"'{self._data_registry.crs}'. Build the topology with the same DataRegistry.")
         if not isinstance(self._unit, Unit):
             errors.append(f"Unit must be set and of type Unit and not {type(self._unit)}")
         if not isinstance(self._config, EnergySystemBuilderConfig) and self._config is not None:
@@ -626,11 +622,7 @@ class EnergySystemBuilder:
         if self._imports is None:
             errors.append("Imports must be set using set_imports_exports() with a non-empty imports_exports.yaml")
 
-        # DemandType validation: supplying technologies and explicit-value region scoping.
-        demand_region_ids = (
-            set(self._region_topologies().keys())
-            if isinstance(self._system_topology, Topology) else None
-        )
+        # DemandType validation: supplying technologies and data sources.
         import_commodities = {imp.commodity_out for imp in self._imports} if self._imports else set()
         for demand_type in self._demand_types:
             where = f"DemandType '{demand_type.name}'"
@@ -646,11 +638,11 @@ class EnergySystemBuilder:
             # When the demand is supplied by decentral technologies and has no census shares, a default
             # supply mix is required to seed their existing capacity. Import-only demands (no matching
             # decentral tech) need no default.
-            if (suppliable_by_tech and demand_type.technology_shares_query_params is None
+            if (suppliable_by_tech and demand_type.technology_shares is None
                     and not demand_type.default_supply_shares()):
                 errors.append(
                     f"{where}: default_decentral_supply_technology is required when "
-                    f"technology_shares_query_params is None and the commodity is supplied by decentral "
+                    f"technology_shares is None and the commodity is supplied by decentral "
                     f"technologies.")
             # Default supply technologies must be registered and match the demand commodity.
             for tech_name in demand_type.default_supply_shares():
@@ -663,13 +655,13 @@ class EnergySystemBuilder:
                     errors.append(
                         f"{where}: default supply tech '{tech_name}' has commodity_out='{commodity_out}', "
                         f"expected '{demand_type.commodity_in}'.")
-            # ExplicitDemandValue region keys must exist in the topology.
-            if isinstance(demand_type.value_source, ExplicitDemandValue) and demand_region_ids is not None:
-                for region_id in demand_type.value_source.value_per_region:
-                    if region_id not in demand_region_ids:
-                        errors.append(
-                            f"{where}: value_source references region id {region_id} which is not part of the "
-                            f"topology (known: {sorted(demand_region_ids)}).")
+            # Registry queries need a registered dataset for their key.
+            if isinstance(self._data_registry, DataRegistry):
+                for field_name in ("value", "profile", "technology_shares"):
+                    source = getattr(demand_type, field_name)
+                    if isinstance(source, DataRegistryQuery) and not self._data_registry.get_datasets(source.key):
+                        errors.append(f"{where}: no dataset is registered for the {field_name} key "
+                                      f"'{source.key}'.")
 
         if isinstance(self._config, EnergySystemBuilderConfig):
             topology_region_ids = (
