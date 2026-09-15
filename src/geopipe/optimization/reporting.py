@@ -19,8 +19,37 @@ def _column_unit_renames(unit: Unit) -> dict[str, str]:
         "capacity": f"capacity [{unit.power}]",
         "new_capacity": f"new_capacity [{unit.power}]",
         "energy_output": f"energy_output [{unit.energy}]",
-        "amount": f"amount [{unit.co2_emissions}]",
     }
+
+
+#: Size of each money unit in EUR.
+_EUR_PER_MONEY_UNIT = {"EUR": 1.0, "k EUR": 1e3, "Mio EUR": 1e6}
+
+#: Size of each CO2 emissions unit in t.
+_TONNES_PER_CO2_UNIT = {"t": 1.0, "kilo t": 1e3, "Mio t": 1e6}
+
+#: Display units from smallest to largest; the first one that keeps the value below 1000 is used.
+_MONEY_DISPLAY_UNITS = [("€", 1.0), ("k€", 1e3), ("Mio €", 1e6), ("Bil €", 1e9)]
+_CO2_DISPLAY_UNITS = [("t", 1.0), ("kt", 1e3), ("Mio t", 1e6), ("Bil t", 1e9)]
+
+
+def _format_scaled(value: float, display_units: list[tuple[str, float]]) -> str:
+    """Format ``value`` in the smallest of ``display_units`` that keeps it below 1000, e.g. ``12.35 Mio €``."""
+    for label, size in display_units:
+        scaled = round(value / size, 2)
+        if abs(scaled) < 1000:
+            break
+    return f"{scaled:.2f} {label}"
+
+
+def _format_money(value: float, money_unit: str) -> str:
+    """Format ``value`` (given in ``money_unit``) as €, k€, Mio € or Bil €."""
+    return _format_scaled(value * _EUR_PER_MONEY_UNIT[money_unit], _MONEY_DISPLAY_UNITS)
+
+
+def _format_emissions(value: float, co2_unit: str) -> str:
+    """Format ``value`` (given in ``co2_unit``) as t, kt, Mio t or Bil t."""
+    return _format_scaled(value * _TONNES_PER_CO2_UNIT[co2_unit], _CO2_DISPLAY_UNITS)
 
 
 def _escape(value: Any) -> str:
@@ -133,10 +162,14 @@ def write_html_report(
     renames = _column_unit_renames(unit)
 
     costs = {
-        f"opex [{unit.money}]": results.opex,
-        f"capex [{unit.money}]": results.capex,
-        f"totex [{unit.money}]": results.totex,
+        "opex": _format_money(results.opex, unit.money),
+        "capex": _format_money(results.capex, unit.money),
+        "totex": _format_money(results.totex, unit.money),
     }
+
+    emissions = results.emissions_by_year
+    if emissions is not None and not emissions.empty:
+        emissions = emissions.assign(amount=[_format_emissions(v, unit.co2_emissions) for v in emissions["amount"]])
 
     run_metadata: dict[str, Any] = _run_metadata(solution)
 
@@ -153,7 +186,7 @@ def write_html_report(
             "grid-2",
             _render_mapping_table("Run Metadata", run_metadata),
             _render_mapping_table("System Costs", costs),
-            _render_df("Emissions by Year", _with_units(results.emissions_by_year, renames)),
+            _render_df("Emissions by Year", emissions),
         ),
         "<h2>Decentral Technologies (per demand)</h2>",
         _render_group_section(

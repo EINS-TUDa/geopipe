@@ -4,16 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "geopipe"
-version = "0.0.1"
+version = "0.1.0"
 description = "Geographical energy system modelling data pipeline"
 authors = [
-    {name = "Carolin Ayasse", email = "carolin.ayasse@eins.tu-darmstadt.de"},
+    {name = "Carolin Ayasse"},
     {name = "Alexander Christ"},
 ]
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 keywords = [
     "energy system modelling",
     "gis",

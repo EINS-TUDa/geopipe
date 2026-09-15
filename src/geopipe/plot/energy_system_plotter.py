@@ -17,21 +17,30 @@ from .solution_plotter import _add_basemap, _draw_pipe_path, _save_figure, _zoom
 _INACTIVE_EDGE_COLOR = "#787a7d"
 _PIPE_COLOR = "#eac282"  # brown
 
+# Summary-table figure layout, in inches
+_TABLE_ROW_HEIGHT_IN = 0.3
+_TABLE_TITLE_HEIGHT_IN = 0.5
+_TABLE_COL_WIDTH_IN = 2.0
+_TABLE_MARGIN_IN = 0.4
+_TABLE_GAP_IN = 0.6
+
 
 def plot_system_topology(energy_system, output_path: Optional[str | Path] = None) -> None:
     """
     Plot the system_topology of an energy system.
 
     Each region's edges are coloured uniquely. Region IDs are drawn on top of
-    each region's representative point. A summary table beneath the map lists
-    the total demand value and total grid length per region.
+    each region's representative point. A separate figure holds summary tables
+    listing the total demand value and grid length per region and the length of
+    each pipe; its size adapts to the number of regions and pipes.
 
     Parameters
     ----------
     energy_system
         The EnergySystem whose ``system_topology`` should be plotted.
     output_path
-        Optional path. When given, the figure is saved to that location.
+        Optional path. When given, the map is saved to that location and the
+        summary tables next to it as ``<stem>_summary<suffix>``.
     """
     if energy_system is None:
         raise ValueError("energy_system must not be None")
@@ -73,14 +82,14 @@ def plot_system_topology(energy_system, output_path: Optional[str | Path] = None
     ax.set_ylabel("y", fontsize=14)
     ax.tick_params(axis="both", labelsize=12)
 
-    fig.subplots_adjust(bottom=0.28)
-    _add_region_summary_table(
-        fig, regions, energy_system=energy_system, color_map=color_map,
-        rect=(0.04, 0.04, 0.55, 0.20),
-    )
-    _add_pipes_summary_table(fig, energy_system, rect=(0.62, 0.04, 0.34, 0.20))
-
     _save_figure(fig, output_path)
+
+    summary_path = None
+    if output_path is not None:
+        path = Path(output_path)
+        summary_path = path.with_name(f"{path.stem}_summary{path.suffix}")
+    _plot_summary_tables(energy_system, regions, color_map=color_map, output_path=summary_path)
+
     plt.show()
 
 
@@ -159,21 +168,76 @@ def _draw_pipes(ax, energy_system) -> None:
         drawn.add(canonical)
 
 
-def _add_region_summary_table(
-    fig,
+def _plot_summary_tables(
+    energy_system,
     regions: Iterable[Region],
     *,
-    energy_system,
     color_map: dict[int, Any],
-    rect: tuple[float, float, float, float] = (0.05, 0.04, 0.9, 0.16),
+    output_path: Optional[Path],
 ) -> None:
+    region_labels, region_rows = _region_summary_rows(regions, energy_system)
+    tables = [("Regions", region_labels, region_rows)]
+    pipe_rows = _pipes_summary_rows(energy_system)
+    if pipe_rows:
+        tables.append(("Pipes", ["Pipe", "Regions", "Length [km]"], pipe_rows))
+
+    heights = [_TABLE_TITLE_HEIGHT_IN + (len(rows) + 1) * _TABLE_ROW_HEIGHT_IN for _, _, rows in tables]
+    widths = [len(labels) * _TABLE_COL_WIDTH_IN for _, labels, _ in tables]
+    fig_width = sum(widths) + (len(tables) - 1) * _TABLE_GAP_IN + 2 * _TABLE_MARGIN_IN
+    fig_height = max(heights) + 2 * _TABLE_MARGIN_IN
+
+    fig = plt.figure(figsize=(fig_width, fig_height))
+    fig.suptitle(f"System summary — {energy_system.name}", fontsize=14)
+    top = fig_height - _TABLE_MARGIN_IN
+    left = _TABLE_MARGIN_IN
+    for (title, labels, rows), height, width in zip(tables, heights, widths):
+        table_height = height - _TABLE_TITLE_HEIGHT_IN
+        ax = fig.add_axes((
+            left / fig_width,
+            (top - height) / fig_height,
+            width / fig_width,
+            table_height / fig_height,
+        ))
+        ax.axis("off")
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        table = _draw_table(ax, labels, rows)
+        if title == "Regions":
+            for row_idx, row in enumerate(rows, start=1):
+                id_text = table[(row_idx, 0)].get_text()
+                id_text.set_color(color_map.get(int(row[0]), "black"))
+                id_text.set_fontweight("bold")
+        left += width + _TABLE_GAP_IN
+
+    _save_figure(fig, output_path)
+
+
+def _draw_table(ax, col_labels: list[str], rows: list[list[str]]):
+    table = ax.table(
+        cellText=rows,
+        colLabels=col_labels,
+        cellLoc="center",
+        colLoc="center",
+        bbox=(0.0, 0.0, 1.0, 1.0),
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    for (r, _c), cell in table.get_celld().items():
+        cell.set_edgecolor("#bdbdbd")
+        cell.set_linewidth(0.8)
+        if r == 0:
+            cell.set_text_props(fontweight="bold", ha="center", va="center")
+            cell.set_facecolor("#f7f7f7")
+        else:
+            cell.set_text_props(ha="center", va="center")
+    return table
+
+
+def _region_summary_rows(regions: Iterable[Region], energy_system) -> tuple[list[str], list[list[str]]]:
     units = getattr(energy_system, "units", None)
     energy_unit = getattr(units, "energy", "")
     unit_suffix = f" [{energy_unit}]" if energy_unit else ""
 
     sorted_regions = sorted(regions, key=lambda r: int(r.id))
-    if not sorted_regions:
-        return
 
     demand_names: list[str] = []
     seen: set[str] = set()
@@ -196,77 +260,18 @@ def _add_region_summary_table(
         rows.append(row)
 
     col_labels = ["Region", "Grid length [km]"] + [f"{name}{unit_suffix}" for name in demand_names]
-
-    table_ax = fig.add_axes(rect)
-    table_ax.axis("off")
-    table = table_ax.table(
-        cellText=rows,
-        colLabels=col_labels,
-        cellLoc="center",
-        colLoc="center",
-        loc="center",
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1.0, 1.4)
-    for (r, c), cell in table.get_celld().items():
-        cell.set_edgecolor("#bdbdbd")
-        cell.set_linewidth(0.8)
-        if r == 0:
-            cell.set_text_props(fontweight="bold", ha="center", va="center")
-            cell.set_facecolor("#f7f7f7")
-        else:
-            cell.set_text_props(ha="center", va="center")
-    for row_idx, region in enumerate(sorted_regions, start=1):
-        rid = int(region.id)
-        id_text = table[(row_idx, 0)].get_text()
-        id_text.set_color(color_map.get(rid, "black"))
-        id_text.set_fontweight("bold")
+    return col_labels, rows
 
 
-def _add_pipes_summary_table(
-    fig,
-    energy_system,
-    *,
-    rect: tuple[float, float, float, float] = (0.05, 0.04, 0.9, 0.16),
-) -> None:
+def _pipes_summary_rows(energy_system) -> list[list[str]]:
     pipes = getattr(energy_system, "pipes", None) or []
-    seen: set[tuple[int, int, str]] = set()
-    rows: list[list[str]] = []
+    unique_pipes: dict[tuple[str, int, int], float] = {}
     for pipe in pipes:
         a = int(pipe.region_id_in)
         b = int(pipe.region_id_out)
         lo, hi = (a, b) if a <= b else (b, a)
-        key = (lo, hi, str(pipe.name))
-        if key in seen:
-            continue
-        seen.add(key)
-        rows.append([
-            str(pipe.name),
-            f"{lo} ↔ {hi}",
-            f"{pipe.pipe_length_km:.2f}",
-        ])
-    if not rows:
-        return
-    rows.sort(key=lambda r: (r[0], r[1]))
-
-    table_ax = fig.add_axes(rect)
-    table_ax.axis("off")
-    table = table_ax.table(
-        cellText=rows,
-        colLabels=["Pipe", "Regions", "Length [km]"],
-        cellLoc="center",
-        colLoc="center",
-        loc="center",
-    )
-    table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1.0, 1.4)
-    for (r, _c), cell in table.get_celld().items():
-        cell.set_edgecolor("#bdbdbd")
-        cell.set_linewidth(0.8)
-        if r == 0:
-            cell.set_text_props(fontweight="bold", ha="center", va="center")
-            cell.set_facecolor("#f7f7f7")
-        else:
-            cell.set_text_props(ha="center", va="center")
+        unique_pipes.setdefault((str(pipe.name), lo, hi), pipe.pipe_length_km)
+    return [
+        [name, f"{lo} ↔ {hi}", f"{length_km:.2f}"]
+        for (name, lo, hi), length_km in sorted(unique_pipes.items())
+    ]

@@ -1,15 +1,60 @@
+stages:
+  - test
+  - deploy
+
+test:
+  stage: test
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  variables:
+    UV_CACHE_DIR: .uv-cache
+    UV_LINK_MODE: copy
+  cache:
+    key:
+      files:
+        - uv.lock
+    paths:
+      - .uv-cache
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends git
+  script:
+    - uv sync --locked --no-default-groups --group dev --group cesm-dev
+    - uv run pytest
+    - uv cache prune --ci
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+  tags:
+    - docker
+
 mirror-to-github:
   stage: deploy
+  needs:
+    - test
   image:
     name: alpine/git
     entrypoint: [""]
   variables:
-    # A shallow clone cannot be pushed to a remote that lacks the history
-    # ("shallow update not allowed"), so fetch the full history here.
     GIT_DEPTH: 0
   script:
     - git push "https://x-access-token:${GITHUB_TOKEN}@github.com/EINS-TUDa/geopipe.git" HEAD:refs/heads/main
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+  tags:
+    - docker
+
+
+mirror-tag-to-github:
+  stage: deploy
+  needs:
+    - test
+  image:
+    name: alpine/git
+    entrypoint: [""]
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - git push "https://x-access-token:${GITHUB_TOKEN}@github.com/EINS-TUDa/geopipe.git" "refs/tags/${CI_COMMIT_TAG}"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
   tags:
     - docker

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-from compare_techmaps import compare_techmaps
 from geopipe.data import DataKeys, DataRegistryQuery
 from geopipe.data.dataset import CensusTechnology
 from geopipe.energy_system.demand import DemandType
@@ -9,9 +8,8 @@ from geopipe.energy_system import Scenario
 from geopipe.energy_system import register_technologies
 from geopipe.energy_system.units import UnitEnum
 from geopipe.optimization import CESMOptimizationBackend, Solution
-# from geopipe.plot.plotter import EnergySystemPlotter
 from geopipe.topology_builder.topology_build_utils import modify_streets_data
-from geopipe.topology_builder.topology_builder import SimpleTopologyBuilder, PolygonTopologyBuilder
+from geopipe.topology_builder.topology_builder import PolygonTopologyBuilder
 from geopipe.optimization.cesm import CesmPlotter, PlotType
 
 
@@ -107,7 +105,6 @@ def main():
 
     solution.save(path=CASE_DIR / "output_data")
     # solution = Solution.load(path=CASE_DIR / "output_data", file_name="Case1_Base_Solution.pkl")
-    # compare_techmaps(CASE_DIR / "output_data" / "Case1_Base_old.xlsx", CASE_DIR / "output_data" / "Case1_Base.xlsx", path_output=CASE_DIR / "output_data" / "comparison.html")
     solution.write_html_report(output_path=CASE_DIR / "output_data" / f"Case1_Base_report.html")
     solution.energy_system.plot_system_topology()
     solution.plot_grid(grid_name="heat_grid", year=2030, metric="energy_output")
