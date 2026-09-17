@@ -12,6 +12,7 @@ plots/*
 *.log
 *.html
 **/private_data/*
+WaermeatlasHessen.gpkg
 .env
 .env.*.local
 !.env.template

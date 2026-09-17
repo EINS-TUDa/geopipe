@@ -1,0 +1,11 @@
+raumwaerme:
+  - id: DEHE04620001VmuP
+    replace: 50
+  - id: DEHE04620001VmuY
+    replace: 50
+  - id: DEHE04620001VmuS
+    replace: 50
+  - id: DEHE04620001VmuK
+    replace: 50
+  - id: DEHE04620000AYAS
+    replace: 250

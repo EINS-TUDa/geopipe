@@ -13,7 +13,7 @@ be fed into any downstream component.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `streets_data` | `GeoDataFrame` or `Path` | — (required) | Street network. A `Path` is loaded via `geopandas.read_file`. |
-| `modifications_file` | `Path` | — (required) | Path to a YAML file describing the patches (see `modifications.yaml` below). |
+| `modifications_file` | `Path` | — (required) | Path to a YAML file describing the patches (see `update_heat_demand.yaml` below). |
 
 **Returns** — the modified `GeoDataFrame`. When a `Path` is passed for
 `streets_data`, the file is freshly read and the result is independent
@@ -28,11 +28,11 @@ from geopipe.topology_builder.topology_build_utils import modify_streets_data
 
 streets = modify_streets_data(
     streets_data=Path("input/streets.geojson"),
-    modifications_file=Path("input/modifications.yaml"),
+    modifications_file=Path("input/update_heat_demand.yaml"),
 )
 ```
 
-## `modifications.yaml`
+## `update_heat_demand.yaml`
 
 Top-level key is the column to modify. Each list entry selects one row
 and specifies an action:

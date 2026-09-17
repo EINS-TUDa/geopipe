@@ -1,0 +1,187 @@
+decentralized:
+
+  ind_gas_boiler:
+    commodity_in: gas
+    commodity_out: residential_heat
+    efficiency: 0.994
+    technical_lifetime: 20
+    capex_cost_power: 440.03
+    opex_cost_power: 13.67
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 20
+
+  ind_oil_boiler:
+    commodity_in: oil
+    commodity_out: residential_heat
+    efficiency: 0.93
+    technical_lifetime: 20
+    capex_cost_power: 484.78
+    opex_cost_power: 17.40
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 20
+
+  ind_biomass:
+    commodity_in: biomass
+    commodity_out: residential_heat
+    efficiency: 0.9
+    technical_lifetime: 20
+    capex_cost_power: 1260.43
+    opex_cost_power: 75.82
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 20
+
+  dec_direct_electric:
+    commodity_in: electricity
+    commodity_out: residential_heat
+    efficiency: 1.0
+    technical_lifetime: 25
+    capex_cost_power: 631.46
+    opex_cost_power: 6.22
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 25
+
+  dec_h2_boiler:
+    commodity_in: green_hydrogen
+    commodity_out: residential_heat
+    efficiency: 0.95
+    technical_lifetime: 20
+    capex_cost_power: 484.78
+    opex_cost_power: 14.92
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 20
+
+  ind_heat_pump:
+    commodity_in: electricity
+    commodity_out: residential_heat
+    efficiency: 2.90
+    technical_lifetime: 18
+    capex_cost_power: 2717.25
+    opex_cost_power: 26.10
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 20
+
+  heat_exchanger:
+    commodity_in: district_heat_out
+    commodity_out: residential_heat
+    efficiency: 0.97
+    technical_lifetime: 25
+    capex_cost_power: 658.80
+    opex_cost_power: 12.43
+    opex_cost_energy: 0
+    existing_capacity_phase_out_years: 25
+
+chp:
+
+  chp_gas:
+    commodity_in: gas
+    commodity_out: district_heat_in
+    commodity_out_2: electricity
+    efficiency: 0.48 # thermal efficiency
+    loss: 0.11
+    technical_lifetime: 15
+    capex_cost_power: 1955.28
+    capex_cost_base: 0
+    opex_cost_power: 41.02
+    opex_cost_energy: 0
+    existing_capacity_retirement_years: 15
+
+  chp_h2:
+    commodity_in: green_hydrogen
+    commodity_out: district_heat_in
+    commodity_out_2: electricity
+    efficiency: 0.48 # thermal efficiency
+    loss: 0.11
+    technical_lifetime: 15
+    capex_cost_power: 2151.68
+    capex_cost_base: 0
+    opex_cost_power: 41.02
+    opex_cost_energy: 0
+    existing_capacity_retirement_years: 15
+
+central:
+
+  abwasser_wp_klaeranlage_bensheim:
+    commodity_in: electricity_wp
+    commodity_out: district_heat_in
+    efficiency: 2.9
+    technical_lifetime: 20
+    capex_cost_power: 885
+    capex_cost_base: 200000
+    opex_cost_power: 23
+    opex_cost_energy: 0
+    max_capacity_per_unit: 4180
+    existing_capacity_retirement_years: 15
+    constrain_location_to_streets:
+      - "TODO_strassen_id_klaeranlage"
+
+  cen_gas_boiler:
+    commodity_in: gas
+    commodity_out: district_heat_in
+    efficiency: 0.95
+    technical_lifetime: 25
+    capex_cost_power: 800
+    capex_cost_base: 0
+    opex_cost_power: 20
+    opex_cost_energy: 0
+    existing_capacity_retirement_years: 25
+
+  cen_large_heat_pump:
+    commodity_in: electricity_wp
+    commodity_out: district_heat_in
+    efficiency: 2.8
+    technical_lifetime: 25
+    capex_cost_power: 2449.71
+    capex_cost_base: 0
+    opex_cost_power: 61.78
+    opex_cost_energy: 0
+    existing_capacity_retirement_years: 25
+
+  cen_waste_heat_1:
+    commodity_in: Dummy
+    commodity_out: district_heat_in
+    efficiency: 1
+    technical_lifetime: 25
+    capex_cost_power: 250
+    capex_cost_base: 80000
+    opex_cost_power: 5
+    opex_cost_energy: 0 #/kWh
+    max_capacity: 1418 #kW
+    availability_profile_name: "waste_heat_availability_1"
+    constrain_location_to_streets:
+      - "DEHE04620000B3br"
+
+  cen_waste_heat_2:
+    commodity_in: Dummy
+    commodity_out: district_heat_in
+    efficiency: 1
+    technical_lifetime: 25
+    capex_cost_power: 125
+    capex_cost_base: 40000
+    opex_cost_power: 2.5
+    opex_cost_energy: 0 #/kWh
+    max_capacity: 1418 #kW
+    availability_profile_name: "waste_heat_availability_2"
+    constrain_location_to_streets:
+      - "DEHE04620001i7U8"
+
+
+grids:
+
+  heat_grid:
+    commodity_in: district_heat_in
+    commodity_out: district_heat_out
+    efficiency: 0.88
+    capex_per_km: 1000000.00
+    technical_lifetime: 40
+    existing_capacity_retirement_years: 40
+
+pipes:
+
+  district_heat_pipe:
+    commodity_in: district_heat_out
+    commodity_out: district_heat_in
+    efficiency: 1.0
+    technical_lifetime: 40
+    capex_per_km: 1000000.00
+    distance_threshold_m: 100
+    existing_capacity_retirement_years: 40

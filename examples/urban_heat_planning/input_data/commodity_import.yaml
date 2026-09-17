@@ -1,0 +1,99 @@
+imports:
+
+  - commodity_out: electricity
+    price_eur_per_mwh:
+      0:  391.44
+      5:  371.63
+      10: 422.43
+      15: 449.72
+      20: 507.92
+      25: 507.92
+    co2_emissions_ton_per_mwh:
+      0:  0.344
+      5:  0.258
+      10: 0.172
+      15: 0.086
+      20: 0
+      25: 0
+
+  - commodity_out: electricity_wp
+    price_eur_per_mwh:
+      0:  280.37
+      5:  229.09
+      10: 261.22
+      15: 276.86
+      20: 311.53
+      25: 311.53
+    co2_emissions_ton_per_mwh:
+      0:  0.344
+      5:  0.258
+      10: 0.172
+      15: 0.086
+      20: 0
+      25: 0
+
+  - commodity_out: gas
+    price_eur_per_mwh:
+      0:  119.84
+      5:  122.95
+      10: 150.92
+      15: 184.18
+      20: 233.24
+      25: 233.24
+    co2_emissions_ton_per_mwh: 0.19932
+
+  - commodity_out: oil
+    price_eur_per_mwh:
+      0:  93.95
+      5:  116.23
+      10: 143.82
+      15: 172.89
+      20: 201.95
+      25: 201.95
+    co2_emissions_ton_per_mwh: 0.249508
+
+  - commodity_out: biomass
+    price_eur_per_mwh:
+      0:  58.63
+      5:  60.15
+      10: 73.84
+      15: 90.11
+      20: 114.11
+      25: 114.11
+    max_cap_per_year: 5000.00
+    co2_emissions_ton_per_mwh: 0.0333
+
+
+  - commodity_out: green_hydrogen
+    price_eur_per_mwh:
+      0:  500.00
+      5:  400.00
+      10: 260.59
+      15: 262.41
+      20: 262.58
+      25: 262.58
+    co2_emissions_ton_per_mwh: 0
+    max_cap_per_year:
+      0: 0
+      5: 0
+
+  - commodity_out: Dummy
+    price_eur_per_mwh:
+      0:  0.0
+      5:  0.0
+      10: 0.0
+      15: 0.0
+      20: 0.0
+      25: 0.0
+    co2_emissions_ton_per_mwh: 0.0
+
+exports:
+  - commodity_in: electricity
+    price_eur_per_mwh: -80.0
+    co2_emissions_ton_per_mwh:
+      0: 0.0
+      5: 0.0
+      10: 0.0
+      15: 0.0
+      20: 0.0
+      25: 0.0

@@ -109,7 +109,7 @@ demands through several keys:
 ```python
 data_reg.register(CSVDataset(
     keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND_PROFILE, "pool_heat_demand_profile"],
-    file_path="input/residential_heat.txt",
+    file_path="input/heat_demand_profile.txt",
     pandas_kwargs={"sep": r"\s+", "header": None}))
 ```
 
