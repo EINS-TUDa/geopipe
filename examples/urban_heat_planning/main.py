@@ -85,7 +85,7 @@ def main():
     builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()
-    energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology.png")
+    energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology.png", show=False)
 
     scenario = Scenario(name=f"45-8weeks", start_year=2025, end_year=2045, year_gap=5, dt_hours=1,
                         tss="8WeeksManual", co2_limit={2025: 47500, 2045: 0},
@@ -96,12 +96,11 @@ def main():
     solution.save(path=OUTPUT_DIR)
 
     solution.write_html_report(output_path=OUTPUT_DIR / f"Bensheim_report.html")
-    solution.energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology_solved.png")
-    solution.plot_grid(grid_name="heat_grid", year=2030, metric="energy_output")
+    solution.energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology_solved.png", show=False)
     solution.plot_grid(grid_name="heat_grid", year=2030, metric="energy_output",
-                       output_path=OUTPUT_DIR / "heat_grid_2030_energy_output.png")
+                       output_path=OUTPUT_DIR / "heat_grid_2030_energy_output.png", show=False)
     solution.plot_decentral_shares(demand_name="residential_heat", year=scenario.years, metric="energy_output",
-                                   output_path=OUTPUT_DIR / "decentral_shares_residential_heat.png")
+                                   output_path=OUTPUT_DIR / "decentral_shares_residential_heat.png", show=False)
 
     # sankey_dir = RUN_OUTPUT_DIR / "sankey"
     # sankey_dir.mkdir(parents=True, exist_ok=True)

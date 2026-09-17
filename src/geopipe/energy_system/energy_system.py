@@ -44,8 +44,9 @@ class EnergySystem:
     exports: list[Export] = field(default_factory=list)
     pipes: list[PipeTechnology] = field(default_factory=list)
 
-    def plot_system_topology(self, output_path: Optional[str | Path] = None) -> None:
-        plot_system_topology(self, output_path=output_path)
+    def plot_system_topology(self, output_path: Optional[str | Path] = None,
+                             show: bool = True) -> None:
+        plot_system_topology(self, output_path=output_path, show=show)
 
 def validate_energy_system(es: EnergySystem):
     errors, warnings = [], []

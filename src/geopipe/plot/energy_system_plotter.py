@@ -11,7 +11,8 @@ from shapely.geometry import MultiPoint
 
 from ..energy_system.region import Region
 from ..topology_builder.topology import REGION_ID
-from .solution_plotter import _add_basemap, _draw_pipe_path, _save_figure, _zoom_to_regions
+from .solution_plotter import (_add_basemap, _draw_pipe_path, _save_figure, _show_or_close,
+                               _zoom_to_regions)
 
 
 _INACTIVE_EDGE_COLOR = "#787a7d"
@@ -25,7 +26,8 @@ _TABLE_MARGIN_IN = 0.4
 _TABLE_GAP_IN = 0.6
 
 
-def plot_system_topology(energy_system, output_path: Optional[str | Path] = None) -> None:
+def plot_system_topology(energy_system, output_path: Optional[str | Path] = None,
+                         show: bool = True) -> None:
     """
     Plot the system_topology of an energy system.
 
@@ -41,6 +43,10 @@ def plot_system_topology(energy_system, output_path: Optional[str | Path] = None
     output_path
         Optional path. When given, the map is saved to that location and the
         summary tables next to it as ``<stem>_summary<suffix>``.
+    show
+        When ``True`` (default) both figures are opened in windows and execution
+        blocks until they are closed. Pass ``False`` in scripts that only need
+        the files written to ``output_path``.
     """
     if energy_system is None:
         raise ValueError("energy_system must not be None")
@@ -88,9 +94,10 @@ def plot_system_topology(energy_system, output_path: Optional[str | Path] = None
     if output_path is not None:
         path = Path(output_path)
         summary_path = path.with_name(f"{path.stem}_summary{path.suffix}")
-    _plot_summary_tables(energy_system, regions, color_map=color_map, output_path=summary_path)
+    summary_fig = _plot_summary_tables(energy_system, regions, color_map=color_map,
+                                       output_path=summary_path)
 
-    plt.show()
+    _show_or_close(fig, summary_fig, show=show)
 
 
 def _build_region_color_map(region_ids: list[int]) -> dict[int, Any]:
@@ -174,7 +181,7 @@ def _plot_summary_tables(
     *,
     color_map: dict[int, Any],
     output_path: Optional[Path],
-) -> None:
+) -> plt.Figure:
     region_labels, region_rows = _region_summary_rows(regions, energy_system)
     tables = [("Regions", region_labels, region_rows)]
     pipe_rows = _pipes_summary_rows(energy_system)
@@ -209,6 +216,7 @@ def _plot_summary_tables(
         left += width + _TABLE_GAP_IN
 
     _save_figure(fig, output_path)
+    return fig
 
 
 def _draw_table(ax, col_labels: list[str], rows: list[list[str]]):

@@ -62,6 +62,7 @@ def plot_grid(
     year: int,
     metric: str = "capacity",
     output_path: Optional[str | Path] = None,
+    show: bool = True,
 ) -> None:
     """
     Plot the energy_system._system_topology on a map for ``grid_name`` in ``year``.
@@ -74,6 +75,9 @@ def plot_grid(
 
     Regions and pipes whose chosen metric is zero are drawn in light grey; active
     ones are coloured per region (edges) and brown (pipes).
+
+    ``show`` opens a window and blocks until it is closed. Pass ``show=False`` in
+    scripts that only need the file written to ``output_path``.
     """
     if solution.energy_system is None or solution.results is None:
         raise ValueError("solution must have both energy_system and results set")
@@ -163,7 +167,7 @@ def plot_grid(
     ax.set_ylabel("y")
     fig.tight_layout()
     _save_figure(fig, output_path)
-    plt.show()
+    _show_or_close(fig, show=show)
 
 
 def plot_decentral_shares(
@@ -171,8 +175,9 @@ def plot_decentral_shares(
     demand_name: str,
     year: int | list[int],
     metric: str = "energy_output",
-    technology_style: dict[str, dict[str, Any]] | None = None,
+    technology_style: Optional[dict[str, dict[str, Any]]] = None,
     output_path: Optional[str | Path] = None,
+    show: bool = True,
 ) -> None:
     """
     Plot a donut chart per region showing the share of decentral technologies that
@@ -196,6 +201,10 @@ def plot_decentral_shares(
         Optional mapping ``{decentral_technology.name: {"color": ..., "label": ...}}``.
         Missing entries fall back to a tab20 palette colour and the technology
         name as legend label.
+    show
+        When ``True`` (default) a window is opened and execution blocks until it
+        is closed. Pass ``False`` in scripts that only need the file written to
+        ``output_path``.
     """
     if solution.energy_system is None or solution.results is None:
         raise ValueError("solution must have both energy_system and results set")
@@ -270,7 +279,7 @@ def plot_decentral_shares(
 
     fig.tight_layout()
     _save_figure(fig, output_path)
-    plt.show()
+    _show_or_close(fig, show=show)
 
 
 def _draw_decentral_shares_axis(
@@ -508,6 +517,19 @@ def _zoom_to_donuts(
     pad = span * margin_frac
     ax.set_xlim(minx - pad, maxx + pad)
     ax.set_ylim(miny - pad, maxy + pad)
+
+
+def _show_or_close(*figures, show: bool) -> None:
+    """Open a window for ``figures``, or close them when the caller wants no window.
+
+    Closing is what keeps figures from piling up in pyplot's registry when a
+    script produces many plots without ever displaying them.
+    """
+    if show:
+        plt.show()
+        return
+    for figure in figures:
+        plt.close(figure)
 
 
 def _save_figure(fig, output_path: Optional[str | Path]) -> None:

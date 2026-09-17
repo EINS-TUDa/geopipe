@@ -69,8 +69,10 @@ class Solution:
             output_path=Path(output_path)
         )
 
-    def plot_grid(self, grid_name: str, year: int, metric: str = "capacity", output_path: Optional[Path | str] = None) -> Any:
-        return plot_grid(self, grid_name=grid_name, year=year, metric=metric, output_path=output_path)
+    def plot_grid(self, grid_name: str, year: int, metric: str = "capacity",
+                  output_path: Optional[Path | str] = None, show: bool = True) -> Any:
+        return plot_grid(self, grid_name=grid_name, year=year, metric=metric, output_path=output_path,
+                         show=show)
 
     def plot_decentral_shares(
         self,
@@ -79,6 +81,7 @@ class Solution:
         metric: str = "energy_output",
         technology_style: Optional[dict[str, dict[str, Any]]] = None,
         output_path: Optional[Path | str] = None,
+        show: bool = True,
     ) -> Any:
         return plot_decentral_shares(
             self,
@@ -87,6 +90,7 @@ class Solution:
             metric=metric,
             technology_style=technology_style,
             output_path=output_path,
+            show=show,
         )
 
 

@@ -71,5 +71,5 @@ group, all in the energy system's unit).
 | `save` | `path`, `file_name=None` | Pickle the solution (default name `<system>_<scenario>_Solution.pkl`). |
 | `Solution.load` | `path`, `file_name` | Load a pickled solution. |
 | `write_html_report` | `output_path` | Write an HTML report. |
-| `plot_grid` | `grid_name`, `year`, `metric="capacity"`, `output_path=None` | Map of a grid; `metric`: `capacity`, `energy_output`. |
-| `plot_decentral_shares` | `demand_name`, `year`, `metric="energy_output"`, `technology_style=None`, `output_path=None` | Decentral technology shares per region; `year` may be a list; `metric`: `energy_output`, `new_capacity`, `active_capacity`. |
+| `plot_grid` | `grid_name`, `year`, `metric="capacity"`, `output_path=None`, `show=True` | Map of a grid; `metric`: `capacity`, `energy_output`. `show=False` writes the file without opening a blocking window. |
+| `plot_decentral_shares` | `demand_name`, `year`, `metric="energy_output"`, `technology_style=None`, `output_path=None`, `show=True` | Decentral technology shares per region; `year` may be a list; `metric`: `energy_output`, `new_capacity`, `active_capacity`. `show=False` writes the file without opening a blocking window. |
