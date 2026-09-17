@@ -85,26 +85,6 @@ class RegionConnections:
         for (region_id_1, region_id_2), data in self._connections.items():
             yield (region_id_1, region_id_2), data
 
-
-def _legal_pair_network(full_network: nx.Graph,
-                        region_a_id: int,
-                        region_b_id: int,
-                        edge_owner_by_pair: dict[tuple[int, int], int | None],
-                        ) -> nx.Graph:
-    """Returns legal pipe-routing edges for a region pair.
-
-    Legal edges are unowned streets and streets owned by the region pair.
-    Edges owned by a third region are excluded.
-    """
-    allowed_owners = {None, region_a_id, region_b_id}
-
-    def _allow_edge(u, v) -> bool:
-        owner = edge_owner_by_pair.get((u, v))
-        return owner in allowed_owners
-
-    return nx.subgraph_view(full_network, filter_edge=_allow_edge)
-
-
 def compute_region_connections(region_to_topology: dict[int, 'Topology'],
                                full_topology: Topology,
                                region_id_column: str,
