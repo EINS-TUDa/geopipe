@@ -66,7 +66,7 @@ cesm-dev = [
 default-groups = ["dev", "docs", "cesm-dev"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["examples/", "docs/",  ".env"]
+exclude = ["examples/", "docs/",  ".env", ".gitlab-ci.yml", ".github/"]
 
 [tool.pytest.ini_options]
 python_functions = ["test_*", "*_test"]

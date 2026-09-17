@@ -27,9 +27,7 @@ from geopipe.data.dataset import FileDataset
 heating_shares = FileDataset(
     keys=[DataKeys.HEATING_SHARES],
     file_path=str(pathlib.Path(__file__).parent / "Census2022HeatingType.geojson"),
-    query_function=census_bensheim_query,  # see below
-    priority=10,
-    scope=None,  # None = applies everywhere
+    query_function=census_bensheim_query
 )
 
 data_reg = DataRegistry(crs="EPSG:25832")
@@ -211,12 +209,12 @@ version — add a block there whenever you add a new database, so others
 know which variables to set.
 
 ```dotenv
-# --- INFDBGAUSS ---
-INFDBGAUSS_HOST=db.example.org
-INFDBGAUSS_PORT=5432
-INFDBGAUSS_DATABASE=***REMOVED***
-INFDBGAUSS_USER=***REMOVED***
-INFDBGAUSS_PASSWORD=secret
+# --- DATABASE1 ---
+DATABASE1_HOST=db.example.org
+DATABASE1_PORT=5432
+DATABASE1_DATABASE=DATABASE1
+DATABASE1_USER=dbuser
+DATABASE1_PASSWORD=****
 ```
 
 Format rules — the file is parsed by `python-dotenv`, **not** by Python:
@@ -286,8 +284,7 @@ for a file-backed dataset — the same function can therefore serve both a
 
 ## Custom query function
 
-When the default loader doesn't fit (e.g. you need to aggregate raw
-census categories into named technologies), pass a `query_function`.
+When the default loader doesn't fit, pass a `query_function`.
 It receives the dataset, the region's `Topology` and the
 `DataRegistryQuery`. How the topology becomes a spatial filter is up to
 the function — e.g. `topology.convex_hull` (a one-row GeoDataFrame) for
