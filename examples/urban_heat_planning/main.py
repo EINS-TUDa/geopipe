@@ -47,12 +47,12 @@ def main():
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.4},
         considered_connected_region_distance_m=50,
-        central_tech_locations_per_commodity={"district_heat_in": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]},
+        central_tech_locations_per_commodity={"district_heat_in": [1, 2, 4, 6, 7, 8, 11]},
         central_tech_existing_capacities={"district_heat_in": {"default": [("chp_gas", 0.8), ("cen_gas_boiler", 0.2)]}},
         additional_grid_capacity_factor={"heat_grid": 1.1},
         forced_decentral_technology_share_per_region={1: {"heat_exchanger": 0.5, "ind_gas_boiler": 0.5},
                                                       6: {"heat_exchanger": 1},
-                                                      4: {"heat_exchanger": 0.5}
+                                                      4: {"heat_exchanger": 0.8}
                                                       })
 
     residential_heat_demand = DemandType(name="residential_heat",
@@ -92,7 +92,7 @@ def main():
                         discount_rate=0.02)
 
     backend = CESMOptimizationBackend(timeseries_dir=INPUT_DIR, output_dir=OUTPUT_DIR)
-    solution = backend.solve(energy_system, scenario, mip_gap=0.01, lp_file=False)
+    solution = backend.solve(energy_system, scenario, mip_gap=0.02, lp_file=False)
     solution.save(path=OUTPUT_DIR)
 
     solution.write_html_report(output_path=OUTPUT_DIR / f"Bensheim_report.html")
