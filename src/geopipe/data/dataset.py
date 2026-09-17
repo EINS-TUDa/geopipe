@@ -205,12 +205,20 @@ class StreetValueDataset(Dataset):
                                               if not pd.isna(value)}
 
     @classmethod
-    def from_column(cls, streets: gpd.GeoDataFrame, id_column: str, value_column: str,
+    def from_column(cls, streets: gpd.GeoDataFrame, id_column: str, value_column: str | list[str],
                     **kwargs) -> "StreetValueDataset":
-        """Create the dataset from a column of the streets data (e.g. ``waerme_mwh``)."""
+        """Create the dataset from one or several columns of the streets data (e.g. ``waerme_mwh``).
+
+        Several columns are summed per street; streets whose values are NULL in all of them are left out.
+        """
         if not streets[id_column].is_unique:
             raise ValueError(f"Street ids in column '{id_column}' are not unique.")
-        return cls(values=dict(zip(streets[id_column], streets[value_column])), **kwargs)
+        value_columns = [value_column] if isinstance(value_column, str) else list(value_column)
+        missing = [column for column in value_columns if column not in streets]
+        if missing:
+            raise ValueError(f"Street value columns {missing} do not exist in the streets data")
+        values = streets[value_columns].sum(axis=1, min_count=1)
+        return cls(values=dict(zip(streets[id_column], values)), **kwargs)
 
     def query(self, topology: "Topology", query: "DataRegistryQuery") -> float:
         """Sum of the street values over the region's edges, each weighted with the edge's share of its street."""

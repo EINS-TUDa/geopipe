@@ -70,7 +70,7 @@ def example_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
         query_function=census_query, )
 
     residential_heat_demand = StreetValueDataset.from_column(
-        streets, id_column="id", value_column="raumwaerme",
+        streets, id_column="id", value_column=["raumwaerme", "warmwasser"],
         keys=[DataKeys.RESIDENTIAL_HEAT_DEMAND], unit=UnitEnum.KWH)
 
     heat_profile = CSVDataset(
@@ -80,7 +80,7 @@ def example_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
 
     data_registry = DataRegistry(crs="EPSG:25832")
     data_registry.register_streets(streets, id_column="id", divide_at_junctions=True, gap_distance=5,
-                                   drop_isolated_null_columns=["raumwaerme"])
+                                   drop_isolated_null_columns=["raumwaerme", "warmwasser"])
     data_registry.register(census_heating_shares)
     data_registry.register(residential_heat_demand)
     data_registry.register(heat_profile)
