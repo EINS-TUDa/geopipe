@@ -12,7 +12,7 @@ plots/*
 *.log
 *.html
 **/private_data/*
-WAH_Strassenabschnitte.shp
+WaermeatlasHessen.gpkg
 .env
 .env.*.local
 !.env.template

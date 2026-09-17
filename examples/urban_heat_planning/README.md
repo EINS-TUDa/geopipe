@@ -12,7 +12,7 @@ Ensure you have a valid Gurobi license and that you installed `geopipe` and [`CE
 1. Go to the [Hesse heat atlas](https://www.waermeatlas-hessen.de) (in German).
 2. Enter "Bensheim" in the search bar and download the data.
 3. Unzip the folder. 
-4. Place the file `WAH_Strassenabschnitte.shp` in the [`input_data`](input_data) folder of this directory.
+4. Place the file `WaermeatlasHessen.gpkg` in the [`input_data`](input_data) folder of this directory.
 
 #### 3. Run the example via [`main.py`](main.py).
 ```bash

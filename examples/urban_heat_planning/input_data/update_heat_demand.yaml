@@ -1,12 +1,11 @@
 raumwaerme:
-  - street_id: DEHE04620001VmuP
+  - id: DEHE04620001VmuP
     replace: 50
-  - street_id: DEHE04620001VmuY
+  - id: DEHE04620001VmuY
     replace: 50
-  - street_id: DEHE04620001VmuS
+  - id: DEHE04620001VmuS
     replace: 50
-  - street_id: DEHE04620001VmuK
+  - id: DEHE04620001VmuK
     replace: 50
-  - street_id: DEHE04620000AYAS
+  - id: DEHE04620000AYAS
     replace: 250
-

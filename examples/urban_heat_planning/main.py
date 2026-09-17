@@ -1,4 +1,5 @@
 from pathlib import Path
+import geopandas as gpd
 
 from geopipe.data import DataRegistryQuery, DataKeys
 from geopipe.data.dataset import CensusTechnology
@@ -31,7 +32,8 @@ logging.getLogger("cesm").setLevel(logging.INFO)
 
 
 def main():
-    streets_data = modify_streets_data(streets_data=INPUT_DIR / "WAH_Strassenabschnitte.shp",
+    streets_data = gpd.read_file(INPUT_DIR / "WaermeatlasHessen.gpkg", layer="WAH_Strassenabschnitte")
+    streets_data = modify_streets_data(streets_data=streets_data,
                                        modifications_file=INPUT_DIR / "update_heat_demand.yaml")
     data_reg = example_data_registry(streets_data)
     register_technologies(INPUT_DIR / "technologies.yaml", clear_registry=True)

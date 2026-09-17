@@ -85,8 +85,3 @@ def example_data_registry(streets: gpd.GeoDataFrame) -> DataRegistry:
     data_registry.register(residential_heat_demand)
     data_registry.register(heat_profile)
     return data_registry
-
-
-if __name__ == "__main__":
-    data_reg = example_data_registry(
-        gpd.read_file(pathlib.Path(__file__).parents[1] / "input_data" / "WAH_Strassenabschnitte.shp"))
