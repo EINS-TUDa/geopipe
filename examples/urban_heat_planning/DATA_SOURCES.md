@@ -1,6 +1,6 @@
 # Data sources and licences
 
-This file contains third-party input data in `input_data/` used for the bensheim case study. Each dataset keeps
+This file contains third-party input data in `../test_case_bensheim/input_data` used for the bensheim case study. Each dataset keeps
 its own licence. The licence of this repository's source code does not apply to
 them. If you redistribute these files, or publish results, maps or plots derived
 from them, the source attributions below must travel with them.
@@ -34,7 +34,7 @@ In order to run the Bensheim test case, the heat demand of each street segment i
 We do not provide this data in this repo, but you can download it from this link and use it [Hesse heat atlas](https://www.waermeatlas-hessen.de) (in German).
 
 ## Technology data — KWW-Technikkatalog Wärmeplanung
-**File:** `input_data/technologies_new.yaml`
+**File:** `../test_case_bensheim/input_data/technologies_new.yaml`
 
 The techno-economic parameters of the heat supply technologies (efficiency,
 technical lifetime, CAPEX and OPEX) are derived from the KWW-Technikkatalog

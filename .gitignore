@@ -12,6 +12,7 @@ plots/*
 *.log
 *.html
 **/private_data/*
+WAH_Strassenabschnitte.shp
 .env
 .env.*.local
 !.env.template

@@ -1,0 +1,110 @@
+
+imports:
+
+  - commodity_out: electricity
+    price_eur_per_mwh:
+      0:  391.44
+      5:  371.63
+      10: 422.43
+      15: 449.72
+      20: 507.92
+      25: 507.92  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    co2_emissions_ton_per_mwh:
+      0:  0.344
+      5:  0.258
+      10: 0.172
+      15: 0.086
+      20: 0
+      25: 0        # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    # Linearer CO2-Rückgang von 344 kg/MWh (0.344 t/MWh) in 2025 auf 0 in 2045 (Quelle Q5)
+
+  - commodity_out: electricity_wp
+    price_eur_per_mwh:
+      0:  280.37
+      5:  229.09
+      10: 261.22
+      15: 276.86
+      20: 311.53
+      25: 311.53  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    co2_emissions_ton_per_mwh:
+      0:  0.344
+      5:  0.258
+      10: 0.172
+      15: 0.086
+      20: 0
+      25: 0        # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    # Gleicher CO2-Pfad wie electricity (344 kg/MWh in 2025, linear auf 0 in 2045, Quelle Q5)
+
+  - commodity_out: gas
+    price_eur_per_mwh:
+      0:  119.84
+      5:  122.95
+      10: 150.92
+      15: 184.18
+      20: 233.24
+      25: 233.24  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    co2_emissions_ton_per_mwh: 0.19932
+    # Preis in Brennwert-Basis (Hs). CO2 zeitunabhängig: 199.32 kg/MWh = 0.19932 t/MWh (Quelle Q6)
+
+  - commodity_out: oil
+    price_eur_per_mwh:
+      0:  93.95
+      5:  116.23
+      10: 143.82
+      15: 172.89
+      20: 201.95
+      25: 201.95  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    co2_emissions_ton_per_mwh: 0.249508
+    # Preis in Brennwert-Basis (Hs). CO2 zeitunabhängig: 249.508 kg/MWh = 0.249508 t/MWh (Quelle Q6)
+
+  - commodity_out: biomass  #pellets sind gemeint
+    price_eur_per_mwh:
+      0:  58.63
+      5:  60.15
+      10: 73.84
+      15: 90.11
+      20: 114.11
+      25: 114.11  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    max_cap_per_year: 5000.00              # kW  Anmerkung: 5MW sind schon sehr viel!
+    co2_emissions_ton_per_mwh: 0.0333
+    # Preis in Brennwert-Basis (Hs). CO2 zeitunabhängig: 33.3 kg/MWh = 0.0333 t/MWh (Quelle Q6)
+    # Potenzialgrenze: max_cap_per_year = 10000 kW
+
+  - commodity_out: green_hydrogen
+    price_eur_per_mwh:
+      0:  500.00   # ANNAHME: H2 vor 2035 nicht verfügbar (max_cap=0), Platzhalterpreis hoch
+      5:  400.00   # ANNAHME: wie oben
+      10: 260.59
+      15: 262.41
+      20: 262.58
+      25: 262.58  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    co2_emissions_ton_per_mwh: 0
+    max_cap_per_year:
+      0: 0
+      5: 0
+      10: None
+      # Ab relative_year 10 (2035) keine explizite Obergrenze gesetzt
+    # Preis-Basis Hs. CO2: 0 kg/MWh = 0 t/MWh (Quelle Q6). Erst ab 2035 verfügbar
+
+  - commodity_out: Dummy
+    # Platzhalter-Commodity für Technologien ohne realen Brennstoffinput
+    # (Solarthermie, industrielle Abwärme). Preis und CO2 = 0.
+    price_eur_per_mwh:
+      0:  0.0
+      5:  0.0
+      10: 0.0
+      15: 0.0
+      20: 0.0
+      25: 0.0  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
+    co2_emissions_ton_per_mwh: 0.0
+
+exports: # optional
+  - commodity_in: electricity
+    price_eur_per_mwh: -80.0           # negative = revenue per MWh exported
+    co2_emissions_ton_per_mwh:
+      0: 0.0                           # negative = avoided emissions credit
+      5: 0.0
+      10: 0.0
+      15: 0.0
+      20: 0.0
+      25: 0.0  # SCHNELLER FIX: Wert von Jahr 20 fortgeschrieben, keine echte Prognose
