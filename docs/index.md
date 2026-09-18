@@ -47,7 +47,7 @@ flowchart TD
 ```
 
 See
-[`examples/test_case_bensheim/bensheim_test_main.py`](https://github.com/EINS-TUDa/geopipe/blob/main/examples/test_case_bensheim/bensheim_test_main.py)
+[`examples/urban_heat_planning/main.py`](https://github.com/EINS-TUDa/geopipe/blob/main/examples/urban_heat_planning/main.py)
 for an end-to-end reference.
 
 ## Where to start

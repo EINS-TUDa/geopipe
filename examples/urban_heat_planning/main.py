@@ -92,7 +92,7 @@ def main():
     solution = backend.solve(energy_system, scenario, mip_gap=0.02, lp_file=False)
     solution.save(path=OUTPUT_DIR)
 
-    solution.write_html_report(output_path=OUTPUT_DIR / f"Bensheim_report.html")
+    solution.write_html_report(output_path=OUTPUT_DIR / f"example_report.html")
     solution.energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology_solved.png", show=False)
     solution.plot_grid(grid_name="heat_grid", year=2030, metric="energy_output",
                        output_path=OUTPUT_DIR / "heat_grid_2030_energy_output.png", show=False)
