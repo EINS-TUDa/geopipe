@@ -73,7 +73,7 @@ def main():
                                          default_decentral_supply_technology="ind_gas_boiler",
                                          decrease_percent_per_year=0)
 
-    builder = EnergySystemBuilder(energy_system_name="Bensheim")
+    builder = EnergySystemBuilder(energy_system_name="Example")
     builder.set_system_topology(topology_result.network)
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
