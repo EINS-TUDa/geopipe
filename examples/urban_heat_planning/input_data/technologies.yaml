@@ -100,7 +100,7 @@ chp:
 
 central:
 
-  abwasser_wp_klaeranlage_bensheim:
+  cen_sewage_heat_pump:
     commodity_in: electricity_wp
     commodity_out: district_heat_in
     efficiency: 2.9
@@ -109,10 +109,10 @@ central:
     capex_cost_base: 200000
     opex_cost_power: 23
     opex_cost_energy: 0
-    max_capacity_per_unit: 4180
+    max_capacity: 4180
     existing_capacity_retirement_years: 15
     constrain_location_to_streets:
-      - "TODO_strassen_id_klaeranlage"
+      - "DEHE04620000AQeH"
 
   cen_gas_boiler:
     commodity_in: gas
@@ -162,7 +162,7 @@ central:
     max_capacity: 1418 #kW
     availability_profile_name: "waste_heat_availability_2"
     constrain_location_to_streets:
-      - "DEHE04620001i7U8"
+      - "DEHE04620000RCCn"
 
 
 grids:

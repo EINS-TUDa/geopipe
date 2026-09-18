@@ -47,13 +47,10 @@ def main():
     esb_cfg = EnergySystemBuilderConfig(
         minimum_decentral_technology_share={"heat_exchanger": 0.4},
         considered_connected_region_distance_m=50,
-        central_tech_locations_per_commodity={"district_heat_in": [1, 2, 4, 6, 7, 8, 11]},
+        central_tech_locations_per_commodity={"district_heat_in": [2,5,7,10,11,12]},
         central_tech_existing_capacities={"district_heat_in": {"default": [("chp_gas", 0.8), ("cen_gas_boiler", 0.2)]}},
-        additional_grid_capacity_factor={"heat_grid": 1.1},
-        forced_decentral_technology_share_per_region={1: {"heat_exchanger": 0.5, "ind_gas_boiler": 0.5},
-                                                      6: {"heat_exchanger": 1},
-                                                      4: {"heat_exchanger": 0.8}
-                                                      })
+        additional_grid_capacity_factor={"heat_grid": 1.3},
+        forced_decentral_technology_share_per_region={2: {"heat_exchanger": 0.8}})
 
     residential_heat_demand = DemandType(name="residential_heat",
                                          commodity_in="residential_heat",
@@ -76,7 +73,7 @@ def main():
                                          default_decentral_supply_technology="ind_gas_boiler",
                                          decrease_percent_per_year=0)
 
-    builder = EnergySystemBuilder(energy_system_name="Bensheim")
+    builder = EnergySystemBuilder(energy_system_name="Example")
     builder.set_system_topology(topology_result.network)
     builder.set_data_registry(data_reg)
     builder.set_config(esb_cfg)
@@ -85,7 +82,7 @@ def main():
     builder.set_unit(UnitEnum.KW)
 
     energy_system = builder.build()
-    energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology.png", show=False)
+    energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology.png", show=True)
 
     scenario = Scenario(name=f"45-8weeks", start_year=2025, end_year=2045, year_gap=5, dt_hours=1,
                         tss="8WeeksManual", co2_limit={2025: 47500, 2045: 0},
@@ -95,7 +92,7 @@ def main():
     solution = backend.solve(energy_system, scenario, mip_gap=0.02, lp_file=False)
     solution.save(path=OUTPUT_DIR)
 
-    solution.write_html_report(output_path=OUTPUT_DIR / f"Bensheim_report.html")
+    solution.write_html_report(output_path=OUTPUT_DIR / f"example_report.html")
     solution.energy_system.plot_system_topology(output_path=OUTPUT_DIR / "topology_solved.png", show=False)
     solution.plot_grid(grid_name="heat_grid", year=2030, metric="energy_output",
                        output_path=OUTPUT_DIR / "heat_grid_2030_energy_output.png", show=False)

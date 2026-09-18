@@ -27,7 +27,7 @@ from geopipe.data.dataset import FileDataset
 heating_shares = FileDataset(
     keys=[DataKeys.HEATING_SHARES],
     file_path=str(pathlib.Path(__file__).parent / "Census2022HeatingType.geojson"),
-    query_function=census_bensheim_query
+    query_function=census_query
 )
 
 data_reg = DataRegistry(crs="EPSG:25832")
@@ -253,7 +253,7 @@ db_conn = PostgresConnection.from_env("INFDBGAUSS")
 heating_shares = PostgresDataset(
     keys=[DataKeys.HEATING_SHARES],
     db_connection=db_conn,
-    query_function=census_bensheim_query,  # see below
+    query_function=census_query,  # see below
     sql="""
         SELECT
             SUM(c."gas")::float     AS "Gas",
@@ -291,7 +291,7 @@ the function — e.g. `topology.convex_hull` (a one-row GeoDataFrame) for
 an area-based lookup:
 
 ```python
-def census_bensheim_query(dataset, topology, query):
+def census_query(dataset, topology, query):
     if query.key != DataKeys.HEATING_SHARES:
         raise ValueError("only heating_shares supported")
 

@@ -12,7 +12,7 @@ from geopipe.topology_builder.topology import Topology
 
 def census_query(dataset: Dataset, topology: Topology, query: DataRegistryQuery) -> dict[CensusTechnology, float]:
     if query.key != DataKeys.HEATING_SHARES:
-        raise ValueError("census_bensheim_query only supports 'heating_shares' key")
+        raise ValueError("census_query only supports 'heating_shares' key")
 
     census_names = {"Gas": CensusTechnology.Gas,
                     "Heizoel": CensusTechnology.Oil,
