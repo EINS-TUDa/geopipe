@@ -109,7 +109,7 @@ central:
     capex_cost_base: 200000
     opex_cost_power: 23
     opex_cost_energy: 0
-    max_capacity_per_unit: 4180
+    max_capacity: 4180
     existing_capacity_retirement_years: 15
     constrain_location_to_streets:
       - "DEHE04620000AQeH"
