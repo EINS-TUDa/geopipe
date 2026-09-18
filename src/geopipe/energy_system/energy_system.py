@@ -21,7 +21,7 @@ from ._year_dep import get_earliest_year_value
 from ..data.data_registry import DataRegistry, DataRegistryQuery
 from .region import Demand, Region
 from .units import Unit, UnitEnum
-from ..topology_builder.topology import Topology, REGION_ID
+from ..topology_builder.topology import Topology, REGION_ID, SOURCE_STREET_ID
 from ..plot.energy_system_plotter import plot_system_topology
 
 import logging
@@ -122,9 +122,6 @@ class EnergySystemBuilderConfig(BaseSettings):
     #: raised.
     central_tech_existing_capacities: dict[str, dict[int | str, list[tuple[str, Share]]]] = Field(
         default_factory=dict)
-    #: Name of the street-id property on the edges of the topology Graph; used to evaluate
-    #: ``constrain_location_to_streets`` for central technologies.
-    street_id_name: str = "street_id"
     #: Factor added to the grid capacity. Dict of grid name to factor. 10 % corresponds to 1.1
     additional_grid_capacity_factor: dict[str, GridCapacityFactor]
     #: Forced tech share per region
@@ -389,9 +386,12 @@ class EnergySystemBuilder:
         if not constrained_streets:
             return True
         topology = self._region_topologies()[region_id]
-        street_id_name = self._config.street_id_name
-        region_streets = {data.get(street_id_name) for _, _, data in topology.graph.edges(data=True)
-                          if data.get(street_id_name) is not None}
+        region_streets = set()
+        for _, _, data in topology.graph.edges(data=True):
+            if SOURCE_STREET_ID not in data:
+                raise EnergySystemBuilderError(
+                    f"Topology edges carry no street id'{SOURCE_STREET_ID}'. Build the topology with a TopologyBuilder.")
+            region_streets.add(data[SOURCE_STREET_ID])
         return any(s in region_streets for s in constrained_streets)
 
     def _initial_effective_locations(self) -> dict[str, set[int]]:
